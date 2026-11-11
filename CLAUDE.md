@@ -141,6 +141,7 @@ repetiría en la URL lo que dice el dominio.
                         /api/clasificacion y /api/tipo POST (JSON): los formularios satélite
 /proveedores         ABM, ?edit=ID, ?nuevo=1, ?solapa=cuentas|contactos|movimientos
 /proveedores/<id>/cuenta/<pasivo|gasto>  POST alta/baja de cuenta contable
+/proveedores/<id>/mesa   POST área y usuario destino de sus expedientes (solapa Mesa de entradas)
 /proveedores/api/cuit/<cuit>  ¿válido y libre? (aviso mientras se tipea); /api/buscar
 /proveedores/cc         cuenta corriente: ?saldo=acreedor|deudor|todos, ?rubro, ?activo, ?hasta; /cuit/<cuit>
 /proveedores/cc/<id>    estado de cuenta: ?vista=cronologica|aplicacion, ?desde, ?hasta, ?rubro, ?cbte, ?con_saldo=1;
@@ -149,7 +150,8 @@ repetiría en la URL lo que dice el dominio.
 /comprobantes/carga     carga de comprobantes; ?manual=1, ?mis=<id>; POST accion=leer|guardar
 /comprobantes/<id>/pdf  el PDF de un comprobante; /tmp/<ficha> el subido sin guardar
 /comprobantes/arca      Comprobantes ARCA (Mis Comprobantes): importar y cruzar; /<id>/ignorar
-/mesa                   bandeja; /<id> expediente; /<id>/mover, /<id>/anular, /<id>/pdf POST
+/mesa                   bandeja: ?q, ?estado, ?area_id, ?usuario_id, ?fecha_desde, ?fecha_hasta, ?orden, ?dir,
+                        ?tam, ?pagina; /exportar (.xlsx); /<id> expediente; /<id>/mover, /<id>/anular, /<id>/pdf POST
 /tesoreria                  Panel de Control de Tesorería
 /tesoreria/cuentas_fondos   ABM, ?edit=ID, ?nuevo=1; /<id>/chequeras POST (alta, edición, baja)
 /tesoreria/bancos           códigos de banco del BCRA; /conceptos_gasto, /motivos_ingreso (mismo ABM)
@@ -599,8 +601,13 @@ Menú: Proveedores → ABM de Proveedores (31). La carga de comprobantes (32), C
 y la mesa de entradas (35) están en la sección siguiente; la cuenta corriente (33) y la aplicación de
 comprobantes (36), en «Cuenta corriente de proveedores».
 
-- **Fuera, por ser de la obra social**: la solapa Hospital/Integración (prestadores SSS) y la de
-  Mesa de entradas (área y usuario destino). Las columnas quedan en la tabla, sin tocar.
+- **Fuera, por ser de la obra social**: la solapa Hospital/Integración (prestadores SSS). Las columnas
+  quedan en la tabla, sin tocar.
+- **Solapa Mesa de entradas** (pedido del 11/11/2026, como gestion_adm): área y usuario destino de los
+  expedientes del proveedor (`id_area_destino`, `id_usuario_destino`; `/proveedores/<id>/mesa` POST, con su
+  fila en la auditoría) y los últimos 10 expedientes. La carga de comprobantes ya derivaba el expediente a
+  ese destino. Opcional: en gestion_adm es obligatorio porque además decide quién ve al proveedor, y acá no
+  hay visibilidad por áreas. Cambiarlo no mueve los expedientes que ya existen.
 - **Un proveedor por CUIT** (`uq_cuit`). Se avisa mientras se tipea y se controla al guardar; al
   editar, solo si el CUIT cambió. Un CUIT o un CBU que no verifica el dígito no se guarda.
 - **Alta con imputación**: rubro de pasivo y concepto de gasto obligatorios, en la misma transacción.
@@ -668,6 +675,11 @@ carga del comprobante (f_comprobantes_arca)
   la ruta relativa en la base. `leido_automatico` = el PDF dice lo mismo que los datos
   (`lector_pdf_ocr.cotejar_pdf`). Se adjunta después o se reemplaza desde el expediente mientras la
   liquidación esté abierta y el que hay no se haya confirmado.
+- **Bandeja de la mesa** (pedido del 11/11/2026): la de gestion_adm — tarjetas Expedientes e Importe total,
+  filtros Buscar / Estado / Área destino / Usuario destino / Ingresado desde-hasta, columnas Expediente,
+  Comprobante (tipo, número · emisión, marcas), Proveedor / Emisor, Fecha, Importe, Estado, Destino —
+  paginada en el servidor (`paginar.py`) con `/mesa/exportar`. Sin los reintegros de AEDA (estado
+  `reintegro`): se ven en Reintegros; el expediente se abre igual por su enlace.
 - **Mesa**: derivar (a área o persona), observar, aprobar, rechazar, archivar, nota. Rechazo,
   observación y nota piden texto; derivar pide destino. Liquidado y pagado ya son de la parte
   contable: el movimiento queda pero el estado no retrocede. **Anular** solo con la liquidación

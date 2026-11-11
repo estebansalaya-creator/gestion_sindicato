@@ -5,9 +5,11 @@ Portado de `gestion_adm/proveedores_routes.py`: la misma ficha y las mismas
 reglas, con el sistema de estilos de este proyecto y sin lo que es de la obra
 social:
 
-- Sin la solapa Hospital / Integración (prestadores de la SSS) ni la de
-  Mesa de entradas (área y usuario destino de los expedientes, que acá todavía
-  no existen). Las columnas quedan en la tabla, sin tocar.
+- Sin la solapa Hospital / Integración (prestadores de la SSS): las columnas
+  quedan en la tabla, sin tocar.
+- La solapa Mesa de entradas (área y usuario destino de los expedientes del
+  proveedor) se agregó el 11/11/2026, sin la visibilidad por áreas de
+  gestion_adm: acá el destino solo dice a quién llega el expediente.
 - De qué impuestos el sindicato es agente de retención sale de «Datos del
   sindicato» (`s_institucion.ret_*`), no de `s_configuracion`. Los bloques de
   los impuestos en los que no es agente se muestran deshabilitados y sus
@@ -37,11 +39,13 @@ from datetime import datetime
 import pymysql
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+import comprobantes_datos as cd
 import contactos
 import institucion
 import proveedores_movimientos as movs
 import rg830
 import tesoreria
+from admin import _arbol
 from afiliados import cbu_valido
 from db import get_connection, puede, validasesion
 from empleadores import cuit_valido
@@ -131,7 +135,12 @@ def _catalogos(cur) -> dict:
     cur.execute("SELECT id, razon_social FROM c_proveedores "
                 "WHERE escabecera_grupo = 1 AND activo = 1 ORDER BY razon_social")
     grupos = cur.fetchall()
-    return {"condiciones_iva": condiciones_iva, "rubros_pasivo": rubros,
+    cur.execute("SELECT id, padre_id, nombre, orden, nivel, activo FROM s_areas ORDER BY orden, nombre")
+    areas_destino = _arbol(cur.fetchall())
+    cur.execute("SELECT id, nombre, email, activo FROM s_usuarios ORDER BY nombre")
+    usuarios_destino = cur.fetchall()
+    return {"areas_destino": areas_destino, "usuarios_destino": usuarios_destino,
+            "condiciones_iva": condiciones_iva, "rubros_pasivo": rubros,
             "conceptos_gasto": conceptos, "provincias": provincias, "grupos": grupos,
             "regimenes_rg830": rg830.vigentes(cur), "condiciones_iibb": CONDICIONES_IIBB,
             "padron_iva": PADRON_IVA, "regimenes_iibb": REGIMENES_IIBB, "monedas": MONEDAS,
@@ -211,6 +220,7 @@ def abm():
 
     edit_id = request.args.get("edit", type=int)
     pasivo, gasto, ctos, movimientos = [], [], [], []
+    expedientes, total_exp = [], 0
     with get_connection() as conn:
         with conn.cursor() as cur:
             if edit_id and proveedor is None:
@@ -226,6 +236,8 @@ def abm():
                 proveedor = {"cuit": re.sub(r"\D", "", request.args["cuit"])[:11],
                              "razon_social": (request.args.get("razon") or "").strip().upper()[:200],
                              "activo": 1}
+            if proveedor and proveedor.get("id"):
+                expedientes, total_exp = _expedientes_recientes(cur, proveedor["id"])
             listado = _listado(cur)
             cat = _catalogos(cur)
 
@@ -233,6 +245,8 @@ def abm():
         "proveedores/abm_proveedores.html",
         proveedor=proveedor, errores=errores, proveedores=listado,
         ctas_pasivo=pasivo, ctas_gasto=gasto, contactos=ctos, movimientos=movimientos,
+        expedientes=expedientes, total_exp=total_exp,
+        estados_mesa_label=cd.ESTADOS_LABEL, estados_mesa_tipo=cd.ESTADOS_TIPO,
         agentes=agentes, nuevo=bool(request.args.get("nuevo")) or (proveedor is not None
                                                                   and not proveedor.get("id")),
         **cat)
@@ -410,6 +424,82 @@ def _borrar(pid):
                 return redirect(url_for("proveedores.abm", edit=pid))
     flash(f"Proveedor {antes['razon_social']} eliminado.")
     return redirect(url_for("proveedores.abm"))
+
+
+# =============================================================================
+# Mesa de entradas: a quién llegan los expedientes del proveedor
+#
+# La solapa de gestion_adm (pedido del 11/11/2026). Al cargar un comprobante,
+# el expediente entra derivado al área y al usuario de la ficha
+# (comprobantes_datos.registrar_comprobante ya lo hacía: faltaba dónde
+# elegirlos). Sin destino entra sin derivar, como hasta ahora; en gestion_adm es
+# obligatorio porque además decide quién ve al proveedor, y acá no hay
+# visibilidad por áreas. Cambiarlo no mueve los expedientes que ya existen.
+# =============================================================================
+
+def _expedientes_recientes(cur, pid, limite=10) -> tuple[list[dict], int]:
+    cur.execute("SELECT COUNT(*) AS n FROM me_expedientes WHERE id_proveedor = %s", (pid,))
+    total = cur.fetchone()["n"]
+    cur.execute("""
+        SELECT e.id, e.nro_expediente, e.estado, e.creado, e.importe_total,
+               c.numero_completo, tc.descripcion AS cbte_tipo_desc,
+               a.nombre AS nombre_area, u.nombre AS nombre_usuario
+          FROM me_expedientes e
+          LEFT JOIN f_comprobantes_arca c ON c.id = e.id_comprobante
+          LEFT JOIN arca_tipo_comprobante tc ON tc.codigo = LPAD(c.tipo_comprobante, 3, '0')
+          LEFT JOIN s_areas a ON a.id = e.id_area_destino
+          LEFT JOIN s_usuarios u ON u.id = e.id_usuario_destino
+         WHERE e.id_proveedor = %s
+         ORDER BY e.id DESC
+         LIMIT %s
+    """, (pid, limite))
+    return cur.fetchall(), total
+
+
+@proveedores_bp.route("/<int:pid>/mesa", methods=["POST"])
+def destino_mesa(pid):
+    """Guarda el área y el usuario destino, con su fila en el registro de cambios."""
+    if not validasesion():
+        return redirect(url_for("login"))
+    if not puede_abm():
+        flash("!No tenés permiso para el ABM de proveedores.")
+        return redirect(url_for("menu"))
+
+    volver = url_for("proveedores.abm", edit=pid, solapa="mesa")
+    nuevo = {"id_area_destino": _entero(request.form.get("id_area_destino")),
+             "id_usuario_destino": _entero(request.form.get("id_usuario_destino"))}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            antes = movs.snapshot(cur, pid)
+            if not antes:
+                flash("!El proveedor no existe.")
+                return redirect(url_for("proveedores.abm"))
+            # Uno dado de baja no se ofrece, pero si ya era el destino se puede
+            # dejar como está: guardar no tiene que obligar a cambiarlo.
+            for campo, tabla, rotulo in (("id_area_destino", "s_areas", "El área"),
+                                         ("id_usuario_destino", "s_usuarios", "El usuario")):
+                valor = nuevo[campo]
+                if valor and valor != antes.get(campo):
+                    cur.execute(f"SELECT activo FROM {tabla} WHERE id = %s", (valor,))
+                    fila = cur.fetchone()
+                    if not fila or not fila["activo"]:
+                        flash(f"!{rotulo} elegido no existe o está dado de baja.")
+                        return redirect(volver)
+            if all(nuevo[c] == antes.get(c) for c in nuevo):
+                flash("No había cambios en el destino.")
+                return redirect(volver)
+            conn.begin()
+            try:
+                cur.execute("UPDATE c_proveedores SET id_area_destino = %s, id_usuario_destino = %s "
+                            "WHERE id = %s", (nuevo["id_area_destino"], nuevo["id_usuario_destino"], pid))
+                movs.registrar_cambios(cur, pid, antes, nuevo, origen_ref="Proveedores")
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
+    flash("Destino de la mesa de entradas guardado. Rige para los comprobantes que se carguen "
+          "desde ahora: los expedientes que ya existen no se mueven.")
+    return redirect(volver)
 
 
 # =============================================================================

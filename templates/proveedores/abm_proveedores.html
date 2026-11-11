@@ -57,12 +57,13 @@
 
 {{ ui.mensajes(errores) }}
 
-{% set inicial = request.args.get('solapa') if (editando and request.args.get('solapa') in ('cuentas', 'contactos', 'movimientos'))
+{% set inicial = request.args.get('solapa') if (editando and request.args.get('solapa') in ('cuentas', 'mesa', 'contactos', 'movimientos'))
                  else ('datos' if (editando or nuevo or errores) else 'listado') %}
 {% set lista = [('listado', 'Listado', proveedores|length),
                 ('datos', ('Editar' if editando else 'Nuevo'), None)] %}
 {% if editando %}
   {% set lista = lista + [('cuentas', 'Cuentas contables', ctas_pasivo|length + ctas_gasto|length),
+                          ('mesa', 'Mesa de entradas', None),
                           ('contactos', 'Contactos', contactos|length),
                           ('movimientos', 'Movimientos', movimientos|length)] %}
 {% endif %}
@@ -419,6 +420,76 @@
 </div>
 
 <!-- ── Contactos ──────────────────────────────────────────────────────────── -->
+<!-- ── Mesa de entradas ───────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'mesa' }}" data-panel="mesa">
+  <form method="post" class="card" action="{{ url_for('proveedores.destino_mesa', pid=p.get('id')) }}">
+    <div class="bloque">
+      <div class="bloque-titulo">Destino para expedientes</div>
+      <p class="campo-ayuda">Cuando se carga un comprobante de este proveedor, el expediente que abre la mesa
+        de entradas entra derivado a este destino. Sin destino entra sin derivar. Cambiarlo rige para lo que se
+        cargue desde ahora: los expedientes que ya existen no se mueven.</p>
+      <div class="campos">
+        <div class="campo" style="--span:6;">
+          <label for="sel-area-destino">Área destino</label>
+          <select name="id_area_destino" id="sel-area-destino">
+            <option value="">— Sin área —</option>
+            {% for a in areas_destino if a.activo or a.id == p.get('id_area_destino') %}
+            <option value="{{ a.id }}" {{ 'selected' if p.get('id_area_destino') == a.id }}>{{ '· ' * a.prof }}{{ a.nombre }}{{ ' (dada de baja)' if not a.activo }}</option>
+            {% endfor %}
+          </select>
+          <small class="campo-ayuda">La bandeja del área a la que llega el expediente.</small>
+        </div>
+        <div class="campo" style="--span:6;">
+          <label for="sel-usuario-destino">Usuario destino</label>
+          <select name="id_usuario_destino" id="sel-usuario-destino">
+            <option value="">— Todo el área —</option>
+            {% for u in usuarios_destino if u.activo or u.id == p.get('id_usuario_destino') %}
+            <option value="{{ u.id }}" {{ 'selected' if p.get('id_usuario_destino') == u.id }}>{{ u.nombre or u.email }}{{ ' (dado de baja)' if not u.activo }}</option>
+            {% endfor %}
+          </select>
+          <small class="campo-ayuda">La persona que lo recibe. Puede ser de otra área: un responsable puede llevar
+            proveedores de áreas que no son las suyas.</small>
+        </div>
+      </div>
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Guardar destino', submit=True, icono_='guardar') }}
+    </div>
+  </form>
+
+  <div class="card">
+    {% call ui.card_head('Últimos expedientes', nota=(total_exp ~ ' en total') if total_exp else None) %}
+      {% if total_exp and puede(url_for('mesa.bandeja')) %}
+      {{ ui.boton('Ver todos en la mesa', 'secondary', chico=True, href=url_for('mesa.bandeja', q=p.get('cuit'))) }}
+      {% endif %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr>
+          <th>Expediente</th><th>Comprobante</th><th class="th-center">Fecha</th>
+          <th class="th-right">Importe</th><th>Estado</th><th>Destino</th>
+        </tr></thead>
+        <tbody>
+          {% for e in expedientes %}
+          <tr class="{{ 'fila-baja' if e.estado == 'anulado' }}">
+            <td>{{ ui.expediente(e.id, e.nro_expediente) }}</td>
+            <td>{% if e.numero_completo %}{{ e.cbte_tipo_desc or '' }}<div class="chico muted td-mono">{{ e.numero_completo }}</div>{% else %}<span class="muted">—</span>{% endif %}</td>
+            <td class="td-center">{{ e.creado.strftime('%d/%m/%Y') if e.creado else '—' }}</td>
+            <td class="td-right">{{ (e.importe_total or 0)|miles if e.importe_total else '—' }}</td>
+            <td>{{ ui.estado(estados_mesa_label.get(e.estado, e.estado), estados_mesa_tipo.get(e.estado, 'neutro')) }}</td>
+            <td>{% if e.nombre_usuario %}<span class="td-fuerte">{{ e.nombre_usuario }}</span>{% endif %}
+              {% if e.nombre_area %}<div class="chico muted">{{ e.nombre_area }}</div>{% endif %}
+              {% if not e.nombre_usuario and not e.nombre_area %}<span class="muted">—</span>{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="6" class="no-data">Sin expedientes registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div class="abm-panel {{ 'oculto' if inicial != 'contactos' }}" data-panel="contactos">
   <div class="card">
     {{ ui.card_head('Contactos', nota='a quién se le avisan los pagos') }}

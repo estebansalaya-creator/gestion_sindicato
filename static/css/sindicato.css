@@ -535,6 +535,8 @@ a.page-btn { text-decoration: none; }
    le daba 110px fijos a todo input sin ancho propio.                    */
 .bloque { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
 .bloque:last-of-type { border-bottom: none; }
+/* Una ayuda que explica el bloque entero, entre el título y los campos. */
+.bloque > p.campo-ayuda { margin: 0 0 12px; }
 .bloque-titulo {
   font-size: .72rem; font-weight: 700; text-transform: uppercase;
   letter-spacing: .06em; color: var(--text-muted); margin-bottom: 12px;

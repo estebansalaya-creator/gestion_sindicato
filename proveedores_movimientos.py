@@ -72,6 +72,8 @@ CAMPO_LABEL = {
     "activo":                   "Activo",
     "fecha_alta":               "Fecha de alta",
     "observaciones":            "Observaciones",
+    "id_area_destino":          "Mesa de entradas — área destino",
+    "id_usuario_destino":       "Mesa de entradas — usuario destino",
     # No son columnas de c_proveedores: son sus cuentas contables.
     "cuenta_pasivo":            "Cuenta de pasivo",
     "cuenta_gasto":             "Concepto de gasto",
@@ -92,6 +94,8 @@ CONDICION_IIBB = {"1": "Local", "2": "Convenio Multilateral", "3": "Exento",
 TABLAS_CAMPO = {
     "condicion_iva": "SELECT codigo AS k, descripcion AS v FROM arca_responsable_tipo",
     "id_grupo":      "SELECT id AS k, razon_social AS v FROM c_proveedores",
+    "id_area_destino":    "SELECT id AS k, nombre AS v FROM s_areas",
+    "id_usuario_destino": "SELECT id AS k, nombre AS v FROM s_usuarios",
 }
 
 _MAX_VALOR = 255

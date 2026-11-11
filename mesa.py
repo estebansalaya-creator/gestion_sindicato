@@ -24,13 +24,18 @@ Permiso: la opción de menú «Mesa de Entradas» (/mesa).
 """
 from __future__ import annotations
 
+import io
 import json
 import logging
+from datetime import datetime
 
 import pymysql
-from flask import Blueprint, flash, redirect, render_template, request, session, url_for
+from flask import (Blueprint, flash, redirect, render_template, request, send_file,
+                   session, url_for)
 
 import comprobantes_datos as cd
+import paginar
+from exportar import xlsx
 from db import get_connection, puede, validasesion
 
 log = logging.getLogger(__name__)
@@ -52,7 +57,7 @@ def _guardia():
 
 
 def _areas_usuarios(cur) -> tuple[list, list]:
-    cur.execute("SELECT id, nombre FROM s_areas WHERE activo = 1 ORDER BY nivel, nombre")
+    cur.execute("SELECT id, nombre, nivel FROM s_areas WHERE activo = 1 ORDER BY nivel, nombre")
     areas = cur.fetchall()
     cur.execute("""SELECT u.id, u.nombre, u.email, GROUP_CONCAT(au.area_id) AS areas
                      FROM s_usuarios u LEFT JOIN s_area_usuario au ON au.usuario_id = u.id
@@ -60,48 +65,189 @@ def _areas_usuarios(cur) -> tuple[list, list]:
     return areas, cur.fetchall()
 
 
+# =============================================================================
+# Bandeja
+#
+# La de gestion_adm (mesa_entradas.bandeja, pedido del 11/11/2026): mismas
+# columnas, filtros y tarjetas, paginada en el servidor (paginar.py) como allá.
+# Antes mandaba todos los expedientes y filtraba en el navegador.
+# =============================================================================
+
+#: Una nota de crédito resta en el total: lo decide el tipo, no el signo (la
+#: regla de comprobantes_datos.es_credito y de la cuenta corriente).
+SQL_ES_CREDITO = "COALESCE(tc.descripcion REGEXP 'nota.*cr[eé]dito', 0)"
+
+SQL_BANDEJA_FROM = """
+      FROM me_expedientes e
+      LEFT JOIN s_areas a ON a.id = e.id_area_destino
+      LEFT JOIN s_usuarios u ON u.id = e.id_usuario_destino
+      LEFT JOIN c_proveedores p ON p.id = e.id_proveedor
+      LEFT JOIN f_comprobantes_arca c ON c.id = e.id_comprobante
+      LEFT JOIN arca_tipo_comprobante tc ON tc.codigo = LPAD(c.tipo_comprobante, 3, '0')
+"""
+
+# Columna de la grilla → ORDER BY. ?orden= se busca acá, nunca va al SQL.
+ORDEN_BANDEJA = {
+    "expediente": "e.id",
+    "proveedor":  "e.razon_social_emisor",
+    "fecha":      "e.creado",
+    "importe":    "e.importe_total",
+    "estado":     "e.estado",
+}
+
+_DIR_DEFAULT = {"expediente": "desc", "fecha": "desc", "importe": "desc"}
+
+
+def _fecha_iso(valor) -> str:
+    v = (valor or "").strip()
+    return v if len(v) == 10 and v[4] == "-" and v[7] == "-" and v.replace("-", "").isdigit() else ""
+
+
+def _filtros_bandeja(args) -> dict:
+    """Los filtros, leídos en un solo lugar: la grilla y la planilla tienen que
+    mostrar exactamente lo mismo."""
+    estados = {k for k, _ in cd.ESTADOS if k != "reintegro"}
+    orden = args.get("orden") if args.get("orden") in ORDEN_BANDEJA else "expediente"
+    return {
+        "q":       (args.get("q") or "").strip()[:100],
+        "estado":  args.get("estado") if args.get("estado") in estados else "",
+        "area":    args.get("area_id") if (args.get("area_id") or "").isdigit() else "",
+        "usuario": args.get("usuario_id") if (args.get("usuario_id") or "").isdigit() else "",
+        "desde":   _fecha_iso(args.get("fecha_desde")),
+        "hasta":   _fecha_iso(args.get("fecha_hasta")),
+        "orden":   orden,
+        # Sin ?dir=, lo más nuevo primero en Expediente y Fecha; el resto, A→Z.
+        "dir":     args.get("dir") if args.get("dir") in ("asc", "desc") else _DIR_DEFAULT.get(orden, "asc"),
+        "tam":     paginar.tamano(args.get("tam")),
+        "pagina":  paginar.pagina(args.get("pagina")),
+    }
+
+
+def _args_bandeja(f: dict) -> dict:
+    """Los filtros como van en la URL (los enlaces de página y la exportación)."""
+    return {"q": f["q"] or None, "estado": f["estado"] or None,
+            "area_id": f["area"] or None, "usuario_id": f["usuario"] or None,
+            "fecha_desde": f["desde"] or None, "fecha_hasta": f["hasta"] or None,
+            "orden": None if f["orden"] == "expediente" else f["orden"],
+            "dir": None if f["dir"] == _DIR_DEFAULT.get(f["orden"], "asc") else f["dir"],
+            "tam": None if f["tam"] == paginar.TAMANO_DEFAULT else f["tam"]}
+
+
+def _hay_filtros(f: dict) -> bool:
+    return bool(f["q"] or f["estado"] or f["area"] or f["usuario"] or f["desde"] or f["hasta"])
+
+
+def _where_bandeja(f: dict) -> tuple[str, list]:
+    # Los reintegros de AEDA (estado «reintegro», sin proveedor) no pasan por
+    # la mesa: se ven en Reintegros (pedido del 11/11/2026). El expediente se
+    # sigue abriendo por su enlace (/mesa/<id>).
+    cond, params = ["e.estado <> 'reintegro'"], []
+    if f["estado"]:
+        cond.append("e.estado = %s"); params.append(f["estado"])
+    if f["area"]:
+        cond.append("e.id_area_destino = %s"); params.append(int(f["area"]))
+    if f["usuario"]:
+        cond.append("e.id_usuario_destino = %s"); params.append(int(f["usuario"]))
+    if f["q"]:
+        like = f"%{f['q']}%"
+        cond.append("(e.nro_expediente LIKE %s OR e.razon_social_emisor LIKE %s "
+                    "OR e.cuit_emisor LIKE %s OR p.nombre_fantasia LIKE %s "
+                    "OR c.numero_completo LIKE %s)")
+        params += [like] * 5
+    # `creado` es datetime: el «hasta» va hasta el último segundo del día.
+    if f["desde"]:
+        cond.append("e.creado >= %s"); params.append(f["desde"] + " 00:00:00")
+    if f["hasta"]:
+        cond.append("e.creado <= %s"); params.append(f["hasta"] + " 23:59:59")
+    return "WHERE " + " AND ".join(cond), params
+
+
+def _consultar_bandeja(cur, f: dict, paginado=True) -> tuple[list, dict]:
+    """(expedientes, totales) con los filtros de `f`. Sin `paginado`, todos
+    (la exportación)."""
+    where, params = _where_bandeja(f)
+    cur.execute(f"""
+        SELECT COUNT(*) AS n,
+               COALESCE(SUM(CASE WHEN {SQL_ES_CREDITO} THEN -1 ELSE 1 END
+                            * COALESCE(e.importe_total, 0)), 0) AS importe
+        {SQL_BANDEJA_FROM} {where}
+    """, params)
+    totales = cur.fetchone()
+
+    col = ORDEN_BANDEJA[f["orden"]]
+    sentido = "DESC" if f["dir"] == "desc" else "ASC"
+    limite = ""
+    if paginado:
+        paginas = max(1, -(-totales["n"] // f["tam"]))
+        offset = (min(f["pagina"], paginas) - 1) * f["tam"]
+        limite = f"LIMIT {int(f['tam'])} OFFSET {int(offset)}"
+    cur.execute(f"""
+        SELECT e.*, a.nombre AS nombre_area, u.nombre AS nombre_usuario,
+               p.nombre_fantasia, c.numero_completo, c.fecha_emision,
+               c.tipo_comprobante AS cbte_tipo_codigo, tc.descripcion AS cbte_tipo_desc,
+               c.constatacion_resultado, c.leido_automatico, c.verificado_visual
+        {SQL_BANDEJA_FROM} {where}
+        ORDER BY {col} IS NULL, {col} {sentido}, e.id DESC
+        {limite}
+    """, params)
+    return cur.fetchall(), totales
+
+
 @mesa_bp.route("")
 def bandeja():
     g = _guardia()
     if g:
         return g
+    f = _filtros_bandeja(request.args)
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT e.*, a.nombre AS area, u.nombre AS usuario_destino, uc.nombre AS usuario_carga,
-                       p.nombre_fantasia, c.numero_completo, c.fecha_emision, c.tipo_comprobante,
-                       tc.descripcion AS tipo_desc, c.constatacion_resultado, c.leido_automatico, c.verificado_visual,
-                       c.ruta_local, c.periodo,
-                       (SELECT MIN(l.fecha_cierre IS NULL) FROM c_pasivo_liquidacion l
-                         WHERE l.id_expediente = e.id) AS liq_abierta
-                  FROM me_expedientes e
-                  LEFT JOIN s_areas a ON a.id = e.id_area_destino
-                  LEFT JOIN s_usuarios u ON u.id = e.id_usuario_destino
-                  LEFT JOIN s_usuarios uc ON uc.id = e.usuario_creacion
-                  LEFT JOIN c_proveedores p ON p.id = e.id_proveedor
-                  LEFT JOIN f_comprobantes_arca c ON c.id = e.id_comprobante
-                  LEFT JOIN arca_tipo_comprobante tc ON tc.codigo = LPAD(c.tipo_comprobante, 3, '0')
-                 -- Los reintegros de AEDA (estado «reintegro», sin proveedor) no
-                 -- pasan por la mesa: se ven en Reintegros. Pedido del 11/11/2026.
-                 -- El expediente sigue abriéndose por su enlace (/mesa/<id>).
-                 WHERE e.estado <> 'reintegro'
-                 ORDER BY e.id DESC
-            """)
-            expedientes = cur.fetchall()
+            expedientes, totales = _consultar_bandeja(cur, f)
             areas, usuarios = _areas_usuarios(cur)
-    resumen = {k: sum(1 for e in expedientes if e["estado"] == k) for k, _ in cd.ESTADOS}
-    resumen["abiertos"] = sum(resumen[k] for k in cd.ESTADOS_ABIERTOS)
-    for e in expedientes:
-        e["credito"] = "crédito" in (e["tipo_desc"] or "").lower() and "nota" in (e["tipo_desc"] or "").lower()
-    # Una nota de crédito resta: el tipo manda el signo.
-    resumen["importe_abiertos"] = sum((-(e["importe_total"] or 0) if e["credito"] else (e["importe_total"] or 0))
-                                      for e in expedientes if e["estado"] in cd.ESTADOS_ABIERTOS)
-    return render_template("mesa/bandeja.html", expedientes=expedientes, resumen=resumen,
-                           areas=areas, usuarios=usuarios,
-                           estados=[e for e in cd.ESTADOS if e[0] != "reintegro"],
-                           estados_label=cd.ESTADOS_LABEL, estados_tipo=cd.ESTADOS_TIPO,
-                           abiertos=cd.ESTADOS_ABIERTOS, mi_id=session.get("sind_usuario_id"),
-                           puede_cargar=puede(url_for("comprobantes.carga")))
+    args = _args_bandeja(f)
+    return render_template(
+        "mesa/bandeja.html", expedientes=expedientes, total=totales, f=f, areas=areas,
+        usuarios=usuarios, hay_filtros=_hay_filtros(f), args_export=args,
+        pag=paginar.paginador(totales["n"], f["pagina"], f["tam"], "mesa.bandeja", args),
+        estados=[e for e in cd.ESTADOS if e[0] != "reintegro"],
+        estados_label=cd.ESTADOS_LABEL, estados_tipo=cd.ESTADOS_TIPO,
+        puede_cargar=puede(url_for("comprobantes.carga")))
+
+
+@mesa_bp.route("/exportar")
+def exportar():
+    """La bandeja en planilla, con los mismos filtros y todo el resultado."""
+    g = _guardia()
+    if g:
+        return g
+    f = _filtros_bandeja(request.args)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            filas, _tot = _consultar_bandeja(cur, f, paginado=False)
+
+    # El comprobante en dos columnas (tipo y número): en una planilla, junto
+    # no se puede filtrar ni ordenar por tipo (lo mismo que gestion_adm).
+    columnas = [{"titulo": t, "tipo": tp} for t, tp in [
+        ("Expediente", "t"), ("Fecha", ""), ("Tipo comprobante", ""), ("Comprobante", "t"),
+        ("Emisión", ""), ("CUIT", "t"), ("Razón social", ""), ("Nombre fantasía", ""),
+        ("Importe", "n"), ("Área destino", ""), ("Usuario destino", ""), ("Estado", ""),
+        ("Asunto", "")]]
+    datos = [[
+        r["nro_expediente"] or "",
+        r["creado"].strftime("%d/%m/%Y") if r["creado"] else "",
+        r["cbte_tipo_desc"] or "", r["numero_completo"] or "",
+        r["fecha_emision"].strftime("%d/%m/%Y") if r["fecha_emision"] else "",
+        r["cuit_emisor"] or "", r["razon_social_emisor"] or "", r["nombre_fantasia"] or "",
+        f"{float(r['importe_total'] or 0):.2f}".replace(".", ","),
+        r["nombre_area"] or "", r["nombre_usuario"] or "",
+        cd.ESTADOS_LABEL.get(r["estado"], r["estado"] or ""), r["asunto"] or "",
+    ] for r in filas]
+    nombre = "Mesa de entradas"
+    if f["desde"] or f["hasta"]:
+        nombre += f" {f['desde'] or 'inicio'} a {f['hasta'] or 'hoy'}"
+    return send_file(
+        io.BytesIO(xlsx(nombre, columnas, datos)),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name=f"Mesa_de_entradas_{datetime.now():%Y%m%d_%H%M}.xlsx")
 
 
 @mesa_bp.route("/<int:exp_id>")
