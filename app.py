@@ -28,6 +28,7 @@ from flask import (Flask, render_template, request, redirect,   # noqa: E402
 from markupsafe import Markup                                   # noqa: E402
 from werkzeug.security import check_password_hash               # noqa: E402
 
+import pymysql                                                  # noqa: E402
 from db import get_connection, validasesion, puede, roles_y_menu  # noqa: E402
 from gestion_sindicato import sindicato_bp                      # noqa: E402
 from empleadores import empleadores_bp                          # noqa: E402
@@ -176,6 +177,20 @@ def login():
         flash("Ingresá tu correo y tu contraseña.")
         return render_template("login.html"), 401
 
+    try:
+        return _ingresar(email, clave)
+    except (pymysql.MySQLError, RuntimeError) as e:
+        # La base no respondió o rechazó la conexión (usuario, clave, host,
+        # base, definer de una vista). Sin esto el navegador mostraba un 500
+        # pelado y había que ir al log de Railway para saber qué pasó: se
+        # dice en la pantalla, como en gestion_adm, y el traceback va al log.
+        app.logger.exception("Login: error de base")
+        flash(f"Error al acceder a la base de datos: {e}")
+        return render_template("login.html"), 503
+
+
+def _ingresar(email: str, clave: str):
+    """El login contra la base: valida, arma la sesión y registra el acceso."""
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
