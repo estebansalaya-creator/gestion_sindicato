@@ -1187,6 +1187,59 @@ document.addEventListener('DOMContentLoaded', function () {
   }, 0);
 });
 
+// ── Grillas paginadas en el servidor ──────────────────────────────────
+// table.data-table[data-servidor="<id del form>"] (paginar.py): filtros, orden
+// y página van en la URL y el servidor manda solo una página. La tabla no se
+// inicializa con gestion_admTable —ordenaría y paginaría solo lo que vino—:
+//   · clic en un th[data-col] → ordena por esa columna (el segundo invierte);
+//   · el buscador del form busca al dejar de escribir; los .filtro-srv que
+//     son select se aplican al elegir; los numéricos y fechas, con Enter o
+//     Filtrar. Siempre vuelve a la página 1.
+// Después de recargar, el cursor vuelve al buscador si se estaba buscando.
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('table.data-table[data-servidor]').forEach(function (tbl) {
+    var form = document.getElementById(tbl.dataset.servidor);
+    tbl._grilla = { servidor: true };          // la inicialización automática la saltea
+    if (!form) return;
+    // Los campos vacíos no viajan: la URL queda con lo que de verdad filtra.
+    function limpiar() {
+      Array.from(form.elements).forEach(function (c) {
+        if (c.name && c.value === '' && !c.disabled) c.disabled = true;
+      });
+    }
+    function enviar() { limpiar(); form.submit(); }
+    form.addEventListener('submit', limpiar);
+    // Volver con el botón Atrás muestra el form como quedó: se rehabilita.
+    window.addEventListener('pageshow', function () {
+      Array.from(form.elements).forEach(function (c) { if (c.name) c.disabled = false; });
+    });
+    tbl.querySelectorAll('thead th[data-col]').forEach(function (th) {
+      th.addEventListener('click', function () {
+        form.elements.orden.value = th.dataset.col;
+        form.elements.dir.value = th.classList.contains('sort-asc') ? 'desc' : 'asc';
+        enviar();
+      });
+    });
+    form.querySelectorAll('select.filtro-srv').forEach(function (s) {
+      s.addEventListener('change', enviar);
+    });
+    var q = form.querySelector('input[type="search"]');
+    if (q) {
+      var espera = null;
+      q.addEventListener('input', function () {
+        clearTimeout(espera);
+        espera = setTimeout(function () {
+          try { sessionStorage.setItem('buscar-srv', form.id); } catch (e) {}
+          enviar();
+        }, 500);
+      });
+      var volver = null;
+      try { volver = sessionStorage.getItem('buscar-srv'); sessionStorage.removeItem('buscar-srv'); } catch (e) {}
+      if (volver === form.id) { q.focus(); var n = q.value.length; q.setSelectionRange(n, n); }
+    }
+  });
+});
+
 // ── Barra de desplazamiento arriba de las grillas ─────────────────────
 // Una grilla ancha se desplaza de costado con la barra de abajo, y con 20 o
 // 50 filas esa barra queda fuera de la pantalla: para ver la última columna

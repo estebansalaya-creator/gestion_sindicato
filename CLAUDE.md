@@ -77,6 +77,7 @@ gestion_sindicato/
   lector_pdf_ocr.py       texto del PDF, OCR de escaneos, cotejo PDF ↔ datos (de gestion_adm)
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
+  paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
   crear_usuario.py        alta de usuarios por consola (el primero no se puede crear desde la app)
   importar_aeda.py        empleadores y contactos desde AEDA; simula por defecto, --aplicar graba
   importar_aeda_afiliados.py  padrón de afiliados desde AEDA; ídem
@@ -124,6 +125,8 @@ repetiría en la URL lo que dice el dominio.
 /empleadores         ABM, ?edit=ID
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
 /afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
+                     listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
+                     ?orden, ?dir, ?tam, ?pagina (lo mismo en /afiliados/padron); /afiliados/exportar (.xlsx)
 /afiliados/empleador razón social de un CUIT (ayuda del formulario)
 /afiliados/metricas  tablero; ?estado=todos, ?personas=titulares, ?desde=&hasta=, ?control=<clave>
 /contactos/<tipo>/<id>  POST alta/edición/baja de contacto (tipo: empresa | afiliado | proveedor)
@@ -332,6 +335,11 @@ simplemente no se dibuja, que es más difícil de notar que un error.
 - **Auditoría**: todo cambio deja una fila por campo en `p_afiliados_movimientos` (valores legibles:
   «3 · Hijo soltero…», no «3»). Si un campo se agrega a `CAMPOS` de `afiliados.py`, queda auditado;
   si se agrega al formulario y no ahí, se guarda sin rastro.
+- **Listado paginado en el servidor** (11/11/2026): mandar el padrón entero (5.617 personas) eran 8,5 MB de HTML y
+  en Railway tardaba. Ahora filtros, orden y página van en la URL (`_filtros_listado`, `_consultar_listado`,
+  `paginar.py`) y la base devuelve 50 filas; «Exportar a Excel» es `/afiliados/exportar` con los mismos filtros. Los
+  índices ya estaban bien. El buscador busca cada palabra en apellido, localidad y empleador, y los números (sin
+  guiones) en CUIL, CUIL titular y documento. Es el patrón para cualquier grilla de miles de filas (ver `/estilos`).
 - **Consulta y ABM por separado**: «Consulta del Padrón» (`/afiliados/padron`, menú 23) muestra
   listado y ficha sin poder editar; «ABM de Afiliados» (`/afiliados`, menú 21) edita. Es la misma
   plantilla con `modo`. El permiso **es la opción de menú**: `db.puede(url)` mira si alguna opción

@@ -202,6 +202,13 @@
         <li><strong>Quitar filtro</strong> vuelve cada control a su valor inicial (el que trae el HTML) y está deshabilitado si no hay nada filtrado.</li>
         <li>Un filtro que va al <strong>servidor</strong> en la misma tarjeta que la grilla (período del estado de cuenta) lleva
             <code>class="filtro-srv"</code>: se ve igual, pero la grilla no lo toma y Enter envía el formulario.</li>
+        <li><strong>Grilla paginada en el servidor</strong> (miles de filas, como el padrón de afiliados): la barra es un
+            <code>&lt;form method="get" id="frm-x" class="filter-bar"&gt;</code> con <code>name</code> en cada filtro (<code>filtro-srv</code>),
+            dos hidden <code>orden</code> y <code>dir</code>, la tabla con <code>data-servidor="frm-x"</code> y cada th ordenable con
+            <code>data-col="clave"</code> (y <code>sort-asc</code>/<code>sort-desc</code> en el activo); abajo <code>{% raw %}{{ ui.paginacion_srv(pag) }}{% endraw %}</code>
+            con lo de <code>paginar.paginador()</code>. Se ve igual que las demás: base.html busca al dejar de escribir, aplica los combos al
+            elegir y ordena por columna, todo yendo al servidor. Exportar a Excel es un enlace a una ruta que arma el .xlsx con los mismos
+            filtros (<code>exportar.xlsx</code>). Sin «Todos» en filas por página: es lo que la hacía lenta.</li>
         <li><strong>Exportar a Excel</strong>: las filas filtradas, todas las páginas, sin la columna de acciones. Nombre del archivo en
             <code>data-exportar</code> de la tabla; una celda puede exportar otro valor con <code>data-valor</code>; una columna se excluye con <code>data-no-export</code>.</li>
         <li><strong>Orden</strong>: clic en cualquier encabezado (⇅); ▲ / ▼ marca la columna y el sentido. Todas las grillas, también las chicas de una ficha;

@@ -194,6 +194,23 @@
 </div>
 {%- endmacro %}
 
+{# La misma barra para una grilla paginada en el servidor (paginar.py): los
+   botones son enlaces que repiten los filtros y cambian la página. `pag` es
+   lo que devuelve paginar.paginador(). #}
+{% macro paginacion_srv(pag) -%}
+<div class="pagination-bar">
+  <span class="pagination-info">Página {{ pag.pagina }} de {{ pag.paginas }}</span>
+  <div class="pagination-controls">
+    {%- for e in pag.enlaces -%}
+      {%- if e.sep -%}<span class="page-sep">…</span>
+      {%- elif e.url -%}<a class="page-btn{{ ' active' if e.activo }}" href="{{ e.url }}"{{ ' aria-current="page"'|safe if e.activo }}>{{ e.etiqueta }}</a>
+      {%- else -%}<span class="page-btn deshabilitado" aria-disabled="true">{{ e.etiqueta }}</span>
+      {%- endif -%}
+    {%- endfor -%}
+  </div>
+</div>
+{%- endmacro %}
+
 
 {# ── Mensajes ────────────────────────────────────────────────────────────────
    Los flash de la vista anterior y la lista de errores de validación. Un

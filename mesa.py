@@ -81,6 +81,10 @@ def bandeja():
                   LEFT JOIN c_proveedores p ON p.id = e.id_proveedor
                   LEFT JOIN f_comprobantes_arca c ON c.id = e.id_comprobante
                   LEFT JOIN arca_tipo_comprobante tc ON tc.codigo = LPAD(c.tipo_comprobante, 3, '0')
+                 -- Los reintegros de AEDA (estado «reintegro», sin proveedor) no
+                 -- pasan por la mesa: se ven en Reintegros. Pedido del 11/11/2026.
+                 -- El expediente sigue abriéndose por su enlace (/mesa/<id>).
+                 WHERE e.estado <> 'reintegro'
                  ORDER BY e.id DESC
             """)
             expedientes = cur.fetchall()
@@ -93,7 +97,8 @@ def bandeja():
     resumen["importe_abiertos"] = sum((-(e["importe_total"] or 0) if e["credito"] else (e["importe_total"] or 0))
                                       for e in expedientes if e["estado"] in cd.ESTADOS_ABIERTOS)
     return render_template("mesa/bandeja.html", expedientes=expedientes, resumen=resumen,
-                           areas=areas, usuarios=usuarios, estados=cd.ESTADOS,
+                           areas=areas, usuarios=usuarios,
+                           estados=[e for e in cd.ESTADOS if e[0] != "reintegro"],
                            estados_label=cd.ESTADOS_LABEL, estados_tipo=cd.ESTADOS_TIPO,
                            abiertos=cd.ESTADOS_ABIERTOS, mi_id=session.get("sind_usuario_id"),
                            puede_cargar=puede(url_for("comprobantes.carga")))

@@ -44,7 +44,7 @@
 {% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'documentacion', 'contactos', 'movimientos') %}
   {% set inicial = request.args.get('solapa') %}
 {% endif %}
-{% set lista_solapas = [('listado', 'Listado', afiliados|length)] %}
+{% set lista_solapas = [('listado', 'Listado', pag.total)] %}
 {# En la consulta no hay «Nuevo»: la solapa de datos aparece solo con una ficha abierta. #}
 {% if not consulta or editando %}
   {% set lista_solapas = lista_solapas + [('datos', 'Ficha' if consulta else ('Editar' if editando else 'Nuevo'), None)] %}
@@ -62,64 +62,84 @@
 <!-- ── Listado ────────────────────────────────────────────────────────────── -->
 <div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
   <div class="card">
-    {% call ui.barra_filtros('Filtrar por CUIL, apellido, documento, empleador…') %}
-      {# Arranca en «Activos»: es lo que se busca casi siempre. Quitar filtro
-         vuelve acá, no a «Todos». #}
-      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
-        <option value="activo" selected>Activos</option>
-        <option value="baja">Bajas</option>
-        <option value="">Activos y bajas</option>
+    {# Paginada en el servidor (paginar.py): el padrón tiene miles de personas y
+       mandarlo entero pesaba 8,5 MB. Filtros, orden y página van en la URL; el
+       buscador busca al dejar de escribir y los combos al elegir; la edad, con
+       Filtrar o Enter. Exportar a Excel baja todo lo filtrado, no la página. #}
+    <form method="get" action="{{ url_for(endpoint_listado) }}" class="filter-bar" id="frm-afiliados">
+      <input type="hidden" name="orden" value="{{ f.orden if f.orden != 'nombre' }}">
+      <input type="hidden" name="dir" value="{{ f.dir if f.dir != 'asc' }}">
+      <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+        <input type="search" name="q" value="{{ f.q }}" class="filter-input"
+               placeholder="CUIL, apellido, documento, empleador, localidad…"></label>
+      {% call ui.filtro('Estado') %}<select name="estado" class="filtro-srv">
+        <option value="activo" {{ 'selected' if f.estado == 'activo' }}>Activos</option>
+        <option value="baja" {{ 'selected' if f.estado == 'baja' }}>Bajas</option>
+        <option value="todos" {{ 'selected' if f.estado == 'todos' }}>Activos y bajas</option>
       </select>{% endcall %}
-      {% call ui.filtro('Titular o familiar') %}<select class="filtro" id="f-tipo">
+      {% call ui.filtro('Titular o familiar') %}<select name="tipo" class="filtro-srv">
         <option value="">Titulares y familiares</option>
-        <option value="titular">Solo titulares</option>
-        <option value="familiar">Solo familiares</option>
+        <option value="titular" {{ 'selected' if f.tipo == 'titular' }}>Solo titulares</option>
+        <option value="familiar" {{ 'selected' if f.tipo == 'familiar' }}>Solo familiares</option>
       </select>{% endcall %}
-      {% call ui.filtro('Sexo') %}<select class="filtro" id="f-sexo">
+      {% call ui.filtro('Sexo') %}<select name="sexo" class="filtro-srv">
         <option value="">Todos</option>
-        <option value="F">Femenino</option>
-        <option value="M">Masculino</option>
-        <option value="X">X</option>
-        <option value="-">Sin dato</option>
+        {% for v, txt in [('F', 'Femenino'), ('M', 'Masculino'), ('X', 'X'), ('-', 'Sin dato')] %}
+        <option value="{{ v }}" {{ 'selected' if f.sexo == v }}>{{ txt }}</option>
+        {% endfor %}
       </select>{% endcall %}
       {# Edad en años cumplidos, ambos extremos incluidos. Con un extremo
-         puesto, quien no tiene fecha de nacimiento queda afuera: no hay forma
-         de saber si entra en el rango. #}
-      {% call ui.filtro('Edad desde') %}<input type="number" class="filtro filtro-num" id="f-edad-desde"
-          min="0" max="120" step="1" inputmode="numeric">{% endcall %}
-      {% call ui.filtro('Edad hasta') %}<input type="number" class="filtro filtro-num" id="f-edad-hasta"
-          min="0" max="120" step="1" inputmode="numeric">{% endcall %}
-      {% call ui.filtro('Atributo') %}<select class="filtro" id="f-atributo">
+         puesto, quien no tiene fecha de nacimiento queda afuera. #}
+      {% call ui.filtro('Edad desde') %}<input type="number" name="edad_desde" class="filtro-srv filtro-num"
+          value="{{ f.edad_desde if f.edad_desde is not none }}" min="0" max="120" step="1" inputmode="numeric">{% endcall %}
+      {% call ui.filtro('Edad hasta') %}<input type="number" name="edad_hasta" class="filtro-srv filtro-num"
+          value="{{ f.edad_hasta if f.edad_hasta is not none }}" min="0" max="120" step="1" inputmode="numeric">{% endcall %}
+      {% call ui.filtro('Atributo') %}<select name="atributo" class="filtro-srv">
         <option value="">Todos</option>
-        <option value="con">Con algún atributo</option>
-        <option value="sin">Sin atributos</option>
-        {% for atr in atributos %}<option value="{{ atr.id }}">{{ atr.rotulo }}</option>{% endfor %}
+        <option value="con" {{ 'selected' if f.atributo == 'con' }}>Con algún atributo</option>
+        <option value="sin" {{ 'selected' if f.atributo == 'sin' }}>Sin atributos</option>
+        {% for atr in atributos %}<option value="{{ atr.id }}" {{ 'selected' if f.atributo == atr.id|string }}>{{ atr.rotulo }}</option>{% endfor %}
       </select>{% endcall %}
-    {% endcall %}
+      <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+      {% if hay_filtros %}
+      <a href="{{ url_for(endpoint_listado) }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+      {% else %}
+      <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+      {% endif %}
+      <div class="filter-bar-fin">
+        <span class="filter-count">Mostrando {{ pag.desde }}–{{ pag.hasta }} de {{ pag.total }} registros</span>
+        {% if pag.total %}
+        <a href="{{ url_for('afiliados.exportar_listado', **args_export) }}" class="btn btn-excel btn-sm">{{ ui.icono('planilla') }}Exportar a Excel</a>
+        {% else %}
+        <button type="button" class="btn btn-excel btn-sm" disabled>{{ ui.icono('planilla') }}Exportar a Excel</button>
+        {% endif %}
+        <select name="tam" class="page-size-select filtro-srv" aria-label="Filas por página">
+          {% for n in [20, 50, 100] %}<option value="{{ n }}"{{ ' selected' if n == pag.tam }}>{{ n }} por pág.</option>{% endfor %}
+        </select>
+      </div>
+    </form>
     <div class="data-table-wrap">
-      <table class="data-table" id="tbl-afiliados" data-exportar="Padron de afiliados">
+      {% macro th(clave, texto, clase='') -%}
+      <th data-col="{{ clave }}" class="{{ clase }} {{ ('sort-' ~ f.dir) if f.orden == clave }}">{{ texto }}</th>
+      {%- endmacro %}
+      <table class="data-table" id="tbl-afiliados" data-servidor="frm-afiliados">
         <thead>
           <tr>
             <th class="col-acciones" data-no-sort>Acciones</th>
-            <th>CUIL</th>
-            <th>Apellido y nombres</th>
-            <th>Estado</th>
-            <th>Parentesco</th>
-            <th>CUIL titular</th>
-            <th>Documento</th>
-            <th class="th-right">Edad</th>
-            <th>Empleador</th>
-            <th>Localidad</th>
+            {{ th('cuil', 'CUIL') }}
+            {{ th('nombre', 'Apellido y nombres') }}
+            {{ th('estado', 'Estado') }}
+            {{ th('parentesco', 'Parentesco') }}
+            {{ th('cuil_titular', 'CUIL titular') }}
+            {{ th('documento', 'Documento') }}
+            {{ th('edad', 'Edad', 'th-right') }}
+            {{ th('empleador', 'Empleador') }}
+            {{ th('localidad', 'Localidad') }}
           </tr>
         </thead>
         <tbody>
           {% for f in afiliados %}
-          <tr class="{{ 'fila-baja' if not f.activo }}"
-              data-estado="{{ 'activo' if f.activo else 'baja' }}"
-              data-tipo="{{ 'titular' if f.cod_parentesco == 0 else 'familiar' }}"
-              data-sexo="{{ f.sexo or '-' }}"
-              data-edad="{{ f.edad if f.edad is not none else '' }}"
-              data-atributos="{{ f.atributos|map(attribute='id')|join(',') }}">
+          <tr class="{{ 'fila-baja' if not f.activo }}">
             <td><div class="acciones">
               {% if consulta %}
               {{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado)) }}
@@ -133,9 +153,8 @@
               {% endif %}
             </div></td>
             <td class="td-mono">{{ f.cuil or '—' }}</td>
-            {# Los atributos debajo del nombre, como las marcas de un comprobante;
-               al Excel va solo el nombre (data-valor). #}
-            <td class="td-fuerte" data-valor="{{ f.nombre_completo }}">{{ f.nombre_completo }}
+            {# Los atributos debajo del nombre, como las marcas de un comprobante. #}
+            <td class="td-fuerte">{{ f.nombre_completo }}
               {% if f.atributos %}<span class="marcas">{% for atr in f.atributos %}{{ ui.estado(atr.rotulo, 'info') }}{% endfor %}</span>{% endif %}</td>
             <td>{{ ui.activo(f.activo, f.fecha_baja) }}</td>
             <td class="td-muted">{{ f.parentesco or '—' }}</td>
@@ -146,14 +165,15 @@
             <td class="td-muted">{{ f.localidad or '—' }}</td>
           </tr>
           {% else %}
-          <tr class="no-data-row"><td colspan="11" class="no-data">
-            El padrón está vacío. Se carga desde AEDA con importar_aeda_afiliados.py.
+          <tr class="no-data-row"><td colspan="10" class="no-data">
+            {% if hay_filtros %}Sin resultados para este filtro.
+            {% else %}No hay afiliados activos. El padrón se carga desde AEDA con importar_aeda_afiliados.py.{% endif %}
           </td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
-    {{ ui.paginacion() }}
+    {{ ui.paginacion_srv(pag) }}
   </div>
 </div>
 
@@ -775,42 +795,7 @@ function sincronizarTitular() {
 }
 
 document.addEventListener('DOMContentLoaded', function () {
-  var estado    = document.getElementById('f-estado');
-  var tipo      = document.getElementById('f-tipo');
-  var sexo      = document.getElementById('f-sexo');
-  var edadDesde = document.getElementById('f-edad-desde');
-  var edadHasta = document.getElementById('f-edad-hasta');
-  var atributo  = document.getElementById('f-atributo');
-  function entero(input) {
-    var v = parseInt(input.value, 10);
-    return isNaN(v) ? null : v;
-  }
-  // Filtro, orden, paginación y exportación los pone base.html. El padrón
-  // entero viene de una vez y se filtra en el navegador, sin volver a la base.
-  gestion_admTable('tbl-afiliados', {
-    pageSize: 20,
-    filtroExtra: function (tr) {
-      if (estado.value && tr.dataset.estado !== estado.value) return false;
-      if (tipo.value && tr.dataset.tipo !== tipo.value) return false;
-      if (sexo.value && tr.dataset.sexo !== sexo.value) return false;
-
-      var desde = entero(edadDesde), hasta = entero(edadHasta);
-      if (desde !== null || hasta !== null) {
-        if (tr.dataset.edad === '') return false;     // sin fecha de nacimiento
-        var edad = parseInt(tr.dataset.edad, 10);
-        if (desde !== null && edad < desde) return false;
-        if (hasta !== null && edad > hasta) return false;
-      }
-
-      if (atributo.value) {
-        var tiene = tr.dataset.atributos ? tr.dataset.atributos.split(',') : [];
-        if (atributo.value === 'con') { if (!tiene.length) return false; }
-        else if (atributo.value === 'sin') { if (tiene.length) return false; }
-        else if (tiene.indexOf(atributo.value) < 0) return false;
-      }
-      return true;
-    }
-  });
+  // El listado lo maneja el servidor (data-servidor): no se inicializa acá.
   if (document.getElementById('tbl-movimientos')) gestion_admTable('tbl-movimientos', { pageSize: 20 });
 
   sincronizarTitular();

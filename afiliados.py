@@ -38,14 +38,18 @@ regla que los separe bien (falla con los apellidos compuestos), y dos campos
 que nadie separaba solo confundían (`sql/afiliados_apellido_nombres_20261110.sql`).
 """
 
+import io
 import logging
-from datetime import date
+import re
+from datetime import date, datetime
 
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file)
 
 import contactos as _contactos
 import documentacion as _doc
+import paginar
+from exportar import xlsx
 from db import get_connection, puede, validasesion
 from empleadores import cuit_valido     # CUIL y CUIT comparten el dígito verificador
 
@@ -885,12 +889,245 @@ def _cambiar_estado(accion: str, id_af: int):
     return redirect(url_for("afiliados.abm_afiliados", edit=id_af))
 
 
+# =============================================================================
+# Listado (paginado en el servidor)
+#
+# Hasta el 11/11/2026 el listado mandaba el padrón entero (5.617 personas, 8,5 MB
+# de HTML) y filtraba en el navegador: en Railway tardaba en armarse y en
+# dibujarse. Ahora filtros, orden y página viajan en la URL y la base devuelve
+# una página (paginar.py). Los índices ya estaban bien: lo lento era el volumen.
+# =============================================================================
+
+PARAMS_LISTADO = ("q", "estado", "tipo", "sexo", "edad_desde", "edad_hasta",
+                  "atributo", "orden", "dir", "tam", "pagina")
+
+# Columna de la grilla → expresión para ORDER BY. Lo que llega en ?orden= se
+# busca acá: nunca se pega en el SQL.
+ORDEN_LISTADO = {
+    "cuil":         "a.cuil",
+    "nombre":       "a.apellido_nombres",
+    "estado":       "a.activo",
+    "parentesco":   "p.descripcion",
+    "cuil_titular": "a.cuil_titular",
+    "documento":    "a.nro_documento",
+    "edad":         "edad",
+    "empleador":    "e.razon_social",
+    "localidad":    "a.localidad",
+}
+
+# Edad en años cumplidos, la misma que se muestra.
+SQL_EDAD = "TIMESTAMPDIFF(YEAR, a.fecha_nacimiento, CURDATE())"
+
+SQL_LISTADO_FROM = """
+      FROM p_afiliados a
+      LEFT JOIN p_parentesco p ON p.codigo = a.cod_parentesco
+      LEFT JOIN p_empresas e
+             ON a.cuit_empleador REGEXP '^[0-9]+$'
+            AND e.CUIT = CAST(a.cuit_empleador AS UNSIGNED)
+"""
+
+
+def _entero(valor, minimo=0, maximo=150):
+    try:
+        n = int(str(valor).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if minimo <= n <= maximo else None
+
+
+def _filtros_listado(args) -> dict:
+    """Los filtros del listado, validados. Sin ?estado= arranca en Activos, que
+    es lo que se busca casi siempre (y a donde vuelve «Quitar filtro»)."""
+    estado = args.get("estado") or "activo"
+    orden = args.get("orden") if args.get("orden") in ORDEN_LISTADO else "nombre"
+    return {
+        "q":          (args.get("q") or "").strip()[:100],
+        "estado":     estado if estado in ("activo", "baja", "todos") else "activo",
+        "tipo":       args.get("tipo") if args.get("tipo") in ("titular", "familiar") else "",
+        "sexo":       args.get("sexo") if args.get("sexo") in ("F", "M", "X", "-") else "",
+        "edad_desde": _entero(args.get("edad_desde")),
+        "edad_hasta": _entero(args.get("edad_hasta")),
+        "atributo":   (args.get("atributo") or "").strip(),
+        "orden":      orden,
+        "dir":        "desc" if args.get("dir") == "desc" else "asc",
+        "tam":        paginar.tamano(args.get("tam")),
+        "pagina":     paginar.pagina(args.get("pagina")),
+    }
+
+
+def _hay_filtros(f: dict) -> bool:
+    return bool(f["q"] or f["estado"] != "activo" or f["tipo"] or f["sexo"]
+                or f["edad_desde"] is not None or f["edad_hasta"] is not None
+                or f["atributo"])
+
+
+def _args_listado(f: dict) -> dict:
+    """Los filtros como van en la URL (sin los que están en su valor de siempre)."""
+    return {
+        "q": f["q"] or None,
+        "estado": None if f["estado"] == "activo" else f["estado"],
+        "tipo": f["tipo"] or None, "sexo": f["sexo"] or None,
+        "edad_desde": f["edad_desde"], "edad_hasta": f["edad_hasta"],
+        "atributo": f["atributo"] or None,
+        "orden": None if f["orden"] == "nombre" else f["orden"],
+        "dir": None if f["dir"] == "asc" else f["dir"],
+        "tam": None if f["tam"] == paginar.TAMANO_DEFAULT else f["tam"],
+    }
+
+
+def _where_listado(f: dict) -> tuple[str, list]:
+    cond, params = [], []
+    if f["estado"] == "activo":
+        cond.append("a.activo = 1")
+    elif f["estado"] == "baja":
+        cond.append("a.activo = 0")
+
+    if f["tipo"] == "titular":
+        cond.append("a.cod_parentesco = 0")
+    elif f["tipo"] == "familiar":
+        cond.append("COALESCE(a.cod_parentesco, -1) <> 0")
+
+    if f["sexo"] == "-":
+        cond.append("COALESCE(a.sexo, '') = ''")
+    elif f["sexo"]:
+        cond.append("a.sexo = %s")
+        params.append(f["sexo"])
+
+    # Con un extremo puesto, quien no tiene fecha de nacimiento queda afuera:
+    # no hay forma de saber si entra en el rango.
+    if f["edad_desde"] is not None:
+        cond.append(f"a.fecha_nacimiento IS NOT NULL AND {SQL_EDAD} >= %s")
+        params.append(f["edad_desde"])
+    if f["edad_hasta"] is not None:
+        cond.append(f"a.fecha_nacimiento IS NOT NULL AND {SQL_EDAD} <= %s")
+        params.append(f["edad_hasta"])
+
+    # Solo cuentan los atributos activos: uno desactivado (la «AEDA» que vino
+    # de la obra social) ni se muestra ni se ofrece en el filtro.
+    existe = ("EXISTS (SELECT 1 FROM p_atributos_por_afiliado x "
+              "JOIN p_afiliado_atributo t ON t.id = x.id_atributo AND t.activo = 1 "
+              "WHERE x.id_afiliado = a.id_afiliado{extra})")
+    if f["atributo"] == "con":
+        cond.append(existe.format(extra=""))
+    elif f["atributo"] == "sin":
+        cond.append("NOT " + existe.format(extra=""))
+    elif f["atributo"].isdigit():
+        cond.append(existe.format(extra=" AND x.id_atributo = %s"))
+        params.append(int(f["atributo"]))
+
+    # Cada palabra tiene que aparecer en algún dato: «perez cordoba» encuentra
+    # al Pérez de Córdoba. La collation de la base no distingue mayúsculas ni
+    # acentos. Los números se comparan sin guiones («20-12345678-3»).
+    for palabra in f["q"].split()[:6]:
+        txt = f"%{palabra}%"
+        partes = ["a.apellido_nombres LIKE %s", "a.localidad LIKE %s", "e.razon_social LIKE %s"]
+        params += [txt, txt, txt]
+        digitos = re.sub(r"\D", "", palabra)
+        if digitos:
+            num = f"%{digitos}%"
+            partes += ["a.cuil LIKE %s", "a.cuil_titular LIKE %s", "a.nro_documento LIKE %s"]
+            params += [num, num, num]
+        cond.append("(" + " OR ".join(partes) + ")")
+
+    return ("WHERE " + " AND ".join(cond)) if cond else "", params
+
+
+def _consultar_listado(cur, f: dict, atributos_activos: list[dict], paginado=True):
+    """(filas, total) del listado con los filtros de `f`. Sin `paginado`, todas
+    las que cumplen (la exportación a Excel)."""
+    where, params = _where_listado(f)
+    cur.execute(f"SELECT COUNT(*) AS n {SQL_LISTADO_FROM} {where}", params)
+    total = cur.fetchone()["n"]
+
+    sentido = "DESC" if f["dir"] == "desc" else "ASC"
+    col = ORDEN_LISTADO[f["orden"]]
+    # Los vacíos van al final en los dos sentidos: ordenar por edad no tiene
+    # que empezar por los que no tienen fecha de nacimiento.
+    orden = f"{col} IS NULL, {col} {sentido}, a.apellido_nombres, a.id_afiliado"
+    limite = ""
+    if paginado:
+        # Una página pedida más allá del final muestra la última (paginador
+        # hace la misma cuenta para los enlaces).
+        paginas = max(1, -(-total // f["tam"]))
+        offset = (min(f["pagina"], paginas) - 1) * f["tam"]
+        limite = f"LIMIT {int(f['tam'])} OFFSET {int(offset)}"
+
+    cur.execute(f"""
+        SELECT a.id_afiliado, a.cuil, a.cuil_titular, a.cod_parentesco,
+               p.descripcion AS parentesco,
+               a.apellido_nombres AS nombre_completo,
+               a.nro_documento, a.localidad, a.activo, a.fecha_baja,
+               {SQL_EDAD} AS edad, a.sexo,
+               e.razon_social AS empleador,
+               -- CAST: GROUP_CONCAT de enteros vuelve binario y pymysql lo
+               -- entrega como bytes.
+               (SELECT GROUP_CONCAT(CAST(x.id_atributo AS CHAR))
+                  FROM p_atributos_por_afiliado x
+                 WHERE x.id_afiliado = a.id_afiliado) AS atributos
+        {SQL_LISTADO_FROM} {where}
+        ORDER BY {orden}
+        {limite}
+    """, params)
+    filas = cur.fetchall()
+
+    # Las marcas de cada uno, en el orden del catálogo y solo las activas.
+    activos = [atr["id"] for atr in atributos_activos]
+    por_id = {atr["id"]: atr for atr in atributos_activos}
+    for fila in filas:
+        tiene = {int(i) for i in (fila["atributos"] or "").split(",") if i.isdigit()}
+        fila["atributos"] = [por_id[i] for i in activos if i in tiene]
+    return filas, total
+
+
+@afiliados_bp.route("/afiliados/exportar")
+def exportar_listado():
+    """El listado a Excel con los filtros de la pantalla: todas las filas que
+    cumplen, no solo la página que se ve."""
+    if not validasesion():
+        return redirect(url_for("login"))
+    if not puede_consulta():
+        flash("!No tenés permiso para consultar el padrón.")
+        return redirect(url_for("menu"))
+
+    f = _filtros_listado(request.args)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, rotulo, descripcion FROM p_afiliado_atributo "
+                        "WHERE activo = 1 ORDER BY id")
+            filas, _total = _consultar_listado(cur, f, cur.fetchall(), paginado=False)
+
+    columnas = [{"titulo": "CUIL", "tipo": "t"}, {"titulo": "Apellido y nombres", "tipo": ""},
+                {"titulo": "Estado", "tipo": ""}, {"titulo": "Fecha de baja", "tipo": ""},
+                {"titulo": "Parentesco", "tipo": ""}, {"titulo": "CUIL titular", "tipo": "t"},
+                {"titulo": "Documento", "tipo": "t"}, {"titulo": "Edad", "tipo": "n"},
+                {"titulo": "Sexo", "tipo": ""}, {"titulo": "Empleador", "tipo": ""},
+                {"titulo": "Localidad", "tipo": ""}, {"titulo": "Atributos", "tipo": ""}]
+    datos = [[
+        r["cuil"] or "", r["nombre_completo"] or "",
+        "Activo" if r["activo"] else "Baja",
+        r["fecha_baja"].strftime("%d/%m/%Y") if r["fecha_baja"] else "",
+        r["parentesco"] or "",
+        r["cuil_titular"] if r["cod_parentesco"] != TITULAR and r["cuil_titular"] else "",
+        r["nro_documento"] or "", "" if r["edad"] is None else str(r["edad"]),
+        r["sexo"] or "", r["empleador"] or "", r["localidad"] or "",
+        ", ".join(atr["rotulo"] for atr in r["atributos"]),
+    ] for r in filas]
+
+    nombre = "Padron de afiliados"
+    return send_file(
+        io.BytesIO(xlsx(nombre, columnas, datos)),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        as_attachment=True, download_name=f"Padron_de_afiliados_{datetime.now():%Y%m%d_%H%M}.xlsx",
+    )
+
+
 def _pantalla(afiliado, atributos_sel, errores, modo: str):
     """
     Arma la pantalla en sus dos modos. La consulta abre la ficha con ?ver=ID;
     el ABM, con ?edit=ID o ?familiar_de=CUIL.
     """
     consulta = modo == "consulta"
+    endpoint = "afiliados.padron" if consulta else "afiliados.abm_afiliados"
     with get_connection() as conn:
         with conn.cursor() as cur:
             cat = _catalogos(cur)
@@ -952,44 +1189,18 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
                 """, (afiliado["id_afiliado"],))
                 movimientos = cur.fetchall()
 
-            # Todo el padrón de una vez, como empleadores: el JS de base.html
-            # filtra, ordena y pagina en el navegador sin volver a la base.
-            cur.execute("""
-                SELECT a.id_afiliado, a.cuil, a.cuil_titular, a.cod_parentesco,
-                       p.descripcion AS parentesco,
-                       a.apellido_nombres AS nombre_completo,
-                       a.nro_documento, a.localidad, a.activo, a.fecha_baja,
-                       TIMESTAMPDIFF(YEAR, a.fecha_nacimiento, CURDATE()) AS edad,
-                       a.sexo, x.atributos,
-                       e.razon_social AS empleador
-                  FROM p_afiliados a
-                  LEFT JOIN p_parentesco p ON p.codigo = a.cod_parentesco
-                  LEFT JOIN p_empresas e
-                         ON a.cuit_empleador REGEXP '^[0-9]+$'
-                        AND e.CUIT = CAST(a.cuit_empleador AS UNSIGNED)
-                  -- CAST: GROUP_CONCAT de enteros vuelve binario y pymysql lo
-                  -- entrega como bytes.
-                  LEFT JOIN (SELECT id_afiliado,
-                                    GROUP_CONCAT(CAST(id_atributo AS CHAR)) AS atributos
-                               FROM p_atributos_por_afiliado
-                              GROUP BY id_afiliado) x ON x.id_afiliado = a.id_afiliado
-                 ORDER BY a.apellido_nombres
-            """)
-            afiliados = cur.fetchall()
-
-            # Las marcas de cada uno, en el orden del catálogo y solo las
-            # activas: una desactivada (la «AEDA» de la obra social) ni se
-            # muestra ni se ofrece en el filtro.
-            activos = [atr["id"] for atr in cat["atributos"]]
-            por_id = {atr["id"]: atr for atr in cat["atributos"]}
-            for f in afiliados:
-                tiene = {int(i) for i in (f["atributos"] or "").split(",") if i.isdigit()}
-                f["atributos"] = [por_id[i] for i in activos if i in tiene]
+            # Una página del listado, con los filtros de la URL (ver «Listado»).
+            filtros = _filtros_listado(request.args)
+            afiliados, total = _consultar_listado(cur, filtros, cat["atributos"])
 
     return render_template(
         "afiliados/abm_afiliados.html",
         modo=modo, puede_abm=puede_abm(),
         afiliados=afiliados, afiliado=afiliado, editando=editando,
+        f=filtros, hay_filtros=_hay_filtros(filtros), endpoint_listado=endpoint,
+        pag=paginar.paginador(total, filtros["pagina"], filtros["tam"], endpoint,
+                              _args_listado(filtros)),
+        args_export=_args_listado(filtros),
         atributos_sel=atributos_sel, grupo=grupo, empleador=empleador,
         contactos=contactos_af, areas_contacto=areas, movimientos=movimientos,
         relaciones=relaciones, documentos=documentos, tipos_doc_adj=tipos_doc_adj,
