@@ -78,6 +78,19 @@ def _secret_key() -> str:
 app = Flask(__name__)
 app.secret_key = _secret_key()
 
+# Railway termina el HTTPS en su proxy y le pasa la request a Flask por http:
+# sin ProxyFix, url_for(_external) y los redirects salen como http y el host
+# como el interno. Lo mismo que gestion_adm.py. En IIS no llega el encabezado
+# X-Forwarded-* y ProxyFix no cambia nada.
+from werkzeug.middleware.proxy_fix import ProxyFix              # noqa: E402
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
+
+# En Railway todo es HTTPS (aeda.seggestion.com.ar): la cookie de sesión no
+# viaja por http. En IIS (http://servidor:5001) no se puede exigir, por eso
+# depende de la variable que Railway define en todos sus servicios.
+if os.getenv("RAILWAY_ENVIRONMENT"):
+    app.config["SESSION_COOKIE_SECURE"] = True
+
 # Nombre de cookie propio. Si esta aplicación y gestion_adm terminan bajo el
 # mismo dominio, cookies con el mismo nombre se pisan entre sí y entrar a una
 # desloguea de la otra.

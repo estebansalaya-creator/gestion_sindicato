@@ -192,6 +192,24 @@ de gestion_adm (`C:\web`), donde quedan los commits anteriores y la carpeta est�
 
 ---
 
+## Railway (aeda.seggestion.com.ar)
+
+Desde el 11/11/2026 el sindicato también corre en Railway, con el subdominio `aeda.seggestion.com.ar`
+(gestion_adm es `oseda.seggestion.com.ar`). El servicio web se arma desde **este** repositorio
+(`gestion_sindicato`), no desde el de gestion_adm: si la pantalla de ingreso dice «Módulo Administrativo»
+y pide `DB_USER`, el servicio está apuntando al repositorio equivocado.
+
+- **Arranque**: `Procfile` (gunicorn `app:app` en `[::]:$PORT`, la red privada de Railway es IPv6) y
+  `requirements.txt` (sin `pyodbc`: los importadores de AEDA se corren desde la red local).
+- **HTTPS**: `ProxyFix` en `app.py`, como gestion_adm; con `RAILWAY_ENVIRONMENT` la cookie va `Secure`.
+- **Base**: `sindicato` restaurada en el MySQL de Railway. `app_sindicato@'%'` y las vistas los deja
+  `sql/railway_usuario_aplicacion_20261111.sql`. Variables: `SIND_DB_HOST=${{MySQL.MYSQLHOST}}`,
+  `SIND_DB_PORT=${{MySQL.MYSQLPORT}}`, `SIND_DB_USER`, `SIND_DB_PASS`, `SIND_SECRET_KEY`,
+  `SIND_ADJUNTOS=/data/adjuntos` (volumen en `/data`) y las `SIND_CONTABLE_*`.
+- **Importadores de AEDA**: desde la máquina local, con el `.env` apuntando al proxy público del MySQL de
+  Railway. La base viva es la de Railway.
+- **OCR** (opcional): `RAILPACK_DEPLOY_APT_PACKAGES="tesseract-ocr tesseract-ocr-spa"`.
+
 ## IIS
 
 El sitio corre con wfastcgi. **El sitio se llama `aeda` en la consola de IIS**, no `sindicato`:

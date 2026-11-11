@@ -1,0 +1,35 @@
+# Dependencias de gestion_sindicato (el servicio web de Railway y el IIS).
+#
+# Las de lectura de PDF, OCR, Excel y ARCA se importan recién cuando alguien
+# abre la función: la aplicación arranca sin ellas y la pantalla que las usa
+# falla o degrada. Por eso van todas acá aunque el arranque no las pida.
+
+flask
+werkzeug
+pymysql
+python-dotenv
+gunicorn
+requests
+reportlab
+
+# Exportar a Excel de las grillas y el .xlsx de Mis Comprobantes.
+openpyxl
+
+# Carga de comprobantes: el texto del PDF.
+pdfplumber
+
+# Comprobantes escaneados (OCR). PyMuPDF trae su motor en el wheel;
+# pytesseract necesita además el binario `tesseract-ocr`, que en Railway se
+# agrega con RAILPACK_DEPLOY_APT_PACKAGES="tesseract-ocr tesseract-ocr-spa".
+# Sin el binario, lector_pdf_ocr lo detecta y el escaneo se carga a mano.
+pymupdf
+pytesseract
+Pillow
+
+# Firma del pedido a ARCA (constatación WSCDC, opcional).
+cryptography
+
+# NO va pyodbc: lo usan solo los importadores de AEDA, que se corren desde la
+# máquina de la red local (Railway no llega al SQL Server de AEDA). En Linux
+# además necesita unixODBC y el driver de Microsoft. En Windows:
+#     pip install pyodbc
