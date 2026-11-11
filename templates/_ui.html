@@ -1,0 +1,353 @@
+{#
+═══════════════════════════════════════════════════════════════════════════════
+  _ui.html — macros de interfaz. Junto con static/css/sindicato.css, es todo
+  lo que una pantalla necesita para verse como el resto.
+
+      {% import "_ui.html" as ui %}
+
+      {{ ui.icono('ver') }}
+      {{ ui.accion('editar', href=url_for('x.abm', edit=f.id)) }}
+      {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': f.id}) }}
+      {{ ui.boton('Nuevo afiliado', href=..., icono='agregar') }}
+      {{ ui.barra_filtros('Filtrar por CUIL, apellido…') }}
+      {{ ui.paginacion() }}
+      {{ ui.mensajes(errores) }}
+      {{ ui.estado('Activo', 'ok') }}   {{ ui.activo(fila.activo) }}   {{ ui.si_no(v) }}
+
+  La guía con todo dibujado está en /estilos.
+
+  POR QUÉ MACROS Y NO MARCADO COPIADO
+  El ícono, el color y el título de cada acción salen de una tabla, acá
+  abajo. En gestion_adm cada pantalla escribía su SVG y su color: el ojo
+  apareció en verde, en azul y en gris, y el tacho a veces era una X.
+═══════════════════════════════════════════════════════════════════════════════
+#}
+
+
+{# ── Íconos ──────────────────────────────────────────────────────────────────
+   Trazo de 2px sobre una caja de 24, color = currentColor: toman el color
+   del botón o del texto que los contiene. Para agregar uno, sumarlo acá y
+   a la guía; no dibujar SVG sueltos en las pantallas. #}
+{% set _ICONOS = {
+  'ver':       '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  'editar':    '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  'borrar':    '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
+  'baja':      '<circle cx="12" cy="12" r="9"/><line x1="5.6" y1="5.6" x2="18.4" y2="18.4"/>',
+  'reactivar': '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/>',
+  'agregar':   '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  'cerrar':    '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+  'guardar':   '<polyline points="20 6 9 17 4 12"/>',
+  'volver':    '<line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>',
+  'buscar':    '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+  'filtro':    '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>',
+  'quitar_filtro': '<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/><line x1="2" y1="2" x2="22" y2="22"/>',
+  'descargar': '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>',
+  'subir':     '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
+  'pdf':       '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
+  'planilla':  '<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="9" y1="3" x2="9" y2="21"/>',
+  'imprimir':  '<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/>',
+  'historial': '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  'aplicaciones': '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  'desaplicar': '<path d="M9 17H7A5 5 0 0 1 7 7"/><path d="M15 7h2a5 5 0 0 1 4 8"/><line x1="8" y1="12" x2="12" y2="12"/><line x1="2" y1="2" x2="22" y2="22"/>',
+  'mail':      '<rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="22 6 12 13 2 6"/>',
+  'telefono':  '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.4 1.8.7 2.7a2 2 0 0 1-.5 2.1L8 9.8a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.7.7a2 2 0 0 1 1.7 2z"/>',
+  'usuario':   '<circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>',
+  'grupo':     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+  'empresa':   '<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M12 6h.01M16 6h.01M8 10h.01M12 10h.01M16 10h.01M8 14h.01M12 14h.01M16 14h.01"/>',
+  'dinero':    '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/>',
+  'calendario':'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>',
+  'ok':        '<circle cx="12" cy="12" r="10"/><polyline points="16 9 10.5 15 8 12.5"/>',
+  'alerta':    '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+  'error':     '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+  'info':      '<circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+  'inicio':    '<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>',
+  'salir':     '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>',
+  'reloj':     '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>',
+  'chevron':   '<polyline points="6 9 12 15 18 9"/>',
+  'escudo':    '<path d="M12 2l8 4v6c0 5-3.4 8.9-8 10-4.6-1.1-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/>',
+  'robot':     '<rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4"/><circle cx="12" cy="3" r="1"/><path d="M9 13h.01M15 13h.01M9 17h6"/>',
+} %}
+
+{% macro icono(nombre, tam=14, clase='') -%}
+<svg class="icono {{ clase }}" width="{{ tam }}" height="{{ tam }}" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+     aria-hidden="true">{{ _ICONOS.get(nombre, _ICONOS['info'])|safe }}</svg>
+{%- endmacro %}
+
+
+{# ── Botones de acción de grilla ─────────────────────────────────────────────
+   tipo → (ícono, título por defecto). El color lo pone la clase del tipo
+   en sindicato.css. Con `href` sale un <a>; si no, un <button>.
+
+   `blank=True` abre el enlace en otra pestaña (un PDF para imprimir).
+
+   `datos` se vuelca como atributos data-*: es como viajan los valores de la
+   fila a la función del onclick. Nunca el objeto serializado dentro del
+   onclick: las comillas de un nombre como O'Brien rompen el atributo. #}
+{% set _ACCIONES = {
+  'ver':       ('ver',       'Ver'),
+  'editar':    ('editar',    'Editar'),
+  'borrar':    ('borrar',    'Eliminar'),
+  'baja':      ('baja',      'Dar de baja'),
+  'reactivar': ('reactivar', 'Reactivar'),
+  'agregar':   ('agregar',   'Agregar'),
+  'pdf':       ('pdf',       'PDF'),
+  'planilla':  ('planilla',  'Planilla'),
+  'descargar': ('descargar', 'Descargar'),
+  'historial': ('historial', 'Movimientos'),
+  'mail':      ('mail',      'Enviar por mail'),
+  'auditar':   ('ok',        'Auditar'),
+  'aplicaciones': ('aplicaciones', 'Ver aplicaciones'),
+  'desaplicar':   ('desaplicar',   'Desaplicar'),
+} %}
+
+{% macro accion(tipo, href=None, onclick=None, titulo=None, datos={}, deshabilitado=False, submit=False, blank=False) -%}
+{%- set ico, titulo_def = _ACCIONES[tipo] -%}
+{%- set t = titulo or titulo_def -%}
+{%- set attrs -%}
+  class="btn-accion {{ tipo }}" title="{{ t }}" aria-label="{{ t }}"
+  {%- for k, v in datos.items() %} data-{{ k }}="{{ v if v is not none else '' }}"{% endfor %}
+  {%- if onclick %} onclick="{{ onclick }}"{% endif %}
+{%- endset -%}
+{%- if href and not deshabilitado -%}
+<a href="{{ href }}" {{ attrs }}{{ ' target="_blank" rel="noopener"'|safe if blank }}>{{ icono(ico) }}</a>
+{%- else -%}
+<button type="{{ 'submit' if submit else 'button' }}" {{ attrs }}{{ ' disabled' if deshabilitado }}>{{ icono(ico) }}</button>
+{%- endif -%}
+{%- endmacro %}
+
+
+{# ── Botones con texto ──────────────────────────────────────────────────────
+   tipo: primary | secondary | ghost | danger | ok | excel | pdf.
+   Con `href` es un enlace; con `submit=True`, el botón del formulario. #}
+{% macro boton(texto, tipo='primary', href=None, icono_=None, submit=False, onclick=None, chico=False, id=None, datos={}, blank=False) -%}
+{%- set clase = 'btn btn-' ~ tipo ~ (' btn-sm' if chico else '') -%}
+{%- set extra -%}
+  {%- if id %} id="{{ id }}"{% endif %}
+  {%- if onclick %} onclick="{{ onclick }}"{% endif %}
+  {%- for k, v in datos.items() %} data-{{ k }}="{{ v }}"{% endfor %}
+{%- endset -%}
+{%- if href -%}
+<a href="{{ href }}" class="{{ clase }}"{{ extra }}{{ ' target="_blank" rel="noopener"'|safe if blank }}>{% if icono_ %}{{ icono(icono_) }}{% endif %}{{ texto }}</a>
+{%- else -%}
+<button type="{{ 'submit' if submit else 'button' }}" class="{{ clase }}"{{ extra }}>{% if icono_ %}{{ icono(icono_) }}{% endif %}{{ texto }}</button>
+{%- endif -%}
+{%- endmacro %}
+
+
+{# ── Grilla: barra de filtros y paginación ───────────────────────────────────
+   La misma barra en todas las grillas:
+
+     [buscar…] [filtros propios] [Filtrar] [Quitar filtro] · [N de M] [Exportar a Excel] [20 por pág.]
+
+   Los filtros propios de la pantalla (un select de estado, una casilla, un
+   rango de fechas) se pasan con `call` y llevan la clase .filtro —o van
+   dentro de un label.filtro-check—: así Quitar filtro los vuelve a su valor
+   inicial. Los de selección y los números (.filtro-num) se aplican solos al cambiar; los de fecha
+   (type=date o .filtro-fecha) esperan a Filtrar o a Enter, para no filtrar
+   con una fecha a medio escribir. El criterio se le pasa a gestion_admTable
+   con `filtroExtra`.
+
+     {% call ui.barra_filtros('Filtrar…') %}
+       <select class="filtro" id="f-estado">…</select>
+       <label class="filtro-campo">Alta desde <input type="date" class="filtro" id="f-desde"></label>
+       <label class="filtro-campo">Edad desde <input type="number" class="filtro filtro-num" id="f-edad-desde"></label>
+       <label class="filtro-check"><input type="checkbox" class="filtro" id="f-gremio"> Solo gremio</label>
+     {% endcall %}
+
+   `exportar=False` solo para una grilla que no tenga sentido llevar a Excel. #}
+{% macro barra_filtros(placeholder='Filtrar…', tam_pagina=20, exportar=True) -%}
+<div class="filter-bar">
+  <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+    <input type="search" class="filter-input" placeholder="{{ placeholder }}"></label>
+  {% if caller is defined %}{{ caller() }}{% endif %}
+  <button type="button" class="btn btn-primary btn-sm btn-filtrar">{{ icono('filtro') }}Filtrar</button>
+  <button type="button" class="btn btn-secondary btn-sm btn-quitar-filtro" disabled>{{ icono('quitar_filtro') }}Quitar filtro</button>
+  {# El grupo de la derecha va junto: si la barra no entra en una línea, baja
+     entero y alineado a la derecha, en lugar de partirse en cualquier lado. #}
+  <div class="filter-bar-fin">
+    <span class="filter-count"></span>
+    {% if exportar %}
+    <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ icono('planilla') }}Exportar a Excel</button>
+    {% endif %}
+    <select class="page-size-select" aria-label="Filas por página">
+      {% for n in [20, 50, 100] %}<option value="{{ n }}"{{ ' selected' if n == tam_pagina }}>{{ n }} por pág.</option>{% endfor %}
+      <option value="9999">Todos</option>
+    </select>
+  </div>
+</div>
+{%- endmacro %}
+
+{# Un filtro de la barra, con su rótulo arriba como un campo de formulario.
+   Todo filtro lo lleva: un select solo dice la opción elegida («Todos»), y
+   dos fechas sin rótulo no dicen cuál es desde y cuál hasta. Las casillas
+   (label.filtro-check) ya traen su texto y no lo usan.
+     {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">…</select>{% endcall %} #}
+{% macro filtro(etiqueta) -%}
+<label class="filtro-campo"><span class="filtro-lbl">{{ etiqueta }}</span>{{ caller() }}</label>
+{%- endmacro %}
+
+{% macro paginacion() -%}
+<div class="pagination-bar">
+  <span class="pagination-info"></span>
+  <div class="pagination-controls"></div>
+</div>
+{%- endmacro %}
+
+
+{# ── Mensajes ────────────────────────────────────────────────────────────────
+   Los flash de la vista anterior y la lista de errores de validación. Un
+   flash que empieza con «!» sale como advertencia y no como éxito: así una
+   vista puede avisar algo sin que parezca que salió todo bien. #}
+{% macro mensajes(errores=None) -%}
+{%- with flashes = get_flashed_messages() -%}
+{%- for m in flashes -%}
+  {%- if m.startswith('!') -%}
+  <div class="alert alert-warning" role="status">{{ icono('alerta', 16) }}<div>{{ m[1:] }}</div></div>
+  {%- else -%}
+  <div class="alert alert-ok" role="status">{{ icono('ok', 16) }}<div>{{ m }}</div></div>
+  {%- endif -%}
+{%- endfor -%}
+{%- endwith -%}
+{%- if errores -%}
+<div class="alert alert-danger" role="alert">{{ icono('error', 16) }}
+  <div>{% if errores|length == 1 %}{{ errores[0] }}{% else %}<ul>{% for e in errores %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}</div>
+</div>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro aviso(texto, tipo='info') -%}
+{%- set ico = {'ok': 'ok', 'danger': 'error', 'warning': 'alerta', 'info': 'info'}[tipo] -%}
+<div class="alert alert-{{ tipo }}">{{ icono(ico, 16) }}<div>{{ texto }}</div></div>
+{%- endmacro %}
+
+
+{# ── Estados ────────────────────────────────────────────────────────────────
+   tipo: ok | danger | warn | info | neutro | proceso. #}
+{% macro estado(texto, tipo='neutro') -%}
+<span class="estado estado-{{ tipo }}">{{ texto }}</span>
+{%- endmacro %}
+
+{# Activo / baja, el caso más común. Con fecha de baja, la muestra. #}
+{% macro activo(valor, fecha_baja=None) -%}
+{%- if valor -%}{{ estado('Activo', 'ok') }}
+{%- else -%}{{ estado('Baja' ~ (' ' ~ fecha_baja.strftime('%d/%m/%Y') if fecha_baja else ''), 'danger') }}
+{%- endif -%}
+{%- endmacro %}
+
+{% macro si_no(valor) -%}
+{%- if valor %}<span class="si" title="Sí">✓</span>{% else %}<span class="no" title="No">—</span>{% endif -%}
+{%- endmacro %}
+
+
+{# ── Tarjeta: cabecera ──────────────────────────────────────────────────────
+     {% call ui.card_head('Contactos de X', nota='De acá sale…') %}
+       {{ ui.boton('Agregar', chico=True) }}
+     {% endcall %}
+   Sin `call`, solo título y nota. #}
+{% macro card_head(titulo, nota=None) -%}
+<div class="card-head">
+  <div><span class="card-head-titulo">{{ titulo }}</span>{% if nota %}<span class="card-head-nota">{{ nota }}</span>{% endif %}</div>
+  {% if caller is defined %}<div class="card-head-acciones">{{ caller() }}</div>{% endif %}
+</div>
+{%- endmacro %}
+
+
+{# ── Solapas ────────────────────────────────────────────────────────────────
+   solapas: lista de (panel, texto, conteo o None). `inicial`: el panel que
+   arranca visible. Los paneles van con
+     <div class="abm-panel {{ 'oculto' if inicial != 'x' }}" data-panel="x"> #}
+{% macro solapas(lista, inicial) -%}
+<div class="abm-tabs" role="tablist">
+  {% for panel, texto, conteo in lista %}
+  <button type="button" role="tab" class="abm-tab{{ ' activa' if panel == inicial }}"
+          data-panel="{{ panel }}" onclick="abmSolapa('{{ panel }}')">
+    {{ texto }}{% if conteo is not none %}<span class="conteo">{{ conteo }}</span>{% endif %}
+  </button>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+
+{# ── Selects de catálogo ────────────────────────────────────────────────────
+   Si el valor guardado no está en el catálogo, se agrega como opción y queda
+   elegido. Sin eso el navegador elige la primera opción y, al guardar, el
+   dato cambia solo sin que nadie lo haya tocado. #}
+{% macro opciones(items, valor, clave='codigo', texto='descripcion', vacio='—') -%}
+{%- if vacio is not none %}<option value="">{{ vacio }}</option>{% endif -%}
+{%- set ns = namespace(hay=False) -%}
+{%- for it in items -%}
+  {%- set sel = valor is not none and valor|string == it[clave]|string -%}
+  {%- if sel %}{% set ns.hay = True %}{% endif -%}
+  <option value="{{ it[clave] }}"{{ ' selected' if sel }}>{{ it[texto] }}</option>
+{%- endfor -%}
+{%- if valor is not none and valor|string != '' and not ns.hay -%}
+  <option value="{{ valor }}" selected>{{ valor }} (no está en el catálogo)</option>
+{%- endif -%}
+{%- endmacro %}
+
+{# Lo mismo, agrupado (<optgroup>) por el campo `grupo`: las cuentas del plan
+   por clase. Los grupos salen en el orden en que vienen las filas, así que el
+   orden lo da la consulta. Un valor que no está en la lista se muestra como
+   tal y queda elegido: el servidor no lo deja guardar. #}
+{% macro opciones_grupo(items, valor, clave='id', texto='texto', grupo='grupo', vacio='—') -%}
+{%- if vacio is not none %}<option value="">{{ vacio }}</option>{% endif -%}
+{%- set ns = namespace(hay=False, actual=None) -%}
+{%- for it in items -%}
+  {%- if it[grupo] != ns.actual -%}
+    {%- if ns.actual is not none %}</optgroup>{% endif -%}
+    <optgroup label="{{ it[grupo] }}">{%- set ns.actual = it[grupo] -%}
+  {%- endif -%}
+  {%- set sel = valor is not none and valor|string == it[clave]|string -%}
+  {%- if sel %}{% set ns.hay = True %}{% endif -%}
+  <option value="{{ it[clave] }}"{{ ' selected' if sel }}>{{ it[texto] }}</option>
+{%- endfor -%}
+{%- if ns.actual is not none %}</optgroup>{% endif -%}
+{%- if valor is not none and valor|string != '' and not ns.hay -%}
+  <option value="{{ valor }}" selected>{{ valor }} (no está en el plan de cuentas)</option>
+{%- endif -%}
+{%- endmacro %}
+
+
+{# ── Número de expediente ───────────────────────────────────────────────────
+   Lleva al expediente en la mesa de entradas, como `expediente()` de
+   _enlaces.html de gestion_adm. En una pestaña nueva: las grillas donde
+   aparece suelen tener algo elegido (los comprobantes tildados de una orden,
+   un filtro) y navegar en la misma lo pierde. En la bandeja de la mesa, que
+   es la lista de expedientes, va en la misma (nueva=False). Sin la mesa de
+   entradas en el menú, el número sin enlace: un link que termina en «no tenés
+   permiso» es peor que no tenerlo.
+     {{ ui.expediente(e.id_expediente, e.nro_expediente) }} #}
+{% macro expediente(id, nro, nueva=True) -%}
+{%- if not id or not nro -%}<span class="td-muted">—</span>
+{%- elif not puede(url_for('mesa.bandeja')) -%}<span class="nro-exp">{{ nro }}</span>
+{%- else -%}<a class="nro-exp" href="{{ url_for('mesa.detalle', exp_id=id) }}"
+  {%- if nueva %} target="_blank" rel="noopener"{% endif %} title="Ver el expediente en la mesa de entradas">{{ nro }}</a>
+{%- endif -%}
+{%- endmacro %}
+
+
+{# ── Marcas de un comprobante de proveedor ──────────────────────────────────
+   Las de gestion_adm (_marcas_comprobante.html): tres íconos debajo del número
+   del comprobante, en la misma celda, no en una columna aparte. Siempre los
+   tres: apagada = gris, encendida = color (una marca gris y una que no está
+   dicen cosas distintas). Solo muestran estado, no hacen nada.
+     escudo verde   constatado en ARCA (constatacion_resultado = 'A')
+     robot amarillo el PDF lo leyó el sistema y dice lo mismo que los datos (leido_automatico)
+     ojo azul       alguien lo verificó a ojo (verificado_visual)
+   Recibe la fila con esas tres claves; la que falte cuenta como apagada. La
+   firma digital de gestion_adm es de Integración y acá no va.
+     <span class="td-fuerte">Factura B</span> <span class="td-mono">00003-00000001</span>{{ ui.marcas(c) }} #}
+{% macro marcas(c) -%}
+{%- set arca = c.get('constatacion_resultado') -%}
+{%- set t_arca = 'Constatado en ARCA' if arca == 'A' else 'ARCA lo rechazó' if arca == 'R'
+                 else 'ARCA no respondió al constatarlo' if arca == 'E' else 'Sin constatar en ARCA' -%}
+{%- set t_bot = 'El PDF lo leyó el sistema y coincide con los datos' if c.get('leido_automatico')
+                else 'El PDF no lo leyó el sistema (o no hay PDF)' -%}
+{%- set t_ojo = 'Verificado a ojo' if c.get('verificado_visual') else 'Sin verificación visual' -%}
+<span class="marcas">
+  <span class="marca arca {{ 'si' if arca == 'A' }}" title="{{ t_arca }}" role="img" aria-label="{{ t_arca }}">{{ icono('escudo', 13) }}</span>
+  <span class="marca bot {{ 'si' if c.get('leido_automatico') }}" title="{{ t_bot }}" role="img" aria-label="{{ t_bot }}">{{ icono('robot', 13) }}</span>
+  <span class="marca ojo {{ 'si' if c.get('verificado_visual') }}" title="{{ t_ojo }}" role="img" aria-label="{{ t_ojo }}">{{ icono('ver', 13) }}</span>
+</span>
+{%- endmacro %}

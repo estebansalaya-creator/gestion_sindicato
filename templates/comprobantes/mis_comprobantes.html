@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Comprobantes ARCA{% endblock %}
+
+{#
+  Lo que ARCA informa como recibido (Mis Comprobantes), cruzado con lo
+  cargado. Pendiente = sin expediente; cargado = con comprobante y expediente;
+  descartado = alguien dijo que no corresponde (se puede restaurar).
+#}
+{% set estado_txt = {'pendiente': ('Pendiente', 'warn'), 'cargado': ('Cargado', 'ok'), 'ignorado': ('Descartado', 'neutro')} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Comprobantes ARCA</h1>
+    <p>Los comprobantes que ARCA informa como recibidos por el sindicato (Mis Comprobantes) y si ya se cargaron.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_cargar %}{{ ui.boton('Carga de comprobantes', 'secondary', href=url_for('comprobantes.carga'), icono_='subir') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Pendientes de cargar</div><div class="kpi-val">{{ resumen.pendientes|int }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl" title="Las notas de crédito restan">Importe pendiente</div><div class="kpi-val monto">$ {{ (resumen.importe_pendiente or 0)|miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Cargados</div><div class="kpi-val">{{ resumen.cargados|int }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('empresa', 20) }}</div>
+    <div><div class="kpi-lbl">Pendientes sin alta de proveedor</div><div class="kpi-val">{{ resumen.sin_alta|int }}</div></div></div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Importar de Mis Comprobantes',
+                  nota=('última importación ' ~ resumen.ultima.strftime('%d/%m/%Y %H:%M') ~ ' · comprobantes del '
+                        ~ resumen.desde.strftime('%d/%m/%Y') ~ ' al ' ~ resumen.hasta.strftime('%d/%m/%Y'))
+                       if resumen.ultima else 'todavía no se importó nada') }}
+  <form method="post" enctype="multipart/form-data" class="bloque" data-proceso="Importando el archivo de ARCA…">
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label class="drop-zone chica">
+          {{ ui.icono('subir', 22) }}<span id="archivo-nombre">Elegí el .zip que baja ARCA (o el .csv / .xlsx de adentro)</span>
+          <input type="file" name="archivo" id="archivo" accept=".zip,.csv,.txt,.xlsx,.xlsm" class="oculto" required>
+        </label>
+      </div>
+      <div class="campo campo-boton" style="--span:2;">
+        {{ ui.boton('Importar', submit=True, icono_='subir') }}
+      </div>
+      <div class="campo" style="--span:12;">
+        <small class="campo-ayuda">
+          En el portal de ARCA, con la clave fiscal del sindicato: <strong>Mis Comprobantes → Recibidos</strong>, elegí el
+          período, <strong>Buscar</strong> y exportá en CSV. Subí el archivo tal como baja. Volver a importar un período
+          no duplica nada: actualiza lo que cambió y agrega lo nuevo.
+        </small>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por emisor, CUIT, número o CAE…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="pendiente" selected>Pendientes</option>
+      <option value="cargado">Cargados</option>
+      <option value="ignorado">Descartados</option>
+      <option value="">Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Proveedor') %}<select class="filtro" id="f-alta">
+      <option value="">Con y sin alta de proveedor</option>
+      <option value="1">Proveedor dado de alta</option>
+      <option value="0">Sin alta de proveedor</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
+      <option value="">Todos los tipos</option>
+      {% for cod, desc in tipos %}<option value="{{ cod }}">{{ desc }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Emitidos desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Emitidos hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-mis" data-exportar="Comprobantes ARCA">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>Emisión</th>
+          <th>Tipo</th>
+          <th>Número</th>
+          <th>CUIT</th>
+          <th>Emisor</th>
+          <th class="th-right">Neto</th>
+          <th class="th-right">IVA</th>
+          <th class="th-right">Total</th>
+          <th>CAE</th>
+          <th>Estado</th>
+          <th>Expediente</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in filas %}
+        {% set est, est_tipo = estado_txt[f.estado_mis] %}
+        <tr data-estado="{{ f.estado_mis }}" data-alta="{{ 1 if f.id_proveedor else 0 }}" data-tipo="{{ f.tipo_comprobante }}"
+            data-fecha="{{ f.fecha_emision.isoformat() }}" class="{{ 'fila-baja' if f.estado_mis == 'ignorado' }}">
+          <td><div class="acciones">
+            {% if f.estado_mis == 'pendiente' and puede_cargar %}
+              {{ ui.accion('agregar', href=url_for('comprobantes.carga', mis=f.id), titulo='Cargar con los datos de ARCA') }}
+            {% endif %}
+            {% if f.id_expediente and puede_mesa %}
+              {{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=f.id_expediente), titulo='Ver el expediente') }}
+            {% endif %}
+            {% if f.estado_mis == 'pendiente' %}
+              {{ ui.accion('baja', titulo='Descartar: no corresponde cargarlo', onclick='descartar(this)',
+                           datos={'url': url_for('mis_comp.ignorar', id_mis=f.id),
+                                  'cmp': (f.tipo_desc or f.tipo_comprobante) ~ ' ' ~ f.punto_de_venta ~ '-' ~ f.numero}) }}
+            {% elif f.estado_mis == 'ignorado' %}
+              {{ ui.accion('reactivar', titulo='Restaurar como pendiente', onclick='restaurar(this)',
+                           datos={'url': url_for('mis_comp.ignorar', id_mis=f.id)}) }}
+            {% endif %}
+          </div></td>
+          <td data-valor="{{ f.fecha_emision.isoformat() }}">{{ f.fecha_emision.strftime('%d/%m/%Y') }}</td>
+          <td>{{ f.tipo_desc or f.tipo_comprobante }}</td>
+          <td class="td-mono nowrap">{{ f.punto_de_venta }}-{{ f.numero }}</td>
+          <td class="td-mono">{{ f.cuit_emisor }}</td>
+          <td class="td-fuerte">
+            {{ f.proveedor or f.razon_social or '—' }}
+            {% if not f.id_proveedor %}
+              <span class="chip chip-alerta">sin alta</span>
+              {% if puede_alta_prov and f.estado_mis == 'pendiente' %}
+              <a class="chico" target="_blank" rel="noopener"
+                 href="{{ url_for('proveedores.abm', nuevo=1, cuit=f.cuit_emisor, razon=f.razon_social or '') }}">dar de alta</a>
+              {% endif %}
+            {% elif f.prov_activo == 0 %}<span class="chip chip-alerta">proveedor de baja</span>{% endif %}
+          </td>
+          <td class="td-right" data-num="{{ f.importe_neto }}">{{ f.importe_neto|miles }}</td>
+          <td class="td-right" data-num="{{ f.importe_iva }}">{{ f.importe_iva|miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ f.importe_total }}">{{ f.importe_total|miles }}</td>
+          <td class="td-mono td-muted">{{ f.cae or '—' }}</td>
+          <td data-valor="{{ est }}">{{ ui.estado(est, est_tipo) }}</td>
+          <td data-valor="{{ f.nro_expediente or '' }}">{{ ui.expediente(f.id_expediente, f.nro_expediente) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="12" class="no-data">Todavía no se importó ningún archivo de Mis Comprobantes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<form method="post" id="form-ignorar" class="oculto"><input type="hidden" name="restaurar" id="restaurar"></form>
+
+<script>
+function descartar(btn) {
+  if (!confirm('¿Descartar ' + btn.dataset.cmp + '? Deja de figurar como pendiente. Se puede restaurar.')) return;
+  var f = document.getElementById('form-ignorar');
+  f.action = btn.dataset.url; document.getElementById('restaurar').value = ''; f.submit();
+}
+function restaurar(btn) {
+  var f = document.getElementById('form-ignorar');
+  f.action = btn.dataset.url; document.getElementById('restaurar').value = '1'; f.submit();
+}
+document.getElementById('archivo').addEventListener('change', function () {
+  document.getElementById('archivo-nombre').textContent = this.files.length ? this.files[0].name
+    : 'Elegí el .zip que baja ARCA (o el .csv / .xlsx de adentro)';
+});
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fa = document.getElementById('f-alta'),
+      ft = document.getElementById('f-tipo'), fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+  gestion_admTable('tbl-mis', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.estado !== fe.value) return false;
+      if (fa.value && tr.dataset.alta !== fa.value) return false;
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      if (fd.value && tr.dataset.fecha < fd.value) return false;
+      if (fh.value && tr.dataset.fecha > fh.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

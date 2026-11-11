@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Certificado {{ c.nro_certificado }}{% endblock %}
+
+{% macro dato(rotulo, valor, mono=False, ancho=False) -%}
+{% if valor is defined and valor not in (none, '') %}
+<div class="dato{{ ' ancho' if ancho }}"><div class="dato-lbl">{{ rotulo }}</div>
+  <div class="dato-val{{ ' mono' if mono }}">{{ valor }}</div></div>
+{% endif %}
+{%- endmacro %}
+{% set tipos_comp = {1: 'Factura', 2: 'Recibo', 3: 'Nota de crédito', 4: 'Nota de débito', 5: 'Otro', 6: 'Orden de pago'} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Certificado de retención <span class="mono">{{ c.nro_certificado }}</span></h1>
+    <p>{{ c.tipo|capitalize }} · {{ c.razon_social_proveedor }} ·
+      {{ ui.estado('Anulado', 'neutro') if c.estado == 'anulado' else ui.estado(c.estado|capitalize, 'ok') }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('PDF', 'pdf', href=url_for('pagos.certificado_pdf', id_cert=c.id), icono_='pdf', blank=True) }}
+    {{ ui.boton('Ver la orden', 'secondary', href=url_for('pagos.orden', id_orden=c.id_orden)) }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if c.estado == 'anulado' %}
+  {{ ui.aviso('Anulado' ~ (' el ' ~ c.fecha_anulacion.strftime('%d/%m/%Y') if c.fecha_anulacion else '')
+              ~ (' por ' ~ c.usuario_anulacion if c.usuario_anulacion else '') ~ (': ' ~ c.motivo_anulacion if c.motivo_anulacion else '.')
+              ~ (' Ya se había informado en SIRE: hay que rectificar.' if c.exportado_sire else ''), 'warning') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Retención') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Impuesto', c.tipo|capitalize) }}
+      {{ dato('Régimen', c.codigo_regimen, mono=True) }}
+      {{ dato('Formulario SIRE', c.formulario_sire, mono=True) }}
+      {{ dato('Fecha', c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision) }}
+      {{ dato('Período fiscal', (c.periodo_fiscal[4:] ~ '/' ~ c.periodo_fiscal[:4]) if c.periodo_fiscal) }}
+      {{ dato('Base', '$ ' ~ ((c.base_calculo or 0) | miles), mono=True) }}
+      {{ dato('Alícuota', '%.4f'|format(c.alicuota|float) ~ ' %', mono=True) }}
+      {{ dato('Retenido', '$ ' ~ ((c.importe_retenido or 0) | miles), mono=True) }}
+      {{ dato('Exclusión', 'Con certificado de exclusión' if c.tiene_exclusion else none) }}
+      {{ dato('Informado en SIRE', 'Sí' if c.exportado_sire else 'No') }}
+      {{ dato('Emitió', c.usuario) }}
+      {{ dato('Observaciones', c.observaciones, ancho=True) }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Proveedor y comprobante') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Proveedor', c.razon_social_proveedor) }}
+      {{ dato('CUIT', c.cuit_proveedor, mono=True) }}
+      {{ dato('Condición', c.condicion_fiscal) }}
+      {{ dato('Comprobante', tipos_comp.get(c.comprobante_tipo, '—')) }}
+      {{ dato('Número', ((c.comprobante_pv ~ '-') if c.comprobante_pv else '') ~ (c.comprobante_nro or ''), mono=True) }}
+      {{ dato('Fecha del comprobante', c.comprobante_fecha.strftime('%d/%m/%Y') if c.comprobante_fecha) }}
+      {{ dato('Importe del comprobante', ('$ ' ~ (c.comprobante_importe | miles)) if c.comprobante_importe) }}
+      {{ dato('Pago', c.nro_pago, mono=True) }}
+      {{ dato('Fecha de pago', c.fecha_pago.strftime('%d/%m/%Y') if c.fecha_pago) }}
+      {{ dato('Orden', c.nro_orden, mono=True) }}
+    </div>
+  </div>
+</div>
+
+{% if lineas %}
+<div class="card">
+  {{ ui.card_head('Retenciones que integra') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" data-sin-orden>
+      <thead><tr><th>Expediente</th><th class="th-right">Base</th><th class="th-right">Alícuota</th><th class="th-right">Importe</th><th>Origen de la alícuota</th></tr></thead>
+      <tbody>
+        {% for r in lineas %}
+        <tr class="{{ 'fila-baja' if r.anulado }}">
+          <td>{% if r.id_expediente %}{{ ui.expediente(r.id_expediente, r.nro_expediente) }}{% else %}<span class="td-muted">del pago</span>{% endif %}</td>
+          <td class="td-right td-mono">{{ (r.base_calculo or 0) | miles }}</td>
+          <td class="td-right td-mono">{{ '%.4f'|format(r.alicuota|float) }} %</td>
+          <td class="td-right td-mono">{{ (r.importe or 0) | miles }}</td>
+          <td class="td-muted">{{ {'escala': 'Tabla RG 830', 'certificado': 'Certificado del proveedor', 'proveedor': 'Ficha del proveedor', 'os_parametros': 'Datos del sindicato'}.get(r.origen_alicuota, r.origen_alicuota or '') }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

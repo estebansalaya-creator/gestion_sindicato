@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ cat.titulo }}{% endblock %}
+
+{#
+  Conceptos de gasto y motivos de ingreso: la misma pantalla (tesoreria._catalogo).
+  Uno que se usa no se elimina, se desactiva: deja de ofrecerse y lo cargado
+  sigue apuntando a él. «Sin cuenta del plan» son los que vinieron de la obra
+  social con una imputación que acá no existe: no se guardan hasta elegir una.
+#}
+{% set r = registro or {} %}
+{% set es_concepto = clave == 'conceptos' %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ cat.titulo }}</h1>
+    <p>{{ cat.ayuda }}</p>
+  </div>
+  {% if registro %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nuevo', href=url_for(cat.endpoint, nuevo=1), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar' if r.get('id') else 'Nuevo', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por descripción o cuenta…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activos</option>
+        <option value="0">Inactivos</option>
+        <option value="">Todos</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Imputación') %}<select class="filtro" id="f-plan">
+        <option value="">Con y sin cuenta del plan</option>
+        <option value="0">Sin cuenta del plan</option>
+      </select>{% endcall %}
+      {% if es_concepto %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-reintegro"> Solo de reintegros</label>
+      {% endif %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-catalogo" data-exportar="{{ cat.titulo }}">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Descripción</th>
+            <th>Cuenta contable</th>
+            {% if es_concepto %}<th>IVA</th><th>Reintegro</th>{% endif %}
+            <th>Moneda</th>
+            <th class="th-right">Usos</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in filas %}
+          <tr class="{{ 'fila-baja' if not f.activo }}" data-activo="{{ f.activo }}"
+              data-plan="{{ 1 if f.cuenta_codigo else 0 }}" data-reintegro="{{ f.es_reintegro if es_concepto else 0 }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for(cat.endpoint, edit=f.id)) }}
+              {% if not f.usos %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': f.id, 'nombre': f.descripcion}) }}
+              {% elif f.activo %}
+                {{ ui.accion('baja', titulo='Desactivar: se usa, así que no se elimina', onclick='enviar(this)',
+                             datos={'id': f.id, 'accion': 'baja'}) }}
+              {% endif %}
+              {% if not f.activo %}
+                {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': f.id, 'accion': 'reactivar'}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ f.descripcion }}</td>
+            <td>
+              {% if f.cuenta_codigo %}<span class="td-mono">{{ f.cuenta_codigo }}</span> {{ f.cuenta_nombre }}
+                {% if not f.cuenta_imputable %}<span class="chip chip-alerta">título</span>{% endif %}
+              {% else %}<span class="chip chip-alerta">sin cuenta del plan</span>{% endif %}
+            </td>
+            {% if es_concepto %}
+            <td class="td-muted">{{ f.tasa or '—' }}</td>
+            <td data-valor="{{ (clases_reintegro.get(f.clase_reintegro) or 'Reintegro') if f.es_reintegro else 'No' }}">
+              {%- if f.es_reintegro and hay_clase %}{{ clases_reintegro.get(f.clase_reintegro) or 'Sí, sin clase' }}{% else %}{{ ui.si_no(f.es_reintegro) }}{% endif -%}
+            </td>
+            {% endif %}
+            <td class="td-muted">{{ f.moneda or '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not f.usos }}" data-num="{{ f.usos }}">{{ f.usos }}</td>
+            <td>{{ ui.estado('Activo', 'ok') if f.activo else ui.estado('Inactivo', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="{{ 8 if es_concepto else 6 }}" class="no-data">Todavía no hay ninguno.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head(('Editar ' if r.get('id') else 'Nuevo ') ~ cat.singular) %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for(cat.endpoint), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for(cat.endpoint) }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:6;">
+            <label>Descripción <span class="req">*</span></label>
+            <input type="text" name="descripcion" required maxlength="{{ cat.largo }}" value="{{ r.get('descripcion') or '' }}">
+          </div>
+          <div class="campo" style="--span:6;">
+            <label>Cuenta contable <span class="req">*</span></label>
+            <select name="c_plan_de_cuentasId" required>
+              {{ ui.opciones_grupo(plan, r.get('c_plan_de_cuentasId'), vacio='— Elegí la cuenta del plan —') }}
+            </select>
+            {% if not plan %}<small class="campo-ayuda error">El plan de cuentas está vacío: correr importar_aeda_tesoreria.py.</small>{% endif %}
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Moneda{% if es_concepto %} <span class="req">*</span>{% endif %}</label>
+            <select name="c_especiesId" {{ 'required' if es_concepto }}>
+              {{ ui.opciones(especies, r.get('c_especiesId'), clave='id', texto='nombre') }}
+            </select>
+          </div>
+          {% if es_concepto %}
+          <div class="campo" style="--span:3;">
+            <label>Alícuota de IVA <span class="req">*</span></label>
+            <select name="arca_tasa_ivaid" required>
+              {{ ui.opciones(tasas, r.get('arca_tasa_ivaid'), clave='id') }}
+            </select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="es_reintegro" value="1" {{ 'checked' if r.get('es_reintegro') }}>
+              Se ofrece en los reintegros
+            </label>
+          </div>
+          {% if hay_clase %}
+          <div class="campo" style="--span:3;">
+            <label>Clase</label>
+            <select name="clase_reintegro">
+              <option value="">—</option>
+              {% for k, t in clases_reintegro.items() %}<option value="{{ k }}" {{ 'selected' if r.get('clase_reintegro') == k }}>{{ t }}</option>{% endfor %}
+            </select>
+            <small class="campo-ayuda">Si se ofrece en los reintegros: subsidio o reintegro de un gasto. Sin clase cuenta como reintegro.</small>
+          </div>
+          {% endif %}
+          {% endif %}
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="activo" value="1" {{ 'checked' if r.get('activo') }}>
+              Activo
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if r.get('id') else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar {{ cat.articulo }} {{ cat.singular }}?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for(cat.endpoint) }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for(cat.endpoint) }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fp = document.getElementById('f-plan'),
+      fr = document.getElementById('f-reintegro');
+  gestion_admTable('tbl-catalogo', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.activo !== fe.value) return false;
+      if (fp.value && tr.dataset.plan !== fp.value) return false;
+      if (fr && fr.checked && tr.dataset.reintegro !== '1') return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

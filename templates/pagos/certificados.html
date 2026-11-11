@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Certificados de retención{% endblock %}
+
+{#
+  Certificados de retención emitidos (pagos.certificados): uno por pago,
+  proveedor e impuesto. Los de AEDA conservan su número (AEDA-CRT-N). Un
+  certificado de un pago anulado queda «anulado» y no se borra: la retención
+  es un hecho frente a ARCA.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Certificados de retención</h1>
+    <p>Las retenciones practicadas al pagar, con su certificado para el proveedor.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por número, proveedor o CUIT…', tam_pagina=50) %}
+    {% call ui.filtro('Impuesto') %}<select class="filtro" id="f-tipo">
+      <option value="">Todos los impuestos</option>
+      {% for t in ['GANANCIAS', 'IVA', 'IIBB', 'SUSS'] %}<option value="{{ t }}">{{ t|capitalize }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="emitido" selected>Emitidos</option>
+      <option value="anulado">Anulados</option>
+      <option value="">Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Período') %}<input type="month" class="filtro filtro-fecha" id="f-periodo">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cert" data-exportar="Certificados de retención">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>N° certificado</th>
+          <th class="th-right">Fecha</th>
+          <th>Impuesto</th>
+          <th>Régimen</th>
+          <th>Proveedor</th>
+          <th>CUIT</th>
+          <th class="th-right">Base</th>
+          <th class="th-right">Alícuota</th>
+          <th class="th-right">Retenido</th>
+          <th>Pago</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in certificados %}
+        <tr class="{{ 'fila-baja' if c.estado == 'anulado' }}" data-tipo="{{ c.tipo }}" data-estado="{{ c.estado }}"
+            data-periodo="{{ (c.periodo_fiscal[:4] ~ '-' ~ c.periodo_fiscal[4:]) if c.periodo_fiscal }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('pagos.certificado', id_cert=c.id)) }}
+            {{ ui.accion('pdf', href=url_for('pagos.certificado_pdf', id_cert=c.id), blank=True) }}
+          </div></td>
+          <td class="td-mono td-fuerte">{{ c.nro_certificado }}</td>
+          <td class="td-right" data-valor="{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision }}">{{ c.fecha_emision.strftime('%d/%m/%Y') if c.fecha_emision }}</td>
+          <td>{{ c.tipo|capitalize }}</td>
+          <td class="td-mono">{{ c.codigo_regimen or '' }}</td>
+          <td class="td-recorte" title="{{ c.razon_social_proveedor or '' }}">{{ c.razon_social_proveedor or '' }}</td>
+          <td class="td-mono">{{ c.cuit_proveedor or '' }}</td>
+          <td class="td-right td-mono" data-num="{{ c.base_calculo }}">{{ (c.base_calculo or 0) | miles }}</td>
+          <td class="td-right td-mono" data-num="{{ c.alicuota }}">{{ '%.2f'|format(c.alicuota|float) }} %</td>
+          <td class="td-right td-mono td-fuerte" data-num="{{ c.importe_retenido }}">{{ (c.importe_retenido or 0) | miles }}</td>
+          <td class="td-mono"><a href="{{ url_for('pagos.orden', id_orden=c.id_orden) }}">{{ c.nro_pago or c.nro_orden }}</a></td>
+          <td>{{ ui.estado('Anulado', 'neutro') if c.estado == 'anulado' else ui.estado(c.estado|capitalize, 'ok') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="12" class="no-data">Todavía no hay certificados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var ft = document.getElementById('f-tipo'), fe = document.getElementById('f-estado'), fp = document.getElementById('f-periodo');
+  gestion_admTable('tbl-cert', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      if (fe.value && tr.dataset.estado !== fe.value) return false;
+      if (fp.value && tr.dataset.periodo !== fp.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

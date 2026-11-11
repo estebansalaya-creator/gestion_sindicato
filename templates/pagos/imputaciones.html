@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Imputaciones contables de pagos{% endblock %}
+
+{#
+  Imputaciones contables (pagos.imputaciones): contra qué cuenta va lo que no
+  tiene la cuenta en otro lado. El anticipo, al debe (activo: es un crédito
+  con el proveedor); cada retención, al haber (pasivo: se le debe a ARCA hasta
+  depositarla). Sin los acuerdos de pago ni los recibos de fiscalización de
+  gestion_adm, que son de la obra social.
+#}
+{% set r = registro or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Imputaciones contables de pagos</h1>
+    <p>La cuenta del anticipo a proveedores y la de cada retención a depositar.</p>
+  </div>
+  {% if registro %}
+  <div class="page-header-acciones">{{ ui.boton('Nueva', href=url_for('pagos.imputaciones', nuevo=1), icono_='agregar') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', imputaciones|length), ('datos', 'Editar' if r.get('id') else 'Nueva', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por nombre o cuenta…') %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-imp" data-exportar="Imputaciones de pagos">
+        <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Clase</th><th>Impuesto</th><th>Nombre</th>
+          <th>Cuenta debe</th><th>Cuenta haber</th><th class="th-right">Usos</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for i in imputaciones %}
+          <tr class="{{ 'fila-baja' if not i.activo }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('pagos.imputaciones', edit=i.id)) }}
+              {% if not i.usos %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': i.id, 'nombre': i.nombre}) }}
+              {% elif i.activo %}
+                {{ ui.accion('baja', titulo='Desactivar: la usan órdenes', onclick='enviar(this)', datos={'id': i.id, 'accion': 'baja'}) }}
+              {% endif %}
+              {% if not i.activo %}{{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': i.id, 'accion': 'reactivar'}) }}{% endif %}
+            </div></td>
+            <td>{{ clases_txt.get(i.clase, i.clase) }}</td>
+            <td>{{ subtipos_txt.get(i.subtipo, i.subtipo or '') }}</td>
+            <td class="td-fuerte">{{ i.nombre }}</td>
+            <td>{% if i.codigo_debe %}<span class="td-mono">{{ i.codigo_debe }}</span> {{ i.cuenta_debe }}{% elif i.clase == 'anticipo' %}<span class="chip chip-alerta">falta la cuenta</span>{% endif %}</td>
+            <td>{% if i.codigo_haber %}<span class="td-mono">{{ i.codigo_haber }}</span> {{ i.cuenta_haber }}{% elif i.clase == 'retencion' %}<span class="chip chip-alerta">falta la cuenta</span>{% endif %}</td>
+            <td class="td-right {{ 'td-muted' if not i.usos }}" data-num="{{ i.usos }}">{{ i.usos }}</td>
+            <td>{{ ui.estado('Activa', 'ok') if i.activo else ui.estado('Inactiva', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no hay imputaciones.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <form method="post" class="card">
+    {% call ui.card_head(('Editar' if r.get('id') else 'Nueva') ~ ' imputación') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('pagos.imputaciones'), chico=True) }}
+    {% endcall %}
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:4;">
+          <label for="clase">Clase <span class="req">*</span></label>
+          <select name="clase" id="clase" required onchange="verClase()">{{ ui.opciones(clases, r.get('clase'), clave=0, texto=1, vacio='— Elegí —') }}</select>
+        </div>
+        <div class="campo" style="--span:4;" id="campo-subtipo">
+          <label for="subtipo">Impuesto <span class="req">*</span></label>
+          <select name="subtipo" id="subtipo">{{ ui.opciones(subtipos, r.get('subtipo'), clave=0, texto=1, vacio='— Elegí —') }}</select>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label for="nombre">Nombre <span class="req">*</span></label>
+          <input type="text" name="nombre" id="nombre" maxlength="100" required value="{{ r.get('nombre') or '' }}">
+        </div>
+        <div class="campo" style="--span:6;" id="campo-debe">
+          <label for="id_cuenta_debe">Cuenta debe (activo) <span class="req">*</span></label>
+          <select name="id_cuenta_debe" id="id_cuenta_debe">{{ ui.opciones_grupo(cuentas_activo, r.get('id_cuenta_debe'), vacio='— Elegí la cuenta del activo —') }}</select>
+        </div>
+        <div class="campo" style="--span:6;" id="campo-haber">
+          <label for="id_cuenta_haber">Cuenta haber (pasivo) <span class="req">*</span></label>
+          <select name="id_cuenta_haber" id="id_cuenta_haber">{{ ui.opciones_grupo(cuentas_pasivo, r.get('id_cuenta_haber'), vacio='— Elegí la cuenta del pasivo —') }}</select>
+        </div>
+        <div class="campo" style="--span:9;">
+          <label for="observaciones">Observaciones</label>
+          <input type="text" name="observaciones" id="observaciones" maxlength="255" value="{{ r.get('observaciones') or '' }}">
+        </div>
+        <div class="campo" style="--span:3;">
+          <label class="campo-check"><input type="checkbox" name="activo" value="1" {{ 'checked' if r.get('activo', 1) }}> Activa</label>
+        </div>
+      </div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Guardar cambios' if r.get('id') else 'Agregar', icono_='guardar', submit=True) }}</div>
+  </form>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la imputación?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" id="form-accion" class="oculto"><input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id"></form>
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+function verClase() {
+  var c = document.getElementById('clase').value;
+  document.getElementById('campo-subtipo').classList.toggle('oculto', c !== 'retencion');
+  document.getElementById('campo-debe').classList.toggle('oculto', c !== 'anticipo');
+  document.getElementById('campo-haber').classList.toggle('oculto', c !== 'retencion');
+}
+document.addEventListener('DOMContentLoaded', function () { verClase(); gestion_admTable('tbl-imp', {pageSize: 20}); });
+</script>
+{% endblock %}

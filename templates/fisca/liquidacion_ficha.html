@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuota sindical {{ liq.periodo | periodo }} · {{ liq.cuit }}{% endblock %}
+
+{#
+  Ficha de una liquidación de cuota sindical (fisca_liq.liquidacion_ficha): la
+  cabecera del empleador y el período, y un renglón por afiliado con su
+  remuneración, la cuota y de dónde salió (nómina, DDJJ de OSEDA o AEDA).
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuota sindical {{ liq.periodo | periodo }}</h1>
+    <p>{{ liq.razon_social or 'Empleador que no está en Empleadores' }} · CUIT {{ liq.cuit }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver al período', 'secondary', href=url_for('fisca_liq.liquidacion', periodo=liq.periodo), icono_='volver') }}
+    {% if puede_empleador and liq.id_empresa %}{{ ui.boton('Ficha del empleador', 'secondary', href=url_for('empleadores.abm_empleadores', edit=liq.id_empresa)) }}{% endif %}
+    {{ ui.boton('Imprimir', 'secondary', onclick='window.print()', icono_='imprimir') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if liq.estado == 'anulada' %}{{ ui.aviso(liq.observaciones or 'Liquidación anulada.', 'danger') }}
+{% elif liq.observaciones %}{{ ui.aviso(liq.observaciones, 'info') }}{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Liquidación', nota=origenes[liq.origen]) }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Período', liq.periodo | periodo, mono=True) }}
+      {{ dato('Empleador', liq.razon_social) }}
+      {{ dato('CUIT', liq.cuit, mono=True) }}
+      {{ dato('Afiliados', liq.afiliados) }}
+      {{ dato('Remuneración', '$ ' ~ ((liq.remuneracion or 0) | miles), mono=True) }}
+      {{ dato('Alícuota', ('%.2f'|format(liq.alicuota|float)).replace('.', ',') ~ ' %') }}
+      {{ dato('Cuota a pagar', '$ ' ~ ((liq.importe or 0) | miles), mono=True) }}
+      {{ dato('Vencimiento', liq.vencimiento.strftime('%d/%m/%Y')) }}
+      {{ dato('Liquidada', liq.fecha.strftime('%d/%m/%Y') ~ (' · ' ~ liq.usuario if liq.usuario else '')) }}
+      {{ dato('Estado', 'Anulada' if liq.estado == 'anulada' else 'Vigente') }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Afiliados', nota=detalle | length ~ ' renglón(es)') }}
+  {% call ui.barra_filtros('Buscar por CUIL o nombre…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-detalle" data-exportar="Cuota sindical {{ liq.periodo | periodo }} {{ liq.cuit }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>CUIL</th><th>Apellido y nombres</th><th>Fuente</th>
+        <th class="th-right">Remuneración</th><th class="th-right">Cuota</th>
+      </tr></thead>
+      <tbody>
+        {% for d in detalle %}
+        <tr>
+          <td><div class="acciones">
+            {% if d.id_afiliado %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=d.id_afiliado), titulo='Ver el afiliado', blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ d.cuil }}</td>
+          <td>{{ d.nombre or '' }}{% if not d.id_afiliado %} {{ ui.estado('No está en el padrón', 'warn') }}{% endif %}</td>
+          <td>{{ ui.estado(origenes[d.fuente], origen_tipo[d.fuente]) }}</td>
+          <td class="td-right" data-num="{{ d.remuneracion }}">{{ (d.remuneracion or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ d.cuota }}">{{ (d.cuota or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">Sin renglones.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-detalle', { pageSize: 50 }); });
+</script>
+{% endblock %}

@@ -1,0 +1,284 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Plan de cuentas{% endblock %}
+
+{#
+  Plan de cuentas (contabilidad.plan). Se carga código y nombre; clase, nivel,
+  madre, tipo (imputable si el último tramo no es cero) y corriente salen del
+  código y se ven debajo mientras se tipea (/contabilidad/plan/codigo). La
+  sangría del listado es la profundidad en el árbol, no el nivel: AEDA saltea
+  niveles (5-3-0-00-014 cuelga de 5-0-0-00-000 EGRESOS).
+#}
+{% set c = cuenta or {} %}
+{% set fila = (filas | selectattr('id_cuenta', 'equalto', c.get('id_cuenta')) | first) if c.get('id_cuenta') else none %}
+{% set traba = fila.traba_codigo if fila else False %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Plan de cuentas</h1>
+    <p>Las cuentas contables del sindicato: a cuál va cada gasto, ingreso, cuenta de fondos y asiento.</p>
+  </div>
+  {% if cuenta %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva cuenta', href=url_for('contabilidad.plan', nuevo=1), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+{% if not filas %}
+  {{ ui.aviso('El plan está vacío. El del sindicato es el de AEDA: correr importar_aeda_plan_cuentas.py (o importar_aeda_tesoreria.py, que lo trae junto con las tablas de tesorería).', 'warning') }}
+{% endif %}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar' if c.get('id_cuenta') else 'Nueva', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por código o nombre…', tam_pagina=9999) %}
+      {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+        <option value="">Todas las clases</option>
+        {% for k, t in clases.items() %}<option value="{{ k }}">{{ k }} · {{ t|capitalize }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
+        <option value="">Títulos e imputables</option>
+        <option value="T">Títulos</option>
+        <option value="I">Imputables</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activas</option>
+        <option value="0">Inactivas</option>
+        <option value="">Todas</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-plan" data-exportar="Plan de cuentas">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Código</th>
+            <th>Nombre</th>
+            <th>Clase</th>
+            <th>Tipo</th>
+            <th>Corriente</th>
+            <th>Monetaria</th>
+            <th class="th-right">Usos</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in filas %}
+          {% set titulo = not f.permite_movimiento %}
+          <tr id="c{{ f.id_cuenta }}" class="{{ 'fila-baja' if not f.activa }}" data-activa="{{ f.activa }}"
+              data-clase="{{ f.id_clasificacion or '' }}" data-tipo="{{ 'T' if titulo else 'I' }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('contabilidad.plan', edit=f.id_cuenta)) }}
+              {% if titulo %}
+                {{ ui.accion('agregar', titulo='Agregar una cuenta debajo', href=url_for('contabilidad.plan', madre=f.id_cuenta)) }}
+              {% endif %}
+              {% if not f.n_usos and not f.hijas %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': f.id_cuenta, 'nombre': f.codigo ~ '  ' ~ f.nombre}) }}
+              {% elif f.activa and f.traba_baja %}
+                {{ ui.accion('baja', titulo='No se puede desactivar: ' ~ f.traba_baja, deshabilitado=True) }}
+              {% elif f.activa %}
+                {{ ui.accion('baja', titulo='Desactivar: tiene cuentas debajo o se usa, así que no se elimina',
+                             onclick='enviar(this)', datos={'id': f.id_cuenta, 'accion': 'baja'}) }}
+              {% endif %}
+              {% if not f.activa %}
+                {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': f.id_cuenta, 'accion': 'reactivar'}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-mono">{{ f.codigo }}</td>
+            <td class="td-arbol {{ 'td-fuerte' if titulo }}" style="--sangria:{{ f.profundidad }};">{{ f.nombre }}</td>
+            <td class="td-muted">{{ f.id_clasificacion or '' }} · {{ (f.clasificacion or 'sin clase')|capitalize }}</td>
+            <td>{% if titulo %}<span class="td-muted">Título</span>{% else %}Imputable{% endif %}</td>
+            <td data-valor="{{ ('Sí' if f.corriente else 'No') if f.id_clasificacion in (1, 2) else '' }}">
+              {% if f.id_clasificacion in (1, 2) %}{{ ui.si_no(f.corriente) }}{% endif %}
+            </td>
+            <td data-valor="{{ 'Sí' if f.es_monetario else 'No' }}">{{ ui.si_no(f.es_monetario) }}</td>
+            <td class="td-right {{ 'td-muted' if not f.n_usos }}" data-num="{{ f.n_usos }}"
+                {% if f.n_usos %}title="{{ f.usos_texto }}"{% endif %}>{{ f.n_usos }}</td>
+            <td>{{ ui.estado('Activa', 'ok') if f.activa else ui.estado('Inactiva', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no hay cuentas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% set nota = ('debajo de ' ~ madre.codigo ~ ' ' ~ madre.nombre) if madre else None %}
+    {% call ui.card_head(('Editar cuenta ' ~ fila.codigo) if fila else 'Nueva cuenta', nota=nota) %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('contabilidad.plan'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('contabilidad.plan') }}" id="form-cuenta">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" id="cuenta-id" value="{{ c.get('id_cuenta') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label for="codigo">Código <span class="req">*</span></label>
+            <input type="text" name="codigo" id="codigo" class="mono" required maxlength="20" autocomplete="off"
+                   placeholder="{{ mascara }}" value="{{ c.get('codigo') or '' }}" {{ 'readonly' if traba }}>
+            <small class="campo-ayuda" id="codigo-ayuda">
+              {%- if traba -%}
+                {{ 'Tiene ' ~ fila.hijas ~ ' cuentas debajo' if fila.hijas else 'Se usa en ' ~ fila.usos_texto }}: el código no se cambia.
+              {%- else -%}Forma {{ mascara }}. Se acepta con puntos o sin los ceros de cada tramo.{%- endif -%}
+            </small>
+          </div>
+          <div class="campo" style="--span:6;">
+            <label for="nombre">Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" id="nombre" required maxlength="150" value="{{ c.get('nombre') or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="activa" value="1" {{ 'checked' if c.get('activa') }}>
+              Activa
+            </label>
+          </div>
+          <div class="campo" style="--span:12;">
+            <label class="campo-check">
+              <input type="checkbox" name="es_monetario" id="es_monetario" value="1" {{ 'checked' if c.get('es_monetario') }}>
+              Monetaria (no se reexpresa en el ajuste por inflación: caja, bancos, créditos y deudas en pesos)
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="bloque">
+        <div class="bloque-titulo">Sale del código</div>
+        <div class="datos" id="derivados">
+          <div class="dato"><div class="dato-lbl">Clase</div><div class="dato-val" id="d-clase">{{ info.clase_texto or '—' }}</div></div>
+          <div class="dato"><div class="dato-lbl">Tipo</div><div class="dato-val" id="d-tipo">{{ info.tipo or '—' }}</div></div>
+          <div class="dato"><div class="dato-lbl">Nivel</div><div class="dato-val" id="d-nivel">{{ info.nivel or '—' }}</div></div>
+          <div class="dato"><div class="dato-lbl">Corriente</div><div class="dato-val" id="d-corriente">{{ info.corriente_texto or '—' }}</div></div>
+          <div class="dato ancho"><div class="dato-lbl">Cuenta madre</div>
+            <div class="dato-val mono" id="d-madre">{{ info.madre or ('—' if not info.clase else 'Ninguna: es una cuenta raíz') }}</div></div>
+        </div>
+        <div id="d-avisos" class="separado">
+          {% if info.faltan %}{{ ui.aviso('El plan no tiene ' ~ info.faltan|join(' ni ') ~ ': la cuenta cuelga de la más cercana que existe. Si se crea después, pasa a colgar de esa.', 'info') }}{% endif %}
+          {% if not fila and info.hijas %}{{ ui.aviso(info.hijas ~ ' cuentas que ya están pasan a colgar de esta.', 'info') }}{% endif %}
+        </div>
+      </div>
+      {% if fila and (fila.n_usos or fila.hijas) %}
+      <div class="bloque">
+        <div class="bloque-titulo">Dónde se usa</div>
+        <div class="datos">
+          {% if fila.hijas %}<div class="dato"><div class="dato-lbl">Cuentas debajo</div><div class="dato-val">{{ fila.hijas }}</div></div>{% endif %}
+          {% for t, n in fila.usos.items() %}
+          <div class="dato"><div class="dato-lbl">{{ t }}</div><div class="dato-val">{{ n }}</div></div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if fila else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la cuenta?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('contabilidad.plan') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('contabilidad.plan') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+
+/* Lo que dice el código, mientras se tipea. El servidor vuelve a calcularlo
+   al guardar: esto es solo para ver antes dónde va a quedar la cuenta. */
+(function () {
+  var inp = document.getElementById('codigo'), ayuda = document.getElementById('codigo-ayuda');
+  if (!inp || inp.readOnly) return;
+  var mon = document.getElementById('es_monetario'), esNueva = !document.getElementById('cuenta-id').value,
+      monTocada = false, timer = null, ultimo = null;
+  mon.addEventListener('change', function () { monTocada = true; });
+  function poner(id, txt) { document.getElementById(id).textContent = txt || '—'; }
+  function aviso(txt) {
+    var d = document.createElement('div');
+    d.className = 'alert alert-info';
+    d.innerHTML = {{ ui.icono('info', 16) | tojson }};
+    var t = document.createElement('div'); t.textContent = txt; d.appendChild(t);
+    return d;
+  }
+  function consultar() {
+    var v = inp.value.trim();
+    if (v === ultimo) return;
+    ultimo = v;
+    if (!v) { ayuda.className = 'campo-ayuda'; ayuda.textContent = 'Forma {{ mascara }}.'; return; }
+    var url = '{{ url_for("contabilidad.plan_codigo") }}?codigo=' + encodeURIComponent(v) +
+              '&id=' + encodeURIComponent(document.getElementById('cuenta-id').value);
+    fetch(url, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (a) {
+      if (inp.value.trim() !== v) return;
+      var avisos = document.getElementById('d-avisos');
+      avisos.innerHTML = '';
+      if (a.error) {
+        ayuda.className = 'campo-ayuda error'; ayuda.textContent = a.error;
+        ['d-clase', 'd-tipo', 'd-nivel', 'd-corriente', 'd-madre'].forEach(function (id) { poner(id, ''); });
+        return;
+      }
+      ayuda.className = 'campo-ayuda ok';
+      ayuda.textContent = (a.codigo !== v ? 'Queda ' + a.codigo + '. ' : '') + a.tipo + ', nivel ' + a.nivel + '.';
+      poner('d-clase', a.clase_texto); poner('d-tipo', a.tipo); poner('d-nivel', a.nivel);
+      poner('d-corriente', a.corriente_texto); poner('d-madre', a.madre || 'Ninguna: es una cuenta raíz');
+      if (a.faltan && a.faltan.length)
+        avisos.appendChild(aviso('El plan no tiene ' + a.faltan.join(' ni ') +
+          ': la cuenta cuelga de la más cercana que existe. Si se crea después, pasa a colgar de esa.'));
+      if (esNueva && a.hijas) avisos.appendChild(aviso(a.hijas + ' cuentas que ya están pasan a colgar de esta.'));
+      if (esNueva && !monTocada) mon.checked = !!a.monetaria;
+    });
+  }
+  inp.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(consultar, 250); });
+  inp.addEventListener('blur', function () {
+    clearTimeout(timer); consultar();
+  });
+  if (inp.value) { ultimo = inp.value.trim(); }
+})();
+
+document.addEventListener('DOMContentLoaded', function () {
+  var fc = document.getElementById('f-clase'), ft = document.getElementById('f-tipo'),
+      fe = document.getElementById('f-estado');
+  gestion_admTable('tbl-plan', {
+    pageSize: 9999,
+    filtroExtra: function (tr) {
+      if (fc.value && tr.dataset.clase !== fc.value) return false;
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      if (fe.value && tr.dataset.activa !== fe.value) return false;
+      return true;
+    }
+  });
+  // Después de guardar se vuelve al listado con #c<id>: la cuenta, marcada.
+  var tr = location.hash && document.getElementById(location.hash.slice(1));
+  if (tr && tr.tagName === 'TR') {
+    tr.classList.add('fila-actual');
+    tr.scrollIntoView({ block: 'center' });
+  }
+});
+</script>
+{% endblock %}

@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden de ingreso{% endblock %}
+
+{#
+  Orden de ingreso (tes_mov.orden_ingreso). Tres bloques, uno debajo del otro:
+    Motivos   por qué entra la plata (c_motivos_de_ingreso), con período e importe.
+    Cuentas   a dónde entra. Motivos y cuentas tienen que sumar lo mismo.
+    Valores   si una cuenta es una cartera, los cheques que la respaldan: suman
+              lo asignado a esa cartera. El bloque aparece solo con una cartera.
+  Se numera AAMM-######## con el mes de la fecha de la orden.
+#}
+
+{% macro r_motivo(m, motivos) -%}
+<tr>
+  <td>{{ ui.accion('borrar', onclick='quitar(this)', titulo='Quitar el motivo') }}</td>
+  <td><select name="m_motivo" class="inp-celda">{{ ui.opciones(motivos, m.get('id_motivo'), clave='id', vacio='— Elegí el motivo —') }}</select></td>
+  <td><input type="text" name="m_descripcion" class="inp-celda" maxlength="200" value="{{ m.get('descripcion') or '' }}" placeholder="Opcional: el motivo, si queda vacío"></td>
+  <td><input type="month" name="m_periodo" class="inp-celda" value="{{ (m.periodo[:4] ~ '-' ~ m.periodo[4:]) if m.get('periodo') else '' }}"></td>
+  <td class="td-right"><input type="text" name="m_importe" class="inp-importe importe m-imp" inputmode="decimal" value="{{ m.get('importe_txt') or '' }}"></td>
+</tr>
+{%- endmacro %}
+
+{% macro r_cuenta(c, cuentas) -%}
+<tr>
+  <td>{{ ui.accion('borrar', onclick='quitar(this)', titulo='Quitar la cuenta') }}</td>
+  <td><select name="c_cuenta" class="inp-celda c-cta">
+    <option value="">— Elegí la cuenta —</option>
+    {% for x in cuentas %}<option value="{{ x.id }}" data-tipo="{{ x.tipo_de_cuenta }}" {{ 'selected' if c.get('id_cuenta') == x.id }}>{{ x.texto }}</option>{% endfor %}
+  </select></td>
+  <td class="td-right"><input type="text" name="c_importe" class="inp-importe importe c-imp" inputmode="decimal" value="{{ c.get('importe_txt') or '' }}"></td>
+</tr>
+{%- endmacro %}
+
+{% macro r_valor(v, cuentas, bancos, tipos_valor) -%}
+<tr>
+  <td>{{ ui.accion('borrar', onclick='quitar(this)', titulo='Quitar el valor') }}</td>
+  <td><select name="v_cuenta" class="inp-celda v-cta" data-valor="{{ v.get('id_cuenta') or '' }}"></select></td>
+  <td><select name="v_tipo" class="inp-celda">{% for k, t in tipos_valor %}<option value="{{ k }}" {{ 'selected' if v.get('tipo_valor', 'cheque') == k }}>{{ t }}</option>{% endfor %}</select></td>
+  <td><input type="text" name="v_numero" class="inp-celda mono" maxlength="8" value="{{ v.get('nro_cheque') or '' }}"></td>
+  <td><select name="v_banco" class="inp-celda">{{ ui.opciones(bancos, v.get('codigo_banco'), clave='codigo', texto='nombre', vacio='—') }}</select></td>
+  <td><input type="text" name="v_cuit" class="inp-celda mono" maxlength="13" value="{{ v.get('cuit_librador') or '' }}"></td>
+  <td><input type="text" name="v_librador" class="inp-celda" maxlength="200" value="{{ v.get('razon_social_librador') or '' }}"></td>
+  <td><input type="date" name="v_emision" class="inp-celda" value="{{ v.fecha_emision.isoformat() if v.get('fecha_emision') else '' }}"></td>
+  <td><input type="date" name="v_vencimiento" class="inp-celda" value="{{ v.fecha_vencimiento.isoformat() if v.get('fecha_vencimiento') else '' }}"></td>
+  <td class="td-right"><input type="text" name="v_importe" class="inp-importe importe v-imp" inputmode="decimal" value="{{ v.get('importe_txt') or '' }}"></td>
+</tr>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de ingreso</h1>
+    <p>Plata que entra a una cuenta del sindicato por un motivo: cuota sindical, alquileres, intereses, fiscalización.</p>
+  </div>
+  {% if puede_subdiario %}
+  <div class="page-header-acciones">{{ ui.boton('Subdiario', 'secondary', href=url_for('tes_mov.subdiario'), icono_='volver') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<form method="post" id="form-oi">
+  <div class="card">
+    {% call ui.card_head('Motivos', nota='Por qué entra la plata.') %}
+      {{ ui.boton('Agregar motivo', 'secondary', chico=True, icono_='agregar', onclick="agregar('motivos', 'tpl-motivo')") }}
+    {% endcall %}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:2;">
+          <label>Fecha <span class="req">*</span></label>
+          <input type="date" name="fecha" required value="{{ o.fecha_txt }}">
+        </div>
+      </div>
+    </div>
+    <div class="data-table-wrap" data-sin-scroll-arriba>
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr><th class="col-acciones"></th><th>Motivo <span class="req">*</span></th><th>Descripción</th><th>Período</th><th class="th-right">Importe <span class="req">*</span></th></tr></thead>
+        <tbody id="motivos">{% for m in (o.motivos or [{}]) %}{{ r_motivo(m, motivos) }}{% endfor %}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    {% call ui.card_head('Cuentas', nota='A dónde entra. Una cartera pide los valores que la respaldan.') %}
+      {{ ui.boton('Agregar cuenta', 'secondary', chico=True, icono_='agregar', onclick="agregar('cuentas', 'tpl-cuenta')") }}
+    {% endcall %}
+    <div class="data-table-wrap" data-sin-scroll-arriba>
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr><th class="col-acciones"></th><th>Cuenta <span class="req">*</span></th><th class="th-right">Importe <span class="req">*</span></th></tr></thead>
+        <tbody id="cuentas">{% for c in (o.cuentas or [{}]) %}{{ r_cuenta(c, cuentas) }}{% endfor %}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card oculto" id="card-valores">
+    {% call ui.card_head('Valores de terceros', nota='Cheques, e-cheqs o pagarés que entran a la cartera. Suman lo asignado a cada cartera.') %}
+      {{ ui.boton('Agregar valor', 'secondary', chico=True, icono_='agregar', onclick="agregar('valores', 'tpl-valor')") }}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr><th class="col-acciones"></th><th>Cartera</th><th>Tipo</th><th>Número <span class="req">*</span></th><th>Banco</th>
+          <th>CUIT librador</th><th>Librador</th><th>Emisión</th><th>Vencimiento</th><th class="th-right">Importe <span class="req">*</span></th></tr></thead>
+        <tbody id="valores">{% for v in (o.valores or [{}]) %}{{ r_valor(v, cuentas, bancos, tipos_valor) }}{% endfor %}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card resumen">
+    {{ ui.card_head('La orden') }}
+    <div class="card-body">
+      <div class="resumen-fila"><span>Motivos</span><strong id="r-motivos">$ 0,00</strong></div>
+      <div class="resumen-fila"><span>Cuentas</span><strong id="r-cuentas">$ 0,00</strong></div>
+      <div class="resumen-fila" id="fila-valores"><span>Valores</span><strong id="r-valores">$ 0,00</strong></div>
+      <div class="resumen-fila resumen-total"><span>Total</span><strong id="r-total">$ 0,00</strong></div>
+      <div id="r-aviso"></div>
+      <div class="campo">
+        <label for="observaciones">Observaciones</label>
+        <textarea name="observaciones" id="observaciones" rows="2">{{ o.get('observaciones') or '' }}</textarea>
+      </div>
+      <div class="resumen-botones">{{ ui.boton('Registrar la orden', submit=True, icono_='guardar') }}</div>
+    </div>
+  </div>
+</form>
+
+<template id="tpl-motivo">{{ r_motivo({}, motivos) }}</template>
+<template id="tpl-cuenta">{{ r_cuenta({}, cuentas) }}</template>
+<template id="tpl-valor">{{ r_valor({}, cuentas, bancos, tipos_valor) }}</template>
+
+<script>
+function aNumero(t) { var s = (t || '').trim(); if (!s) return 0; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); return parseFloat(s) || 0; }
+function pesos(n) { return '$ ' + n.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function suma(sel) { var t = 0; document.querySelectorAll(sel).forEach(function (i) { t += aNumero(i.value); }); return Math.round(t * 100) / 100; }
+function preparar(fila) {
+  fila.querySelectorAll('.inp-importe').forEach(function (i) {
+    i.addEventListener('input', function () { fmtMiles(this); calcular(); });
+    i.addEventListener('blur', function () { fmtMilesBlur(this); });
+  });
+  fila.querySelectorAll('select').forEach(function (s) { s.addEventListener('change', calcular); });
+}
+function agregar(tbody, tpl) {
+  var fila = document.getElementById(tpl).content.firstElementChild.cloneNode(true);
+  document.getElementById(tbody).appendChild(fila);
+  preparar(fila);
+  calcular();
+}
+function quitar(b) {
+  var tb = b.closest('tbody');
+  if (tb.rows.length > 1) b.closest('tr').remove();
+  else b.closest('tr').querySelectorAll('input, select').forEach(function (i) { i.value = ''; });
+  calcular();
+}
+/* Las carteras elegidas en Cuentas son las opciones de cada valor. */
+function carteras() {
+  var lista = [];
+  document.querySelectorAll('#cuentas .c-cta').forEach(function (s) {
+    var o = s.selectedOptions[0];
+    if (o && o.value && o.dataset.tipo === 'R') lista.push({ id: o.value, texto: o.textContent });
+  });
+  return lista;
+}
+function calcular() {
+  var cs = carteras(), card = document.getElementById('card-valores');
+  card.classList.toggle('oculto', cs.length === 0);
+  document.querySelectorAll('#valores .v-cta').forEach(function (s) {
+    var actual = s.value || s.dataset.valor;
+    s.innerHTML = '';
+    cs.forEach(function (c) {
+      var o = document.createElement('option'); o.value = c.id; o.textContent = c.texto;
+      if (c.id === actual) o.selected = true;
+      s.appendChild(o);
+    });
+    s.dataset.valor = '';
+    s.disabled = cs.length === 0;
+  });
+  var m = suma('.m-imp'), c = suma('.c-imp'), v = cs.length ? suma('.v-imp') : 0;
+  document.querySelectorAll('#valores input, #valores select').forEach(function (i) { i.disabled = cs.length === 0; });
+  document.getElementById('r-motivos').textContent = pesos(m);
+  document.getElementById('r-cuentas').textContent = pesos(c);
+  document.getElementById('r-valores').textContent = pesos(v);
+  document.getElementById('fila-valores').classList.toggle('oculto', cs.length === 0);
+  document.getElementById('r-total').textContent = pesos(m);
+  var avisos = [];
+  if (m && c && Math.abs(m - c) > 0.01) avisos.push('Motivos y cuentas no dan lo mismo: diferencia ' + pesos(m - c) + '.');
+  var aviso = document.getElementById('r-aviso');
+  aviso.className = avisos.length ? 'campo-ayuda error' : '';
+  aviso.textContent = avisos.join(' ');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('#motivos tr, #cuentas tr, #valores tr').forEach(preparar);
+  calcular();
+});
+</script>
+{% endblock %}

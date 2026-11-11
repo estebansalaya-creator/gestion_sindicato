@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Aprobadores de órdenes de pago{% endblock %}
+
+{#
+  Config. Aprobadores (pagos.aprobadores): quién aprueba las órdenes, por
+  nivel. Una orden que se manda a aprobación pide un visto bueno por cada
+  nivel activo; con todos aprobados queda «aprobada» y se puede pagar. Sin
+  ningún aprobador, las órdenes no se pueden mandar a aprobar.
+#}
+{% set r = registro or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Aprobadores de órdenes de pago</h1>
+    <p>Un visto bueno por nivel: con todos los niveles aprobados, la orden se puede pagar.</p>
+  </div>
+  {% if registro %}
+  <div class="page-header-acciones">{{ ui.boton('Nuevo', href=url_for('pagos.aprobadores', nuevo=1), icono_='agregar') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+{% if not aprobadores %}
+  {{ ui.aviso('Todavía no hay aprobadores: sin ellos ninguna orden se puede mandar a aprobar ni pagar.', 'warning') }}
+{% endif %}
+{% if esperando %}
+  {{ ui.aviso(esperando ~ ' orden(es) esperando aprobación. Los niveles de cada una se fijan al mandarla: un cambio acá rige para las próximas.', 'info') }}
+{% endif %}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', aprobadores|length), ('datos', 'Editar' if r.get('id') else 'Nuevo', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por usuario…') %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-aprob" data-exportar="Aprobadores">
+        <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th class="th-right">Nivel</th><th>Usuario</th><th>Email</th><th>Observaciones</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for a in aprobadores %}
+          <tr class="{{ 'fila-baja' if not a.activo }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('pagos.aprobadores', edit=a.id)) }}
+              {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': a.id, 'nombre': 'Nivel ' ~ a.nivel ~ ' · ' ~ a.usuario}) }}
+            </div></td>
+            <td class="td-right td-fuerte" data-num="{{ a.nivel }}">{{ a.nivel }}</td>
+            <td class="td-fuerte">{{ a.usuario }}{% if not a.usuario_activo %} {{ ui.estado('usuario inactivo', 'warn') }}{% endif %}</td>
+            <td class="td-muted">{{ a.email }}</td>
+            <td class="td-wrap td-muted">{{ a.observaciones or '' }}</td>
+            <td>{{ ui.estado('Activo', 'ok') if a.activo else ui.estado('Inactivo', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="6" class="no-data">Todavía no hay aprobadores.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <form method="post" class="card">
+    {% call ui.card_head(('Editar' if r.get('id') else 'Nuevo') ~ ' aprobador') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('pagos.aprobadores'), chico=True) }}
+    {% endcall %}
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:2;">
+          <label for="nivel">Nivel <span class="req">*</span></label>
+          <input type="number" name="nivel" id="nivel" min="1" max="9" required value="{{ r.get('nivel') or 1 }}">
+        </div>
+        <div class="campo" style="--span:6;">
+          <label for="id_usuario">Usuario <span class="req">*</span></label>
+          <select name="id_usuario" id="id_usuario" required>{{ ui.opciones(usuarios, r.get('id_usuario'), clave='id', texto='nombre', vacio='— Elegí el usuario —') }}</select>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label class="campo-check"><input type="checkbox" name="activo" value="1" {{ 'checked' if r.get('activo', 1) }}> Activo</label>
+        </div>
+        <div class="campo" style="--span:12;">
+          <label for="observaciones">Observaciones</label>
+          <input type="text" name="observaciones" id="observaciones" maxlength="200" value="{{ r.get('observaciones') or '' }}">
+        </div>
+      </div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Guardar cambios' if r.get('id') else 'Agregar', icono_='guardar', submit=True) }}</div>
+  </form>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar el aprobador?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-aprob', {pageSize: 20}); });
+</script>
+{% endblock %}

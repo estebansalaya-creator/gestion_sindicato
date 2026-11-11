@@ -1,0 +1,363 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}CC — {{ proveedor.razon_social }}{% endblock %}
+
+{#
+  Estado de cuenta de un proveedor (cc_prov.estado_cuenta), con las columnas,
+  los nombres y los botones de gestion_adm (proveedores/cc_estado_cuenta.html).
+  Saldo = Debe − Haber: negativo es acreedor (le debemos). Las facturas van al
+  Haber; los pagos, los anticipos y las notas de crédito, al Debe (de qué lado
+  va una nota lo dice el tipo del comprobante, no el signo con que se cargó).
+
+  Cronológica: un renglón por movimiento con el saldo del comprobante y el
+  acumulado. Por aplicación: cada comprobante y debajo lo que lo canceló, con
+  desaplicar. Por defecto los últimos seis meses; lo anterior es el saldo
+  anterior. Buscar un comprobante o «solo con saldo» ignoran el período.
+  El saldo es acumulado: la grilla no se ordena (data-sin-orden).
+#}
+
+{# Un importe de la grilla con el color del saldo; en cero, el tilde si quedó cancelado. #}
+{% macro saldo(v, cancelado='') -%}
+  {%- if v > 0.01 %}<span class="saldo-deudor">{{ v | miles }}</span>
+  {%- elif v < -0.01 %}<span class="saldo-acreedor">{{ v | miles }}</span>
+  {%- elif cancelado %}<span class="saldo-cero" title="{{ cancelado }}">✓</span>
+  {%- else %}<span class="saldo-cero">—</span>{% endif -%}
+{%- endmacro %}
+
+{% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
+<div class="kpi-card"><div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div><div>
+  <div class="kpi-lbl">{{ rotulo }}</div>
+  <div class="kpi-val monto {{ clase }}">{{ valor }}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ proveedor.razon_social }}
+      {% if proveedor.nombre_fantasia and proveedor.nombre_fantasia|lower != proveedor.razon_social|lower %}
+      <span class="chico muted">({{ proveedor.nombre_fantasia }})</span>
+      {% endif %}
+    </h1>
+    <p class="fila">
+      <span class="mono">CUIT {{ proveedor.cuit }}</span>
+      {% if proveedor.cbu or proveedor.cbu_alias %}<span class="mono">CBU {{ proveedor.cbu or '—' }}{% if proveedor.cbu_alias %} / {{ proveedor.cbu_alias }}{% endif %}</span>{% endif %}
+      {% if not proveedor.activo %}{{ ui.estado('De baja', 'danger') }}{% endif %}
+      {# Viene filtrado por rubro desde la bandeja: los totales no son los del proveedor completo. #}
+      {% if nombre_rubro %}
+      <span class="chip chip-alerta">Rubro: {{ nombre_rubro }}
+        <a href="{{ url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id, desde=request.args.get('desde'), hasta=request.args.get('hasta'),
+                            con_saldo=request.args.get('con_saldo'), vista=f.vista) }}"
+           title="Ver la cuenta completa, sin filtrar por rubro">×</a></span>
+      {% endif %}
+    </p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Cuenta Corriente', 'secondary', href=url_for('cc_prov.bandeja'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{# ── Resumen de saldos ── #}
+<div class="kpi-row">
+  {% if saldo_anterior %}
+    {{ kpi('historial', '', 'Saldo anterior', saldo_anterior | miles, 'saldo-acreedor' if saldo_anterior < 0 else 'saldo-deudor') }}
+  {% endif %}
+  {# Con «solo con saldo» un Debe y un Haber sobre las filas visibles engañan: se muestra solo lo pendiente. #}
+  {% if not f.con_saldo %}
+    {{ kpi('dinero', 'danger', 'Debe', total_debe | miles, 'importe-danger') }}
+    {{ kpi('dinero', 'ok', 'Haber', total_haber | miles, 'importe-ok') }}
+  {% endif %}
+  {{ kpi('planilla', 'danger' if saldo_final < -0.01 else 'ok', 'Saldo pendiente' if f.con_saldo else 'Saldo final',
+         saldo_final | miles, 'saldo-acreedor' if saldo_final < -0.01 else ('saldo-deudor' if saldo_final > 0.01 else ''),
+         ('En ' ~ movimientos|length ~ ' movimiento(s) con saldo') if f.con_saldo
+         else ('Acreedor — le debemos' if saldo_final < -0.01 else ('Deudor — a favor nuestro' if saldo_final > 0.01 else 'Sin saldo'))) }}
+  {# Fuera del saldo a propósito: cargados por la mesa y todavía sin auditar. #}
+  {% if pendiente.n %}
+    {{ kpi('reloj', 'warn', 'Pendiente de auditoría', pendiente.importe | miles, 'importe-pendiente',
+           pendiente.n ~ ' comprobante' ~ ('s' if pendiente.n != 1 else '') ~ ' ingresado' ~ ('s' if pendiente.n != 1 else '') ~ ' · no suma al saldo') }}
+  {% endif %}
+</div>
+
+{# ── Filtros y grilla, en una tarjeta ── #}
+<div class="card">
+  <form method="get" action="{{ url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id) }}" class="filter-bar" id="frm-filtros">
+    {# El rubro viaja escondido: cambiar el período o la vista no lo pierde. Se saca con la × del encabezado. #}
+    {% if rubro %}<input type="hidden" name="rubro" value="{{ rubro }}">{% endif %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro-srv" value="{{ f.desde.isoformat() if f.desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro-srv" value="{{ (f.hasta or f.hoy).isoformat() }}">{% endcall %}
+    {% call ui.filtro('Vista') %}<select name="vista" class="filtro-srv" onchange="this.form.submit()">
+      <option value="cronologica" {{ 'selected' if f.vista == 'cronologica' }}>Cronológica (debe/haber)</option>
+      <option value="aplicacion"  {{ 'selected' if f.vista == 'aplicacion' }}>Por aplicación de comprobantes</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Comprobante') %}<input type="text" name="cbte" value="{{ f.cbte }}" class="filtro-srv mono" size="14"
+           placeholder="8532 o 143-8532" title="Número de comprobante o de pago. Ignora el período: busca en toda la cuenta.">{% endcall %}
+    <label class="filtro-check">
+      <input type="checkbox" name="con_saldo" value="1" {{ 'checked' if f.con_saldo }} onchange="this.form.submit()">
+      Solo movimientos con saldo
+    </label>
+    <button type="submit" class="btn btn-primary btn-sm" title="Aplicar período">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id) }}" class="btn btn-secondary btn-sm" title="Quitar filtros">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    {# El período arranca en los últimos 6 meses; lo anterior entra como saldo anterior. #}
+    <div class="filtro-campo">
+      <span class="filtro-lbl">Período</span>
+      <div class="fila" style="gap:4px;">
+        {{ ui.boton('6 meses', 'secondary', href=url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id, vista=f.vista, con_saldo=request.args.get('con_saldo'), rubro=rubro or None), chico=True) }}
+        {{ ui.boton('12 meses', 'secondary', href=url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id, desde=desde_12m, vista=f.vista, con_saldo=request.args.get('con_saldo'), rubro=rubro or None), chico=True) }}
+        {{ ui.boton('Todo', 'secondary', href=url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id, desde='', vista=f.vista, con_saldo=request.args.get('con_saldo'), rubro=rubro or None), chico=True) }}
+      </div>
+    </div>
+    {# Las exportaciones se llevan lo que hay en pantalla, con los mismos parámetros. #}
+    <div class="filter-bar-fin">
+      {% if puede_aplicar %}
+      {{ ui.boton('Aplicar / desaplicar', 'secondary', href=url_for('cc_prov.aplicaciones', id_proveedor=proveedor.id), chico=True) }}
+      {% endif %}
+      <a href="{{ url_for('cc_prov.pdf_estado_cuenta', id_proveedor=proveedor.id, desde=request.args.get('desde'), hasta=request.args.get('hasta'),
+                          con_saldo=request.args.get('con_saldo'), rubro=rubro or None, cbte=f.cbte or None) }}"
+         class="btn btn-pdf btn-sm" target="_blank" rel="noopener">{{ ui.icono('pdf') }}Exportar PDF</a>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar Excel</button>
+      <span class="filter-count"></span>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+    {% if not con_periodo %}
+    <span class="campo-ayuda" style="flex-basis:100%;">
+      {% if f.cbte %}Buscando el comprobante «{{ f.cbte }}»: se ignora el período, se busca en toda la cuenta.
+      {% else %}Se ignora el período: se listan todos los movimientos con saldo, de cualquier fecha.{% endif %}
+    </span>
+    {% endif %}
+  </form>
+
+{% if f.vista == 'aplicacion' %}
+{# ══ Vista por aplicación: comprobante → lo que lo canceló → saldo ══ #}
+  {{ ui.card_head('Aplicación de comprobantes', nota='el botón de cada renglón aplicado lo desaplica' if puede_aplicar else None) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-aplic" data-sin-orden data-exportar="Aplicación de comprobantes {{ proveedor.razon_social }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:76px;">Acciones</th>
+          <th class="th-center" data-no-sort style="width:84px;">Fecha</th>
+          <th data-no-sort>Comprobante</th>
+          <th class="th-right" data-no-sort style="width:130px;">Liquidado</th>
+          <th class="th-right" data-no-sort style="width:130px;">Aplicado</th>
+          <th class="th-right" data-no-sort style="width:130px;">Saldo comp.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in grupos %}
+        <tr class="fila-grupo-cc">
+          <td><div class="acciones">
+            {% if puede_mesa and g.id_expediente %}{{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=g.id_expediente), titulo='Ver expediente') }}{% endif %}
+            {% if g.con_pdf %}{{ ui.accion('pdf', href=url_for('comprobantes.pdf', id_comprobante=g.id_comprobante), titulo='Ver PDF del comprobante', blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-center">{{ g.fecha.strftime('%d/%m/%y') if g.fecha else '—' }}</td>
+          <td class="td-fuerte td-wrap">{{ g.concepto or g.nro_referencia or '—' }}
+            {% if g.marcas %}{{ ui.marcas(g.marcas) }}{% endif %}</td>
+          <td class="td-right" data-num="{{ g.liquidado }}">{{ g.liquidado | miles }}</td>
+          <td class="td-right importe-ok" data-num="{{ g.aplicado }}">{% if g.aplicado > 0.01 %}{{ g.aplicado | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ g.saldo_comp or 0 }}">{{ saldo(g.saldo_comp or 0, cancelado='Cancelado') }}</td>
+        </tr>
+        {% for pg in g.pagos %}
+        <tr class="fila-hija">
+          <td><div class="acciones">
+            {# Cada renglón que viene de c_pasivo_aplicacion se puede soltar desde acá. #}
+            {% if pg.id_aplicacion and puede_aplicar %}
+            {{ ui.accion('desaplicar', onclick='desaplicar(this)', datos={
+                 'url': url_for('cc_prov.deshacer', id_aplic=pg.id_aplicacion), 'importe': '%.2f' % (pg.importe | float),
+                 'credito': pg.texto if pg.forma != 'entregada' else (g.concepto or g.nro_referencia),
+                 'debito': (g.concepto or g.nro_referencia) if pg.forma != 'entregada' else pg.texto,
+                 'pago': '1' if pg.es_pago else '0', 'origen': pg.origen}) }}
+            {% endif %}
+            {% if pg.id_orden %}{{ ui.accion('pdf', href=url_for('pagos.orden_pdf', id_orden=pg.id_orden), titulo='Ver PDF de la orden de pago', blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-center td-muted">{{ pg.fecha.strftime('%d/%m/%y') if pg.fecha else '—' }}</td>
+          <td class="td-muted td-wrap td-sangria">↳ {{ pg.texto }}
+            {%- if pg.forma == 'entregada' %} <span class="chico">(aplicada a ese comprobante)</span>{% endif %}
+            {%- if pg.origen %} <span class="chip">{{ origenes.get(pg.origen, pg.origen) }}</span>{% endif %}</td>
+          <td></td>
+          <td class="td-right importe-ok" data-num="{{ pg.importe }}">{{ pg.importe | miles }}</td>
+          <td></td>
+        </tr>
+        {% endfor %}
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">Sin comprobantes en el período.</td></tr>
+        {% endfor %}
+        {% if grupos %}
+        <tr class="total-row">
+          <td colspan="3" class="td-right">Totales</td>
+          <td class="td-right">{{ (grupos | sum(attribute='liquidado')) | miles }}</td>
+          <td class="td-right importe-ok">{{ (grupos | sum(attribute='aplicado')) | miles }}</td>
+          {% set tsc = grupos | sum(attribute='saldo_comp') %}
+          <td class="td-right importe-danger">{% if tsc|abs > 0.01 %}{{ tsc | miles }}{% else %}—{% endif %}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+
+{% else %}
+{# ── Movimientos (vista cronológica) ── #}
+  {{ ui.card_head('Movimientos') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-mov" data-sin-orden data-exportar="Estado de cuenta {{ proveedor.razon_social }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:108px;">Acciones</th>
+          <th class="th-center" data-no-sort style="width:84px;">Fecha</th>
+          <th data-no-sort>Concepto</th>
+          <th class="th-right" data-no-sort style="width:124px;">Debe</th>
+          <th class="th-right" data-no-sort style="width:124px;">Haber</th>
+          <th class="th-right" data-no-sort style="width:124px;" title="Liquidado menos pagos aplicados a ese comprobante">Saldo comp.</th>
+          <th class="th-right" data-no-sort style="width:124px;">Saldo</th>
+        </tr>
+        {# Abre la grilla con lo que venía de antes: no es un movimiento (no se
+           cuenta ni se pagina) y se ve en todas las páginas. #}
+        {% if con_periodo and f.desde and saldo_anterior %}
+        <tr class="fila-saldo-anterior">
+          <td></td>
+          <td class="td-center td-muted">—</td>
+          <td class="td-muted"><em>Saldo anterior</em></td>
+          <td></td><td></td><td></td>
+          <td class="td-right">{{ saldo(saldo_anterior) }}</td>
+        </tr>
+        {% endif %}
+      </thead>
+      <tbody>
+        {% for m in movimientos %}
+        {% set _ant = m.es_anticipo or m.tipo == 'anticipo' %}
+        <tr>
+          <td><div class="acciones">
+            {% if m.tipo == 'liquidacion' %}
+              {% if puede_mesa and m.id_expediente %}{{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=m.id_expediente), titulo='Ver expediente') }}{% endif %}
+              {% if m.con_pdf %}{{ ui.accion('pdf', href=url_for('comprobantes.pdf', id_comprobante=m.id_comprobante), titulo='Ver PDF del comprobante', blank=True) }}{% endif %}
+            {% elif m.id_orden %}
+              {% if puede_ordenes %}{{ ui.accion('ver', href=url_for('pagos.orden', id_orden=m.id_orden), titulo=('Ver anticipo' if _ant else 'Ver pago')) }}{% endif %}
+              {{ ui.accion('pdf', href=url_for('pagos.orden_pdf', id_orden=m.id_orden), titulo='Ver PDF de la orden de pago', blank=True) }}
+            {% endif %}
+            {# Con qué se canceló el comprobante, o a qué se imputó el pago. #}
+            {% if m.tipo == 'liquidacion' or m.id_pago %}
+            {{ ui.accion('aplicaciones', onclick='verAplicaciones(this)',
+                 datos={'url': url_for('cc_prov.aplicaciones_de', id_proveedor=proveedor.id, liq=m.id_liquidacion) if m.tipo == 'liquidacion'
+                               else url_for('cc_prov.aplicaciones_de', id_proveedor=proveedor.id, pago=m.id_pago),
+                        'titulo': m.concepto or m.nro_referencia or ''}) }}
+            {% endif %}
+          </div></td>
+          <td class="td-center">{{ m.fecha.strftime('%d/%m/%y') if m.fecha else '—' }}</td>
+          <td class="td-wrap">
+            {{ ui.estado('Liq.' if m.tipo == 'liquidacion' else ('Ant.' if _ant else 'Pago'),
+                         'danger' if m.tipo == 'liquidacion' else ('warn' if _ant else 'ok')) }}
+            {{ m.concepto or m.nro_referencia or '—' }}
+            {% if m.signo_dudoso %}
+            <span class="chip chip-alerta" title="Este comprobante está cargado con el signo al revés: {{ m.signo_dudoso }}. El renglón no se movió de columna porque eso cambiaría el saldo.">⚠ signo</span>
+            {% endif %}
+            {% if m.sin_pago %}<span class="chip chip-alerta">orden sin pagar</span>{% endif %}
+            {% if m.marcas %}{{ ui.marcas(m.marcas) }}{% endif %}
+          </td>
+          <td class="td-right" data-num="{{ m.debe }}">{% if m.debe > 0.01 %}<span class="importe-danger td-fuerte">{{ m.debe | miles }}</span>{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ m.haber }}">{% if m.haber > 0.01 %}<span class="importe-ok td-fuerte">{{ m.haber | miles }}</span>{% else %}—{% endif %}</td>
+          {# Los pagos y anticipos también tienen saldo: la plata entregada que queda sin imputar. #}
+          <td class="td-right" data-num="{{ m.saldo_comp if m.saldo_comp is not none else '' }}">
+            {% if m.saldo_comp is not none %}
+              {{ saldo(m.saldo_comp, cancelado=('Comprobante cancelado' if m.tipo == 'liquidacion'
+                                                else ('Anticipo totalmente aplicado' if _ant else 'Pago totalmente imputado'))) }}
+            {% else %}—{% endif %}
+          </td>
+          <td class="td-right" data-num="{{ m.saldo_acum }}">{{ saldo(m.saldo_acum) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">Sin movimientos en el período.</td></tr>
+        {% endfor %}
+        {% if movimientos %}
+        <tr class="total-row">
+          <td colspan="3" class="td-right">Total período</td>
+          <td class="td-right importe-danger">{{ total_debe | miles }}</td>
+          <td class="td-right importe-ok">{{ total_haber | miles }}</td>
+          <td class="td-right {{ 'importe-danger' if total_saldo_comp < -0.01 else 'importe-ok' }}" title="Suma del saldo de los comprobantes listados">
+            {% if total_saldo_comp|abs > 0.01 %}{{ total_saldo_comp | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right {{ 'saldo-acreedor' if saldo_final < -0.01 else ('saldo-deudor' if saldo_final > 0.01 else 'saldo-cero') }}">{{ saldo_final | miles }}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+{% endif %}
+</div>
+{% if f.vista == 'aplicacion' and puede_aplicar %}{% include "proveedores/_desaplicar.html" %}{% endif %}
+
+<div class="modal" id="modal-aplic">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Aplicaciones — <span id="ma-ref"></span></div>
+    <div class="modal-cuerpo">
+      <div class="data-table-wrap" data-sin-scroll-arriba>
+        <table class="data-table compacta" data-sin-orden>
+          <thead><tr><th class="th-center">Fecha</th><th>Comprobante</th><th>Cómo</th><th class="th-right">Importe</th></tr></thead>
+          <tbody id="ma-filas"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="modal-acciones">{{ ui.boton('Cerrar', 'secondary', onclick="cerrarModal('modal-aplic')") }}</div>
+  </div>
+</div>
+
+<script>
+function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function celda(tr, txt, clase) {
+  var td = document.createElement('td');
+  if (clase) td.className = clase;
+  td.textContent = txt;
+  tr.appendChild(td);
+  return td;
+}
+function verAplicaciones(btn) {
+  var d = btn.dataset, tb = document.getElementById('ma-filas');
+  document.getElementById('ma-ref').textContent = d.titulo || '';
+  tb.innerHTML = '<tr><td colspan="4" class="no-data">Buscando…</td></tr>';
+  abrirModal('modal-aplic');
+  fetch(d.url, { credentials: 'same-origin' })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; }); })
+    .then(function (j) {
+      tb.innerHTML = '';
+      if (!j.filas.length) {
+        tb.innerHTML = '<tr><td colspan="4" class="no-data">Sin aplicaciones: no tiene pagos ni notas de crédito aplicadas.</td></tr>';
+        return;
+      }
+      j.filas.forEach(function (f) {
+        var tr = document.createElement('tr');
+        if (f.anulado) tr.className = 'fila-baja';
+        celda(tr, f.fecha, 'td-center');
+        var td = celda(tr, '');
+        if (f.href) { var a = document.createElement('a'); a.href = f.href; a.target = '_blank'; a.rel = 'noopener'; a.textContent = f.que; td.appendChild(a); }
+        else td.textContent = f.que;
+        if (f.anulado) td.appendChild(document.createTextNode(' (anulado)'));
+        celda(tr, f.forma, 'td-wrap td-muted');
+        celda(tr, plata(f.importe), 'td-right td-mono');
+        tb.appendChild(tr);
+      });
+      var tot = document.createElement('tr');
+      tot.className = 'total-row';
+      celda(tot, 'Total'); celda(tot, ''); celda(tot, '');
+      celda(tot, plata(j.total), 'td-right');
+      tb.appendChild(tot);
+    })
+    .catch(function (e) {
+      tb.innerHTML = '';
+      var tr = document.createElement('tr');
+      celda(tr, 'No se pudo traer: ' + e.message, 'no-data').colSpan = 4;
+      tb.appendChild(tr);
+    });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('{{ 'tbl-aplic' if f.vista == 'aplicacion' else 'tbl-mov' }}', { pageSize: {{ 9999 if f.vista == 'aplicacion' else 100 }} });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden de pago — {{ proveedor.razon_social }}{% endblock %}
+
+{#
+  Paso 2 de la orden a proveedor: qué se le paga. Los comprobantes vienen con
+  el SALDO puesto (no el importe del comprobante: difieren si hubo una nota de
+  crédito aplicada); se puede pagar menos —pago en cuotas— y el resto vuelve a
+  la lista cuando esta orden se pague. El servidor vuelve a validar todo contra
+  la base al emitir.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de pago a {{ proveedor.razon_social }}</h1>
+    <p><span class="mono">{{ proveedor.cuit }}</span>
+      {% if proveedor.cbu %} · CBU <span class="mono">{{ proveedor.cbu }}</span>{% endif %}
+      {% if proveedor.cbu_alias %} · alias {{ proveedor.cbu_alias }}{% endif %}
+      {% if not proveedor.cbu and not proveedor.cbu_alias %} · sin CBU en la ficha{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Otro proveedor', 'secondary', href=url_for('pagos.nueva'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if ops_sin_pago %}
+<div class="alert alert-warning" role="status">{{ ui.icono('alerta', 16) }}
+  <div>Este proveedor ya tiene {{ ops_sin_pago|length }} orden{{ 'es' if ops_sin_pago|length > 1 }} sin pagar:
+    {% for o in ops_sin_pago %}<a href="{{ url_for('pagos.orden', id_orden=o.id) }}">{{ o.clase_txt }} {{ o.nro_vis }}</a>
+    ({{ o.estado_txt }}, $ {{ (o.importe_total or 0) | miles }}){{ ', ' if not loop.last else '.' }}{% endfor %}
+    Revisá que no se esté por pagar lo mismo dos veces.</div>
+</div>
+{% endif %}
+
+{% if creditos %}
+<div class="card">
+  {% call ui.card_head('Crédito sin aplicar: $ ' ~ (credito_total | miles), nota='Plata que ya es del proveedor y no se descontó de ninguna factura. Si se emite la orden sin aplicarlo, se le paga de más.') %}
+    {% if puede('/proveedores/cc/aplicaciones') %}{{ ui.boton('Aplicarlo a las facturas', 'secondary', href=url_for('cc_prov.aplicaciones', id_proveedor=proveedor.id), chico=True) }}{% endif %}
+  {% endcall %}
+  <div class="data-table-wrap" data-sin-scroll-arriba>
+    <table class="data-table compacta" data-sin-orden>
+      <thead><tr><th>Tipo</th><th>Referencia</th><th>Número</th><th class="th-right">Fecha</th><th class="th-right">Saldo</th></tr></thead>
+      <tbody>
+        {% for c in creditos %}
+        <tr>
+          <td>{{ c.descripcion }}</td>
+          <td class="td-mono">{{ c.referencia }}</td>
+          <td class="td-mono">{{ c.numero_completo or '' }}</td>
+          <td class="td-right">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha }}</td>
+          <td class="td-right td-mono">{{ (c.saldo or 0) | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('pagos.nueva') }}" id="form-orden">
+<input type="hidden" name="id_proveedor" value="{{ proveedor.id }}">
+<div class="con-resumen">
+<div class="card">
+    {% call ui.barra_filtros('Filtrar por comprobante, expediente o rubro…', tam_pagina=100, exportar=False) %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-elegidos"> Solo los elegidos</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-comp">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort><input type="checkbox" id="todos" title="Elegir todos" aria-label="Elegir todos"></th>
+            <th>Comprobante</th>
+            <th class="th-right">Fecha</th>
+            <th>Expediente</th>
+            <th>Rubro</th>
+            <th class="th-right">Liquidado</th>
+            <th class="th-right">Saldo</th>
+            <th class="th-right" data-no-sort>A pagar</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in expedientes %}
+          <tr data-saldo="{{ e.saldo_pendiente }}">
+            <td><input type="checkbox" name="id_expediente" value="{{ e.id }}" class="elegir" aria-label="Elegir {{ e.nro_expediente }}"></td>
+            <td>
+              <span class="td-fuerte">{{ e.comp_tipo or 'Sin comprobante' }}</span>
+              <span class="td-mono">{{ e.comp_numero or '' }}</span>
+              {% if e.pagos_previos_n %}<span class="chip" title="Ya se pagaron $ {{ e.pagos_previos_importe | miles }} en {{ e.pagos_previos_n }} orden(es)">cuota {{ e.pagos_previos_n + 1 }}</span>{% endif %}
+              {{ ui.marcas(e) if e.id_comprobante }}
+            </td>
+            <td class="td-right" data-valor="{{ e.comp_fecha.strftime('%d/%m/%Y') if e.comp_fecha }}">{{ e.comp_fecha.strftime('%d/%m/%Y') if e.comp_fecha else '—' }}</td>
+            <td data-valor="{{ e.nro_expediente }}">{{ ui.expediente(e.id, e.nro_expediente) }}</td>
+            <td class="td-muted">{{ e.rubro or 'Sin rubro' }}</td>
+            <td class="td-right td-mono" data-num="{{ e.importe_liquidado }}">{{ (e.importe_liquidado or 0) | miles }}</td>
+            <td class="td-right td-mono" data-num="{{ e.saldo_pendiente }}">{{ (e.saldo_pendiente or 0) | miles }}</td>
+            <td class="td-right">
+              <input type="text" name="importe_{{ e.id }}" class="inp-importe importe a-pagar" inputmode="decimal" disabled
+                     value="{{ '%.2f'|format(e.saldo_pendiente|float) }}" aria-label="Importe a pagar de {{ e.nro_expediente }}">
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+</div>
+
+<aside class="card resumen">
+  {{ ui.card_head('La orden', nota='Queda en borrador: después se manda a aprobación y se paga desde la ficha.') }}
+  <div class="card-body">
+    <div class="resumen-fila"><span>Comprobantes</span><strong id="r-n">0</strong></div>
+    <div class="resumen-fila"><span>Saldo de lo elegido</span><strong id="r-saldo" class="mono">0,00</strong></div>
+    <div class="resumen-fila resumen-total"><span>A pagar</span><strong id="r-total">0,00</strong></div>
+    <small class="campo-ayuda" id="r-parcial"></small>
+    <div class="campo">
+      <label for="observaciones">Observaciones</label>
+      <textarea name="observaciones" id="observaciones" rows="2"></textarea>
+    </div>
+    <div class="resumen-botones">
+      <button type="submit" class="btn btn-primary" id="btn-emitir" disabled>{{ ui.icono('ok') }}Emitir la orden</button>
+    </div>
+  </div>
+</aside>
+</div>
+</form>
+
+<script>
+function aNumero(t) {
+  var s = (t || '').trim().replace(/\s|\$/g, '');
+  if (!s) return 0;
+  if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+  else if (s.indexOf('.') >= 0) {
+    var g = s.split('.');
+    if (g.slice(1).every(function (x) { return x.length === 3; })) s = g.join('');
+  }
+  return parseFloat(s) || 0;
+}
+function pesos(n) { return n.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function recalcular() {
+  var n = 0, saldo = 0, total = 0, parciales = 0, excede = 0;
+  document.querySelectorAll('#tbl-comp tbody tr').forEach(function (tr) {
+    var chk = tr.querySelector('.elegir'), inp = tr.querySelector('.a-pagar');
+    if (!chk) return;
+    inp.disabled = !chk.checked;
+    if (!chk.checked) return;
+    var s = parseFloat(tr.dataset.saldo) || 0, v = aNumero(inp.value);
+    n++; saldo += s; total += v;
+    if (v < s - 0.01) parciales++;
+    if (v > s + 0.01 || v <= 0) { excede++; inp.classList.add('excedido'); } else inp.classList.remove('excedido');
+  });
+  document.getElementById('r-n').textContent = n;
+  document.getElementById('r-saldo').textContent = pesos(saldo);
+  document.getElementById('r-total').textContent = pesos(total);
+  var ayuda = document.getElementById('r-parcial');
+  ayuda.className = 'campo-ayuda' + (excede ? ' error' : '');
+  ayuda.textContent = excede ? excede + ' importe(s) en cero o por encima del saldo.'
+                    : parciales ? parciales + ' va(n) por menos del saldo: el resto vuelve a la lista cuando esta orden se pague.' : '';
+  document.getElementById('btn-emitir').disabled = !n || excede > 0;
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-elegidos');
+  gestion_admTable('tbl-comp', {
+    pageSize: 100,
+    filtroExtra: function (tr) { return !fe.checked || tr.querySelector('.elegir').checked; }
+  });
+  document.getElementById('todos').addEventListener('change', function () {
+    var on = this.checked;
+    document.querySelectorAll('#tbl-comp tbody tr').forEach(function (tr) {
+      if (tr.style.display !== 'none') { var c = tr.querySelector('.elegir'); if (c) c.checked = on; }
+    });
+    recalcular();
+  });
+  document.getElementById('tbl-comp').addEventListener('change', function (e) {
+    if (e.target.classList.contains('elegir')) recalcular();
+  });
+  document.getElementById('tbl-comp').addEventListener('input', function (e) {
+    if (e.target.classList.contains('a-pagar')) recalcular();
+  });
+  document.getElementById('form-orden').addEventListener('submit', function () {
+    document.getElementById('btn-emitir').disabled = true;
+  });
+  recalcular();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,1157 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   sindicato.css — la única hoja de estilos de la aplicación.
+
+   Todas las pantallas se arman con estas clases y con las macros de
+   templates/_ui.html. La guía visual está en /estilos: cada componente con
+   la línea para copiarlo.
+
+   POR QUÉ UN ARCHIVO Y NO <style> EN CADA PLANTILLA
+   En gestion_adm cada pantalla traía su copia del CSS, y las copias se
+   fueron separando: el mismo botón de borrar tenía tres colores según la
+   pantalla, y `.btn-accion` llegó a estar definido dos veces en base.html
+   con nombres de variante distintos. Con un solo archivo, un componente
+   cambia en un lugar y cambia en todas.
+
+   REGLAS
+   1. Una plantilla no trae <style> propio ni colores escritos a mano. Si
+      falta algo, se agrega acá y a la guía.
+   2. Los colores se usan por su función (--ok, --danger…), no por su valor.
+   3. `style="…"` solo para lo que es dato de esa pantalla —el --span de un
+      campo, el ancho de una columna—, nunca para color, borde o tipografía.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+
+/* ── 1. Tokens ─────────────────────────────────────────────────────────────
+   Marca. Un azul más claro que el de gestion_adm, para distinguir las dos
+   apps de un vistazo cuando están abiertas a la vez. --blue lleva texto
+   blanco encima: #1a7ac2 da 4.56 de contraste, el mínimo de WCAG AA para
+   texto normal. Un tono más claro ya no pasa.                              */
+:root {
+  --navy:       #1c5a8f;
+  --navy-mid:   #2a6ea8;
+  --blue:       #1a7ac2;
+  --blue-hover: #14669f;
+  --blue-light: #eaf4fc;
+  --accent:     #f0a500;
+
+  --bg:         #f2f5fa;
+  --surface:    #ffffff;
+  --surface-2:  #fafbfd;   /* barras de filtros, cabeceras de tarjeta, bloques */
+  --border:     #dde4ef;
+  --text:       #1a2740;
+  --text-muted: #6b7a99;
+  --apagado:    #c3ccda;   /* lo que está pero apagado: una marca del comprobante que no se cumple */
+
+  /* Estados. Cada uno con su color de trazo, su fondo y su borde suave.
+     El texto sobre el fondo usa la variante -texto, más oscura: el color de
+     trazo sirve para íconos y bordes pero no llega a 4.5 de contraste. */
+  --ok:           #16a34a;  --ok-texto:     #166534;
+  --ok-bg:        #e9f7ee;  --ok-borde:     #a7dcb6;
+  --danger:       #d93025;  --danger-texto: #b42318;
+  --danger-bg:    #fff0ef;  --danger-borde: #f5b8b3;
+  --warn:         #f0a500;  --warn-texto:   #8a6000;
+  --warn-bg:      #fff8e6;  --warn-borde:   #f3d48a;
+  --info:         #1a7ac2;  --info-texto:   #14669f;
+  --info-bg:      #eaf4fc;  --info-borde:   #b9d8f0;
+
+  /* Archivos: el rojo de PDF y el verde de Excel, iguales en el botón de
+     barra y en el de la fila, para que se reconozcan como la misma acción. */
+  --pdf:   #b91c1c;
+  --excel: #15803d;
+
+  /* Series de los gráficos (15e). Validados juntos para daltonismo y contraste
+     con blanco: --serie-1/--serie-2 (varones / mujeres) y --serie-1/--serie-baja
+     (altas / bajas). Son colores de dato, no de estado: una baja no es un error. */
+  --serie-1:    #1a7ac2;
+  --serie-2:    #eb6834;
+  --serie-baja: #e34948;
+
+  --radius:    10px;
+  --radius-sm: 6px;
+  --shadow:    0 2px 12px rgba(28,90,143,.10);
+  --shadow-lg: 0 8px 32px rgba(28,90,143,.20);
+  --foco:      0 0 0 3px rgba(26,122,194,.18);
+
+  --font: 'DM Sans', sans-serif;
+  --mono: 'DM Mono', monospace;
+}
+
+
+/* ── 2. Base ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 14px; }
+body {
+  font-family: var(--font); background: var(--bg); color: var(--text);
+  min-height: 100vh; display: flex; flex-direction: column;
+}
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd { font-family: var(--mono); font-size: .9em; }
+
+
+/* ── 3. Estructura: encabezado, menú lateral, contenido ──────────────────── */
+.app-header {
+  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-mid) 100%);
+  color: #fff; display: flex; align-items: center; gap: 14px;
+  padding: 0 24px; height: 60px; flex-shrink: 0;
+  box-shadow: 0 2px 16px rgba(0,0,0,.25);
+  position: sticky; top: 0; z-index: 100;
+}
+.app-header img { border-radius: 8px; width: 38px; height: 38px; object-fit: contain; }
+.header-brand strong { font-size: .95rem; font-weight: 700; display: block; }
+.header-brand { min-width: 0; }
+/* El nombre completo del sindicato puede ser largo: se corta con «…» antes
+   de empujar a los botones de la derecha. */
+.header-brand small  { font-size: .72rem; opacity: .65; display: block; max-width: 420px;
+                       overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-header img { background: #fff; }
+.header-spacer { flex: 1; }
+/* Inicio, Volver y Salir: la misma píldora translúcida. */
+.header-boton {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 13px; border-radius: 20px;
+  background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.22);
+  color: #fff; font-size: .78rem; font-weight: 600; text-decoration: none;
+  transition: background .15s;
+}
+.header-boton:hover { background: rgba(255,255,255,.24); color: #fff; text-decoration: none; }
+.header-user {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.13); border-radius: 20px;
+  padding: 4px 14px 4px 10px; font-size: .8rem;
+}
+.header-user svg { width: 16px; height: 16px; flex-shrink: 0; }
+.header-user img { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
+/* El reloj es un dato de referencia, no un control: sin fondo, para no
+   competir con el nombre y el botón de salir. */
+.header-reloj {
+  display: flex; align-items: center; gap: 7px;
+  font-size: .78rem; color: rgba(255,255,255,.8); padding: 4px 12px; white-space: nowrap;
+}
+.header-reloj svg { width: 14px; height: 14px; flex-shrink: 0; opacity: .75; }
+.header-reloj .reloj-hora { font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 900px) { .header-reloj { display: none; } }
+
+.app-shell { display: flex; flex: 1; }
+.app-main  { flex: 1; padding: 28px; overflow-x: auto; min-width: 0; }
+
+.app-sidebar {
+  width: 230px; flex-shrink: 0; background: var(--surface);
+  border-right: 1px solid var(--border); padding: 12px 0 18px; overflow-y: auto;
+}
+.sidebar-label {
+  font-size: .66rem; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-muted); padding: 0 18px 10px;
+}
+.sidebar-home {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 12px 10px; padding: 7px 12px; width: calc(100% - 24px);
+  background: var(--navy); color: #fff; border: none; border-radius: 7px;
+  font-size: .8rem; font-weight: 600; text-decoration: none; cursor: pointer;
+  transition: background .15s;
+}
+.sidebar-home:hover { background: var(--navy-mid); color: #fff; text-decoration: none; }
+/* Buscador de opciones del menú (el de gestion_adm): filtra el árbol en el
+   navegador; la opción elegida con las flechas lleva .mn-sel. */
+.menu-buscar { position: relative; margin: 2px 12px 12px; }
+.menu-buscar svg {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  width: 13px; height: 13px; color: var(--text-muted); pointer-events: none;
+}
+.menu-buscar input {
+  width: 100%; padding: 6px 8px 6px 28px; font-size: .8rem; font-family: var(--font);
+  border: 1px solid var(--border); border-radius: 7px; background: var(--surface-2); color: var(--text);
+}
+.menu-buscar input:focus { outline: none; border-color: var(--blue); background: #fff; box-shadow: var(--foco); }
+.menu-buscar-vacio { font-size: .76rem; color: var(--text-muted); padding: 2px 18px 10px; }
+
+.sidebar-nav, .sidebar-nav .submenu { list-style: none; }
+.sidebar-nav .submenu { display: none; padding-left: 12px; }
+
+/* Jerarquía por nivel: cada uno con su tamaño, su peso y su color, y la barra
+   de la izquierda del mismo color. Los módulos en negro, grandes y en negrita;
+   de ahí azul marino aclarándose con la profundidad, cada vez más chico y más
+   liviano. Dentro de un nivel, una rama (agrupa, lleva flecha) pesa más que
+   una pantalla. El activo va en el azul de la marca en todos los niveles.
+   El más claro (#3d6d9a) da 5,45 de contraste con blanco. */
+.sidebar-nav > li > a                               { --nivel: #111418; }
+.sidebar-nav > li > ul > li > a                     { --nivel: #1c5a8f; }
+.sidebar-nav > li > ul > li > ul > li > a           { --nivel: #2c5c96; }
+.sidebar-nav > li > ul > li > ul > li > ul > li > a { --nivel: #3d6d9a; }
+.sidebar-nav a {
+  display: flex; align-items: center; gap: 9px;
+  border-left: 3px solid var(--nivel, transparent);
+  transition: background .15s, border-color .15s, color .15s;
+}
+.sidebar-nav a:hover  { background: var(--blue-light); color: var(--blue); text-decoration: none; }
+.sidebar-nav a.active { background: var(--blue-light); border-left-color: var(--blue); color: var(--blue); font-weight: 700; }
+.sidebar-nav a.rama   { justify-content: space-between; }
+.sidebar-nav a .rama-nombre { display: flex; align-items: center; gap: 9px; }
+.sidebar-nav .chevron { flex-shrink: 0; transition: transform .2s; }
+.sidebar-nav > li > a {
+  padding: 10px 18px 10px 14px; color: #111418; font-size: .88rem; font-weight: 700;
+}
+.sidebar-nav > li > a:hover { background: #eef3fb; color: #111418; }
+.sidebar-nav > li { border-bottom: 1px solid #edf0f5; }
+.sidebar-nav > li:last-child { border-bottom: none; }
+.sidebar-nav > li > ul > li > a {
+  padding: 7px 14px 7px 20px; color: #1c5a8f; font-size: .82rem; font-weight: 500;
+}
+.sidebar-nav > li > ul > li > ul > li > a {
+  padding: 6px 14px 6px 26px; color: #2c5c96; font-size: .78rem; font-weight: 400;
+}
+.sidebar-nav > li > ul > li > ul > li > ul > li > a {
+  padding: 5px 14px 5px 30px; color: #3d6d9a; font-size: .75rem; font-weight: 400;
+}
+.sidebar-nav > li > ul > li > a.rama                     { font-weight: 700; }
+.sidebar-nav > li > ul > li > ul > li > a.rama           { font-weight: 600; }
+/* Íconos en colores (Fluent Color, sql/menu_iconos_color_20261111.sql): más
+   chicos a medida que se baja, como la letra. */
+.sidebar-nav a svg:not(.chevron)                       { width: 18px; height: 18px; flex-shrink: 0; }
+.sidebar-nav > li > ul > li > a svg:not(.chevron)      { width: 16px; height: 16px; }
+.sidebar-nav > li > ul > li > ul a svg:not(.chevron)   { width: 15px; height: 15px; }
+.sidebar-nav li a img { width: 15px; height: 15px; opacity: .65; }
+.sidebar-nav a.mn-hoja.mn-sel { background: #e1eaf7; color: var(--blue); }
+/* Chincheta para fijar la pantalla en el inicio: aparece al pasar el mouse
+   y queda visible si ya está fijada. Va superpuesta y no dentro del enlace:
+   un botón adentro de otro no se puede. */
+.sidebar-nav li { position: relative; }
+.sidebar-nav li:has(> .pin-menu) > a { padding-right: 30px; }
+.pin-menu {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  display: flex; align-items: center; justify-content: center;
+  width: 21px; height: 21px; padding: 0; border: none; border-radius: 5px;
+  background: transparent; color: #94a3b8; cursor: pointer; opacity: 0;
+  transition: opacity .12s, color .12s, background .12s;
+}
+.sidebar-nav li:hover > .pin-menu, .pin-menu:focus-visible, .pin-menu.pin-on { opacity: 1; }
+.pin-menu:hover { background: #dbe6f5; color: var(--blue); }
+.pin-menu.pin-on { color: var(--blue); }
+.pin-menu.pin-on svg { fill: currentColor; }
+
+/* Error al cargar el menú: se dice, no se omite. */
+.menu-error {
+  position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 200;
+  background: var(--danger-bg); border: 1px solid var(--danger-borde); border-radius: 8px;
+  padding: 10px 14px; font-size: .8rem; color: var(--danger-texto);
+  font-family: var(--mono); word-break: break-word;
+}
+
+
+/* ── 4. Encabezado de pantalla ───────────────────────────────────────────
+   Título y bajada a la izquierda; a la derecha, la acción principal de la
+   pantalla (Nuevo, Importar…), siempre en el mismo lugar.                 */
+.page-header {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 22px;
+}
+.page-header h1 { font-size: 1.45rem; font-weight: 700; color: var(--navy); }
+.page-header p  { color: var(--text-muted); font-size: .85rem; margin-top: 3px; }
+.page-header-acciones { display: flex; gap: 8px; flex-shrink: 0; }
+
+
+/* ── 5. Tarjeta ──────────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+  overflow: hidden; margin-bottom: 20px;
+}
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+}
+.card-head-titulo { color: var(--navy); font-size: .88rem; font-weight: 700; }
+.card-head-nota   { color: var(--text-muted); font-size: .78rem; font-weight: 400; margin-left: 8px; }
+.card-head-acciones { display: flex; gap: 6px; align-items: center; }
+.card-body { padding: 16px 20px; }
+/* Aviso al tope de una tarjeta, antes del formulario o la grilla. */
+.card-aviso { padding: 14px 20px 0; }
+
+
+/* ── 6. Botones ──────────────────────────────────────────────────────────
+   Uno solo `btn-primary` por bloque: es lo que se espera que la persona
+   haga. El resto en secondary o ghost. `btn-danger` solo para lo que
+   borra o da de baja.                                                     */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 18px; border: 1px solid transparent; border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: .84rem; font-weight: 600; line-height: 1.2;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background .15s, border-color .15s, color .15s, box-shadow .15s;
+}
+.btn:hover { text-decoration: none; box-shadow: 0 2px 8px rgba(0,0,0,.12); }
+.btn:focus-visible { outline: none; box-shadow: var(--foco); }
+.btn svg { flex-shrink: 0; }
+.btn-primary   { background: var(--blue); color: #fff; }
+.btn-primary:hover { background: var(--blue-hover); color: #fff; }
+.btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--blue); color: var(--blue); }
+.btn-ghost     { background: transparent; color: var(--blue); border-color: var(--blue); }
+.btn-ghost:hover { background: var(--blue-light); }
+.btn-danger    { background: var(--danger); color: #fff; }
+.btn-danger:hover { background: var(--danger-texto); color: #fff; }
+.btn-ok        { background: var(--ok); color: #fff; }
+.btn-ok:hover  { background: var(--ok-texto); color: #fff; }
+.btn-excel     { background: var(--excel); color: #fff; }
+.btn-excel:hover { background: #166534; color: #fff; }
+.btn-pdf       { background: var(--pdf); color: #fff; }
+.btn-pdf:hover { background: #991b1b; color: #fff; }
+.btn-sm        { padding: 4px 12px; font-size: .76rem; }
+.btn[disabled], .btn.deshabilitado { opacity: .45; cursor: default; box-shadow: none; pointer-events: none; }
+
+
+/* ── 7. Botones de acción de grilla ──────────────────────────────────────
+   28×28, en la primera columna, solo ícono. Cada acción tiene SIEMPRE el
+   mismo ícono y el mismo color en todo el sistema; la macro `accion()` de
+   _ui.html es la que los arma, así no hay que acordarse.
+
+     ver        ojo        verde      abre el detalle, no modifica
+     editar     lápiz      azul       abre el formulario
+     borrar     tacho      rojo       elimina (pide confirmación)
+     baja       prohibido  rojo       baja lógica (pide motivo)
+     reactivar  flecha     verde      deshace una baja
+     agregar    más        azul       agrega un hijo del registro
+     pdf        hoja       rojo PDF   descarga o abre el PDF
+     planilla   grilla     verde XLS  descarga la planilla
+     descargar  flecha ↓   gris       descarga otro archivo
+     historial  reloj      gris       movimientos / auditoría
+     mail       sobre      azul       envía o reenvía
+     auditar    tilde      ámbar      resuelve una solicitud pendiente de control
+     aplicaciones  eslabón      azul  con qué se canceló un comprobante (o a qué se imputó un pago)
+     desaplicar    eslabón roto rojo  suelta una aplicación (pide importe y motivo)
+
+   Reposo: ícono de color sobre blanco con borde suave. Al pasar: lleno.   */
+.btn-accion {
+  --c: var(--text-muted); --c-borde: var(--border);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; flex-shrink: 0;
+  border: 1px solid var(--c-borde); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--c);
+  cursor: pointer; text-decoration: none;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.btn-accion:hover { background: var(--c); border-color: var(--c); color: #fff; text-decoration: none; }
+.btn-accion:focus-visible { outline: none; box-shadow: var(--foco); }
+.btn-accion svg { pointer-events: none; }
+.btn-accion.ver, .btn-accion.reactivar { --c: var(--ok);     --c-borde: var(--ok-borde); }
+.btn-accion.editar, .btn-accion.agregar,
+.btn-accion.mail                        { --c: var(--blue);   --c-borde: var(--info-borde); }
+.btn-accion.borrar, .btn-accion.baja    { --c: var(--danger); --c-borde: var(--danger-borde); }
+.btn-accion.pdf                         { --c: var(--pdf);    --c-borde: #fca5a5; }
+.btn-accion.planilla                    { --c: var(--excel);  --c-borde: #86efac; }
+.btn-accion.auditar                     { --c: var(--warn-texto); --c-borde: var(--warn-borde); }
+.btn-accion.aplicaciones                { --c: var(--blue);   --c-borde: var(--info-borde); }
+.btn-accion.desaplicar                  { --c: var(--danger); --c-borde: var(--danger-borde); }
+.btn-accion[disabled], .btn-accion.deshabilitado {
+  opacity: .4; cursor: default; pointer-events: none;
+}
+/* La celda que los contiene. */
+.acciones { display: flex; gap: 4px; align-items: center; }
+
+
+/* ── 8. Grillas ──────────────────────────────────────────────────────────
+   Estructura fija, la que espera `gestion_admTable` de base.html:
+
+     .card
+       .filter-bar      (macro barra_filtros)
+       .data-table-wrap > table.data-table
+       .pagination-bar  (macro paginacion)
+
+   Primera columna: acciones (th.col-acciones, sin orden). Números y fechas
+   a la derecha (th-right / td-right) y en mono cuando son códigos (td-mono).
+   Una fila de un registro dado de baja lleva .fila-baja.                  */
+.data-table-wrap { overflow-x: auto; }
+/* Segunda barra horizontal, arriba de la tabla (la agrega base.html). */
+/* Sin alto fijo: lo pone la propia barra. Con un alto menor que el de la
+   barra del navegador, la barra queda recortada y no se ve. */
+.scroll-arriba { overflow-x: auto; overflow-y: hidden; background: var(--surface-2); }
+.scroll-arriba > div { height: 1px; }
+/* Las dos barras con el mismo aspecto, más visibles que la del sistema. */
+.scroll-arriba::-webkit-scrollbar, .data-table-wrap::-webkit-scrollbar { height: 10px; }
+.scroll-arriba::-webkit-scrollbar-track, .data-table-wrap::-webkit-scrollbar-track { background: var(--surface-2); }
+.scroll-arriba::-webkit-scrollbar-thumb, .data-table-wrap::-webkit-scrollbar-thumb {
+  background: #b9c6da; border-radius: 6px; border: 2px solid var(--surface-2);
+}
+.scroll-arriba::-webkit-scrollbar-thumb:hover, .data-table-wrap::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+/* `scrollbar-color` solo para Firefox: en Chrome y Edge, declararlo hace que
+   ignoren los ::-webkit-scrollbar de arriba y vuelvan a la barra común. */
+@supports (-moz-appearance: none) {
+  .scroll-arriba, .data-table-wrap { scrollbar-color: #b9c6da var(--surface-2); }
+}
+.data-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.data-table thead th {
+  background: var(--navy); color: #fff; text-align: left; white-space: nowrap;
+  font-weight: 600; font-size: .72rem; letter-spacing: .05em; text-transform: uppercase;
+  padding: 10px 14px; user-select: none; cursor: pointer; transition: background .15s;
+}
+.data-table thead th:hover { background: var(--navy-mid); }
+.data-table thead th[data-no-sort] { cursor: default; }
+.data-table thead th[data-no-sort]:hover { background: var(--navy); }
+/* Toda columna se ordena con un clic en el encabezado (salvo data-no-sort).
+   La marca tenue dice que se puede; ▲ / ▼, por cuál está ordenada y en qué
+   sentido. */
+.data-table thead th:not([data-no-sort])::after { content: "⇅"; margin-left: 5px; font-size: .85em; opacity: .4; }
+.data-table thead th.sort-asc::after  { content: "▲"; font-size: .7em; opacity: .95; }
+.data-table thead th.sort-desc::after { content: "▼"; font-size: .7em; opacity: .95; }
+/* Una tabla que no se ordena (data-sin-orden: renglones que arma la pantalla,
+   como los instrumentos de un pago) no muestra la marca ni el cursor. */
+.data-table[data-sin-orden] thead th { cursor: default; }
+.data-table[data-sin-orden] thead th::after { content: none; }
+.data-table[data-sin-orden] thead th:hover { background: var(--navy); }
+.data-table.compacta[data-sin-orden] thead th:hover { background: #eef3fb; }
+.data-table tbody tr { transition: background .1s; }
+.data-table tbody tr:nth-child(even) { background: #f8fafd; }
+.data-table tbody tr:hover { background: var(--blue-light); }
+.data-table tbody td {
+  padding: 8px 14px; border-bottom: 1px solid var(--border);
+  color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.data-table .th-right,  .data-table .td-right  { text-align: right; }
+.data-table .th-center, .data-table .td-center { text-align: center; }
+.data-table .td-mono   { font-family: var(--mono); font-size: .8rem; }
+.data-table .td-muted  { color: var(--text-muted); }
+.data-table .td-wrap   { white-space: normal; }
+.data-table .td-fuerte { font-weight: 600; }
+.data-table .col-acciones { width: 1%; }
+.data-table tbody tr.fila-baja td { color: var(--text-muted); }
+.data-table tbody tr.fila-baja td.td-fuerte { text-decoration: line-through; text-decoration-color: rgba(107,122,153,.5); }
+/* La fila que no se puede elegir porque le falta un dato (una transferencia
+   sin CBU): apagada pero sin tachar —no está dada de baja— y con el motivo
+   debajo, en .td-motivo. */
+.data-table tbody tr.fila-apagada td { color: var(--text-muted); }
+.data-table .td-motivo { display: block; font-size: .72rem; font-weight: 600; color: var(--danger-texto); white-space: normal; }
+/* La fila del registro que se está editando, en una grilla de la misma ficha
+   (el grupo familiar del afiliado abierto). */
+.data-table tbody tr.fila-actual td { background: var(--blue-light); }
+.data-table tbody tr.fila-actual td:first-child { box-shadow: inset 3px 0 0 var(--blue); }
+/* Celda de un árbol (el nombre en el plan de cuentas): sangría según la
+   profundidad, que la plantilla pasa en --sangria (0 = raíz). */
+.data-table .td-arbol { padding-left: calc(14px + var(--sangria, 0) * 20px); }
+.data-table tbody tr.total-row td {
+  background: #eef3fb; font-weight: 700; border-top: 2px solid var(--blue);
+}
+.data-table .no-data { text-align: center; color: var(--text-muted); padding: 40px; font-size: .9rem; white-space: normal; }
+/* Grilla chica dentro de una ficha (grupo familiar, contactos): sin la
+   cabecera azul fuerte, que compite con la de la grilla principal. */
+.data-table.compacta thead th { background: #eef3fb; color: var(--navy); }
+.data-table.compacta thead th:not([data-no-sort]):hover { background: #e1eaf7; }
+.data-table.compacta thead th[data-no-sort]:hover { background: #eef3fb; }
+.data-table.compacta tbody td { padding: 6px 12px; }
+
+
+/* Celda de texto largo (nombre de archivo, razón social) cortada con «…»;
+   el valor completo va en el title. */
+.data-table .td-recorte { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+/* Conteos con significado: insertados (ok) y errores (danger), solo cuando
+   son mayores que cero; en cero van con .td-muted. */
+.data-table .td-ok     { color: var(--ok-texto);     font-weight: 700; }
+.data-table .td-danger { color: var(--danger-texto); font-weight: 700; }
+/* Fila que terminó con problemas (un archivo con errores en la importación). */
+.data-table tbody tr.fila-alerta td { background: var(--warn-bg); }
+
+
+/* ── 9. Filtros y paginación ─────────────────────────────────────────────
+   Los nombres de clase los busca `gestion_admTable`: no se cambian.
+   Un filtro adicional (select de estado, rango de fechas) va dentro de la
+   barra con .filtro, y se conecta con `opts.filtroExtra`.               */
+/* Abajo: los filtros llevan el rótulo arriba y los botones quedan a la
+   altura de los controles, no de los rótulos. */
+.filter-bar {
+  display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
+  padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+}
+.filter-input {
+  flex: 1; min-width: 200px; max-width: 360px;
+  padding: 7px 12px 7px 34px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: .84rem; color: var(--text);
+  background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' fill='none' stroke='%236b7a99' stroke-width='2'%3E%3Ccircle cx='6' cy='6' r='4'/%3E%3Cpath d='m10 10 3 3'/%3E%3C/svg%3E") no-repeat 11px center;
+  transition: border-color .2s, box-shadow .2s;
+}
+.filter-input::placeholder { color: var(--text-muted); }
+/* .filtro-srv: un filtro del formulario que va al servidor, en la misma
+   tarjeta que la grilla (el estado de cuenta). Se ve igual que .filtro, pero
+   la grilla no lo toma como suyo: Enter en una fecha envía el formulario. */
+.filtro, .filtro-srv, .page-size-select {
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: .8rem; color: var(--text); background: #fff;
+}
+.filtro, select.filtro-srv { cursor: pointer; }
+/* Un número (edad, importe mínimo): angosto, y con cursor de texto porque
+   se escribe. Se aplica al cambiar, como un select: al salir del campo, con
+   Enter o con las flechitas. */
+.filtro.filtro-num { width: 84px; cursor: text; }
+/* La casilla trae su texto; con el alto de un control queda alineada con ellos. */
+.filtro-check { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: .8rem; color: var(--text); cursor: pointer; }
+/* Cada filtro con su rótulo arriba (macro ui.filtro), con la letra de los
+   rótulos de un formulario (.campo > label). */
+.filtro-campo { display: inline-flex; flex-direction: column; gap: 4px; }
+.filtro-lbl {
+  font-size: .68rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .06em; white-space: nowrap;
+}
+.filtro-buscar { flex: 1; min-width: 200px; max-width: 360px; }
+.filtro-buscar .filter-input { flex: none; width: 100%; min-width: 0; max-width: none; }
+/* Un mismo alto para todo lo de la barra: alineados abajo, un botón más bajo
+   que los controles se nota. */
+.filter-bar .filtro:not([type=checkbox]), .filter-bar .filter-input,
+.filter-bar .page-size-select, .filter-bar .btn-sm { height: 32px; }
+.filter-input:focus, .filtro:focus, .page-size-select:focus {
+  outline: none; border-color: var(--blue); box-shadow: var(--foco);
+}
+.filter-bar-fin { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.filter-count { font-size: .78rem; color: var(--text-muted); white-space: nowrap; }
+.page-size-select { cursor: pointer; }
+
+.pagination-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  padding: 10px 18px; border-top: 1px solid var(--border); background: var(--surface-2);
+}
+.pagination-info { font-size: .78rem; color: var(--text-muted); }
+.pagination-controls { display: flex; gap: 3px; align-items: center; }
+.page-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 30px; height: 30px; padding: 0 7px;
+  border: 1px solid var(--border); border-radius: 5px; background: #fff;
+  font-family: var(--font); font-size: .78rem; font-weight: 500; color: var(--text);
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+}
+.page-btn:hover:not(:disabled) { border-color: var(--blue); color: var(--blue); background: var(--blue-light); }
+.page-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+.page-btn:disabled { opacity: .4; cursor: default; }
+.page-sep { padding: 0 4px; color: var(--text-muted); }
+
+
+/* ── 10. Formularios ─────────────────────────────────────────────────────
+   Grilla de 12 columnas: el ancho de cada campo lo decide una sola cosa,
+   cuántas columnas ocupa (--span), y las filas se alinean entre sí.
+
+     .bloque > .bloque-titulo + .campos > .campo(--span:N) > label + control
+     .form-acciones  al pie, botones a la derecha
+
+   Reemplaza al `.form-grid` / `.form-field` de gestion_adm, que era flex y
+   le daba 110px fijos a todo input sin ancho propio.                    */
+.bloque { padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.bloque:last-of-type { border-bottom: none; }
+.bloque-titulo {
+  font-size: .72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-muted); margin-bottom: 12px;
+}
+.campos { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+.campo  { grid-column: span var(--span, 3); display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.campo > label, .campo-label {
+  font-size: .72rem; font-weight: 700; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.campo > label .req { color: var(--danger); }
+/* `width:100%` con `min-width:0` en el contenedor: sin lo segundo, un grid
+   no deja que su hijo se achique y los campos desbordan la columna. */
+.campo input:not([type=checkbox]):not([type=radio]), .campo select, .campo textarea {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: .86rem; background: #fff; color: var(--text);
+  transition: border-color .2s, box-shadow .2s;
+}
+.campo input:focus, .campo select:focus, .campo textarea:focus {
+  outline: none; border-color: var(--blue); box-shadow: var(--foco);
+}
+/* Con los :not() de la regla de arriba: sin ellos esa regla gana por
+   especificidad y el campo de solo lectura se ve igual que uno editable. */
+.campo input[readonly]:not([type=checkbox]):not([type=radio]) { background: var(--surface-2); color: var(--text-muted); }
+.campo textarea { resize: vertical; min-height: 60px; }
+/* Con los mismos :not() que la regla general de inputs: si no, esa regla
+   gana por especificidad y el CUIL sale en la letra común. */
+.campo .mono, .campo input.mono:not([type=checkbox]):not([type=radio]) { font-family: var(--mono); }
+/* Ayuda debajo del campo: neutra, o validada en vivo (.ok / .error). */
+.campo-ayuda { font-size: .72rem; min-height: 1em; color: var(--text-muted); }
+.campo-ayuda.ok    { color: var(--ok-texto); }
+.campo-ayuda.error { color: var(--danger-texto); }
+/* Casilla con su texto, alineada con la base de los inputs de la fila. */
+.campo-check {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
+  font-size: .86rem; color: var(--text); padding-bottom: 7px; margin-top: auto;
+}
+.campo-check input { width: 16px; height: 16px; flex: none; }
+/* Un botón en la fila de campos («Agregar» de un alta en línea): abajo, a la
+   altura de los inputs, y de su ancho, no estirado a la columna. */
+.campo-boton { justify-content: flex-end; align-items: flex-start; }
+/* Gana sobre `.campo > label`, que es el rótulo en mayúsculas de arriba del
+   campo: la casilla lleva su texto a la derecha, en letra normal. */
+.campo > label.campo-check {
+  font-size: .86rem; font-weight: 400; color: var(--text);
+  text-transform: none; letter-spacing: 0;
+}
+.form-acciones { display: flex; gap: 10px; justify-content: flex-end; padding: 14px 20px; }
+/* Ficha de solo lectura: el mismo formulario dentro de un
+   <fieldset class="solo-lectura" disabled>. Se lee con el color normal del
+   texto y no el gris lavado de un control deshabilitado, que cuesta leer. */
+fieldset.solo-lectura { border: 0; margin: 0; padding: 0; min-width: 0; }
+/* Un grupo de campos que se habilita o no entero (las retenciones de un
+   impuesto en el que el sindicato no es agente): sin el marco del navegador,
+   y separado del siguiente con una línea. */
+fieldset.grupo-campos { border: 0; margin: 0; padding: 0; min-width: 0; }
+fieldset.grupo-campos + fieldset.grupo-campos { border-top: 1px dashed var(--border); padding-top: 12px; }
+fieldset.grupo-campos > .campos { margin-bottom: 10px; }
+/* Rótulo arriba y la casilla debajo, pegada (no empujada al pie del campo). */
+.campo-label + .campo-check { margin-top: 4px; }
+fieldset.solo-lectura input:not([type=checkbox]):not([type=radio]),
+fieldset.solo-lectura select, fieldset.solo-lectura textarea {
+  background: var(--surface-2); color: var(--text); -webkit-text-fill-color: var(--text);
+  opacity: 1; cursor: default;
+}
+fieldset.solo-lectura select { appearance: none; -webkit-appearance: none; }
+fieldset.solo-lectura textarea { resize: none; }
+/* Una fecha vacía no muestra la máscara dd/mm/aaaa: en una ficha que no se
+   edita parece un dato. */
+fieldset.solo-lectura input[type=date]:not([value]),
+fieldset.solo-lectura input[type=date][value=""] { color: transparent; -webkit-text-fill-color: transparent; }
+/* Ayudas vacías y las que solo explican cómo cargar (`.solo-edicion`). */
+fieldset.solo-lectura .campo-ayuda:empty,
+fieldset.solo-lectura .solo-edicion { display: none; }
+@media (max-width: 900px) { .campo { grid-column: span 6; } }
+@media (max-width: 560px) { .campo { grid-column: span 12; } }
+
+
+/* ── 11. Solapas ─────────────────────────────────────────────────────────
+   Una sola clase de solapas para todo el sistema (en gestion_adm convivían
+   .abm-tabs y .tabs-bar). El listado va primero: es a lo que se entra.
+   `abmSolapa(nombre)` de base.html las cambia.                           */
+.abm-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 2px solid var(--border); flex-wrap: wrap; }
+.abm-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 9px 18px; border: none; background: none; cursor: pointer;
+  font-family: var(--font); font-size: .85rem; font-weight: 600; color: var(--text-muted);
+  border-bottom: 2px solid transparent; margin-bottom: -2px;
+  transition: color .15s, border-color .15s;
+}
+.abm-tab:hover  { color: var(--blue); }
+.abm-tab.activa { color: var(--navy); border-bottom-color: var(--blue); }
+.abm-tab .conteo {
+  font-size: .72rem; font-weight: 700; background: var(--border); color: var(--text-muted);
+  padding: 1px 7px; border-radius: 9px;
+}
+.abm-tab.activa .conteo { background: var(--blue); color: #fff; }
+.abm-panel.oculto { display: none; }
+/* Sub-solapas dentro de una tarjeta (domicilio legal / fiscal). */
+.sub-solapas { display: flex; gap: 4px; }
+.sub-solapa {
+  padding: 5px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: #fff; color: var(--text-muted); font-family: var(--font);
+  font-size: .78rem; font-weight: 600; cursor: pointer;
+}
+.sub-solapa.activa { background: var(--blue-light); border-color: var(--info-borde); color: var(--navy); }
+
+
+/* ── 12. Mensajes ────────────────────────────────────────────────────────
+   alert-ok: lo que se hizo. alert-danger: lo que no se pudo y por qué.
+   alert-warning: se hizo, pero hay algo que mirar. alert-info: contexto.
+   La macro `mensajes()` dibuja los flash y la lista de errores.          */
+.alert {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 11px 16px; border-radius: var(--radius-sm); border-left: 4px solid;
+  font-size: .85rem; margin-bottom: 14px;
+}
+.alert svg { flex-shrink: 0; margin-top: 1px; }
+.alert ul { margin: 0; padding-left: 16px; }
+.alert ol { margin: 0; padding-left: 20px; }
+.alert ol li + li { margin-top: 4px; }
+.alert-ok      { background: var(--ok-bg);     border-color: var(--ok);     color: var(--ok-texto); }
+.alert-danger  { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-texto); }
+.alert-warning { background: var(--warn-bg);   border-color: var(--warn);   color: var(--warn-texto); }
+.alert-info    { background: var(--info-bg);   border-color: var(--info);   color: var(--info-texto); }
+/* En la ficha de un familiar: de quién es. Grande, para que se lea de un vistazo. */
+.titular-de { align-items: center; font-size: .95rem; }
+.titular-de > div { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.titular-de-rotulo { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; opacity: .8; }
+.titular-de a { font-weight: 700; font-size: 1.05rem; color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.titular-de-cuil { font-family: var(--mono); font-weight: 600; font-size: 1rem; }
+
+
+/* ── 13. Estados ─────────────────────────────────────────────────────────
+   Píldora con texto: siempre dice lo que es («Activo», «Baja», «Con error»).
+   El color acompaña, nunca es la única señal. Reemplaza los ✓/✗ sueltos y
+   las .est-* de fiscalización.                                           */
+.estado {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 9px; border-radius: 10px; border: 1px solid;
+  font-size: .72rem; font-weight: 700; white-space: nowrap; line-height: 1.5;
+}
+.estado::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.estado-ok      { background: var(--ok-bg);     border-color: var(--ok-borde);     color: var(--ok-texto); }
+.estado-danger  { background: var(--danger-bg); border-color: var(--danger-borde); color: var(--danger-texto); }
+.estado-warn    { background: var(--warn-bg);   border-color: var(--warn-borde);   color: var(--warn-texto); }
+.estado-info    { background: var(--info-bg);   border-color: var(--info-borde);   color: var(--info-texto); }
+.estado-neutro  { background: var(--surface-2); border-color: var(--border);       color: var(--text-muted); }
+/* En proceso: el punto late. */
+.estado-proceso { background: var(--info-bg);   border-color: var(--info-borde);   color: var(--info-texto); }
+.estado-proceso::before { animation: latido 1s ease-in-out infinite; }
+@keyframes latido { 50% { opacity: .25; } }
+/* Sí/no en una celda: tilde verde o raya gris. */
+.si { color: var(--ok); font-weight: 700; }
+.no { color: var(--text-muted); }
+/* Etiqueta chica, sin semántica de estado (rótulos, categorías). */
+.chip {
+  display: inline-block; padding: 1px 8px; border-radius: 9px;
+  background: var(--blue-light); color: var(--navy); font-size: .72rem; font-weight: 600;
+}
+.chip.chip-alerta { background: var(--warn-bg); color: var(--warn-texto); }
+
+/* Cuenta corriente (las de gestion_adm). Saldo = Debe − Haber: acreedor
+   (negativo, le debemos) en rojo, deudor (a favor nuestro) en verde, en cero
+   gris. Importes de una columna con su color; lo pendiente de auditar, ámbar. */
+.saldo-acreedor, .data-table .saldo-acreedor { color: var(--danger-texto); font-weight: 700; }
+.saldo-deudor,   .data-table .saldo-deudor   { color: var(--ok-texto);     font-weight: 700; }
+.saldo-cero,     .data-table .saldo-cero     { color: var(--text-muted); }
+.importe-ok,     .data-table .importe-ok     { color: var(--ok-texto); }
+.importe-danger, .data-table .importe-danger { color: var(--danger-texto); }
+.importe-pendiente, .data-table .importe-pendiente { color: var(--warn-texto); }
+/* Grilla agrupada (estado de cuenta por aplicación): el comprobante y debajo,
+   sangrado y en gris, lo que lo canceló. La fila del saldo anterior abre la
+   grilla cronológica y no es un movimiento. */
+.data-table tbody tr.fila-grupo-cc td { border-top: 2px solid var(--border); }
+.data-table tbody tr.fila-hija td { background: var(--surface-2); font-size: .78rem; }
+.data-table .td-sangria { padding-left: 28px; }
+.data-table tr.fila-saldo-anterior td { background: var(--surface-2); font-weight: 400; }
+
+
+/* ── 14. Indicadores (tableros) ──────────────────────────────────────────── */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 20px; }
+.kpi-card {
+  display: flex; align-items: center; gap: 14px; padding: 16px 18px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+/* Dos tarjetas lado a lado, la primera el doble de ancha (gráfico + ranking).
+   En pantallas angostas, una debajo de la otra. */
+.columnas-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
+.columnas-2-1 > .card { min-width: 0; }
+@media (max-width: 1100px) { .columnas-2-1 { grid-template-columns: 1fr; } }
+.kpi-ico {
+  width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--blue-light); color: var(--blue);
+}
+.kpi-ico.ok     { background: var(--ok-bg);     color: var(--ok); }
+.kpi-ico.warn   { background: var(--warn-bg);   color: var(--warn-texto); }
+.kpi-ico.danger { background: var(--danger-bg); color: var(--danger); }
+.kpi-lbl { font-size: .72rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.kpi-val { font-size: 1.4rem; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+/* Un importe es más largo que un conteo: más chico, para que
+   «$ 56.997.461,88» entre en la tarjeta sin cortarse. */
+.kpi-val.monto { font-size: 1.05rem; }
+/* El valor de una tarjeta con el color del saldo o del importe (cuenta corriente). */
+.kpi-val.saldo-acreedor, .kpi-val.importe-danger { color: var(--danger-texto); }
+.kpi-val.saldo-deudor,   .kpi-val.importe-ok     { color: var(--ok-texto); }
+.kpi-val.importe-pendiente                       { color: var(--warn-texto); }
+/* Una tarjeta que lleva a la pantalla donde se resuelve (el Panel de Control
+   de Tesorería): un <a class="kpi-card">, con el mismo aspecto y un borde al
+   pasar. */
+a.kpi-card { color: inherit; text-decoration: none; transition: border-color .15s, box-shadow .15s; }
+a.kpi-card:hover { border-color: var(--blue); box-shadow: 0 2px 8px rgba(26,122,194,.15); }
+
+
+/* ── 15. Importación de archivos ─────────────────────────────────────────
+   Pasos numerados, zona para soltar el archivo y opciones en tarjeta.    */
+.paso-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%; flex-shrink: 0;
+  background: var(--blue); color: #fff; font-size: .75rem; font-weight: 700;
+}
+.drop-zone {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  padding: 28px; border: 2px dashed var(--info-borde); border-radius: var(--radius);
+  background: var(--surface-2); color: var(--text-muted); text-align: center; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.drop-zone:hover, .drop-zone.encima { border-color: var(--blue); background: var(--blue-light); }
+.opciones-tarjeta { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.radio-card {
+  display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; cursor: pointer;
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: #fff;
+  transition: border-color .15s, background .15s;
+}
+.radio-card input { margin-top: 3px; }
+.radio-card strong { display: block; font-size: .86rem; color: var(--text); }
+.radio-card span   { display: block; font-size: .78rem; color: var(--text-muted); margin-top: 2px; }
+.radio-card.activo, .radio-card:has(input:checked) { border-color: var(--blue); background: var(--blue-light); }
+.radio-card.activo strong, .radio-card:has(input:checked) strong { color: var(--navy); }
+.res-card { padding: 12px 16px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.res-card-lbl { font-size: .72rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.res-card-val { font-size: 1.2rem; font-weight: 700; color: var(--navy); font-variant-numeric: tabular-nums; }
+.res-card-val.ok     { color: var(--ok-texto); }
+.res-card-val.danger { color: var(--danger-texto); }
+.res-card-val.info   { color: var(--info-texto); }
+/* Avance de un proceso por lotes. El ancho de .progreso-barra lo pone el JS:
+   es el dato, no estilo. */
+.progreso { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+.progreso-barra { height: 100%; width: 0; background: var(--blue); border-radius: 4px; transition: width .35s ease; }
+
+
+/* ── 15b. Carga con renglones ────────────────────────────────────────────
+   Una cabecera, renglones que se agregan y quitan, y un resumen con el total
+   y los botones (la solicitud de reintegro).
+
+     .con-resumen > (div principal) + aside.resumen
+     .renglon > .renglon-num + .renglon-quitar + .campos
+     .persona-elegida  la persona buscada y elegida, con «Cambiar»
+     .autocompletar > input + .ac-lista > button.ac-item
+     .adjuntos > .adjunto  comprobantes ya subidos, con ver / borrar
+     .datos > .dato > .dato-lbl + .dato-val  pares rótulo-valor de una ficha
+     .barra-accion     barra fija al pie con totales y el botón de la acción */
+/* Un bloque debajo del otro: el contenido a lo ancho y el resumen abajo. Al
+   costado (como en gestion_adm) le sacaba ancho a las grillas y la columna que
+   se edita quedaba fuera de la vista. */
+.con-resumen { display: block; }   /* el espacio entre bloques es el margen de cada .card */
+
+/* El resumen, a lo ancho: las cifras (.resumen-fila sueltas en el cuerpo) en
+   fila, cada una con su rótulo arriba como un .dato; lo demás (avisos,
+   formularios, notas) ocupa todo el ancho, y los botones van a la derecha. */
+.resumen { border-left: 4px solid var(--blue); }
+.resumen.warn { border-left-color: var(--warn); }
+.resumen > .card-body { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 36px; }
+.resumen > .card-body > * { flex: 1 1 100%; }
+.resumen > .card-body > :empty { display: none; }
+.resumen > .card-body > .resumen-fila { flex: 0 0 auto; flex-direction: column; align-items: flex-start; gap: 3px; padding: 0; }
+.resumen > .card-body > .resumen-fila > span:first-child {
+  font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+}
+/* Dentro de un bloque (las aprobaciones de una orden), rótulo y valor en la misma línea. */
+.resumen-fila { display: flex; align-items: center; gap: 10px; font-size: .85rem; color: var(--text-muted); padding: 3px 0; }
+.resumen-fila strong { color: var(--navy); font-variant-numeric: tabular-nums; }
+.resumen-total strong { font-size: 1.3rem; font-family: var(--mono); line-height: 1.1; }
+.resumen-botones { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+.renglon {
+  position: relative; padding: 18px 16px 14px; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.renglon + .renglon { margin-top: 14px; }
+.renglon.rechazado { background: var(--danger-bg); border-color: var(--danger-borde); }
+.renglon-num {
+  position: absolute; top: -9px; left: 14px; padding: 1px 9px; border-radius: 10px;
+  background: var(--blue); color: #fff; font-size: .68rem; font-weight: 700;
+}
+.renglon-quitar { position: absolute; top: 8px; right: 8px; }
+.renglon-cabeza { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.renglon-titulo { font-weight: 700; color: var(--navy); font-size: .88rem; }
+.renglon-sub { font-size: .76rem; color: var(--text-muted); margin-top: 2px; }
+.renglon-vacio {
+  padding: 26px; text-align: center; color: var(--text-muted); font-size: .85rem;
+  border: 1px dashed var(--border); border-radius: var(--radius-sm);
+}
+
+.persona-elegida {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: var(--blue-light); border: 1px solid var(--info-borde); border-radius: var(--radius-sm);
+}
+.persona-elegida .avatar {
+  width: 34px; height: 34px; border-radius: 50%; flex: none; display: flex; align-items: center;
+  justify-content: center; background: var(--blue); color: #fff; font-weight: 700; font-size: .82rem;
+}
+.persona-elegida .persona-texto { flex: 1; min-width: 0; }
+.persona-elegida .persona-nombre { font-weight: 700; color: var(--navy); font-size: .88rem; }
+.persona-elegida .persona-datos { font-size: .76rem; color: var(--text-muted); font-family: var(--mono); }
+
+.autocompletar { position: relative; }
+.ac-lista {
+  position: absolute; z-index: 60; left: 0; right: 0; top: 100%; margin-top: 2px; max-height: 280px;
+  overflow-y: auto; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);
+}
+.ac-item {
+  display: block; width: 100%; text-align: left; background: none; border: none; cursor: pointer;
+  border-bottom: 1px solid var(--border); padding: 8px 12px; font: inherit; font-size: .84rem; color: var(--text);
+}
+.ac-item:last-child { border-bottom: none; }
+.ac-item:hover, .ac-item:focus { background: var(--blue-light); outline: none; }
+.ac-item small { display: block; color: var(--text-muted); font-size: .74rem; font-family: var(--mono); }
+.ac-vacio { padding: 10px 12px; font-size: .82rem; color: var(--text-muted); }
+
+.adjuntos { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.adjunto {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; font-size: .76rem;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.adjunto-nombre { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sin-adjunto { font-size: .76rem; color: var(--danger-texto); margin-top: 8px; }
+
+.datos { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px 18px; }
+.dato-lbl { font-size: .7rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+.dato-val { font-size: .9rem; font-weight: 600; color: var(--navy); margin-top: 2px; overflow-wrap: anywhere; }
+.dato-val.mono { font-family: var(--mono); font-weight: 500; }
+.dato.ancho { grid-column: 1 / -1; }
+
+.barra-accion {
+  position: sticky; bottom: 0; z-index: 40; display: flex; align-items: center;
+  justify-content: space-between; gap: 16px; flex-wrap: wrap; padding: 12px 20px;
+  background: var(--surface); border-top: 2px solid var(--blue); box-shadow: 0 -4px 16px rgba(28,90,143,.10);
+  margin-bottom: 20px;   /* lo que viene abajo (otra tarjeta) no queda pegado */
+}
+.barra-accion .res-card-lbl { font-size: .68rem; }
+.barra-accion-datos { display: flex; gap: 26px; flex-wrap: wrap; }
+
+/* Un importe que se escribe: a la derecha y en negrita, como se lee en un comprobante. */
+input.importe { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+input.importe.excedido { border-color: var(--danger) !important; box-shadow: 0 0 0 3px rgba(217,48,37,.15); }
+.data-table td input.importe { width: 120px; padding: 4px 8px; border: 1px solid var(--border);
+                               border-radius: var(--radius-sm); font-family: var(--mono); font-size: .82rem; }
+
+
+/* ── 15c. Comprobantes de proveedores ───────────────────────────────────
+     .visor-pdf        el PDF dentro de la pantalla, para mirarlo mientras se carga
+     .drop-zone.chica  zona de archivo dentro de un formulario
+     .texto-leido      lo que se leyó del PDF, plegado (para cuando algo salió mal)
+     input.importe.total  el total, que es el que se constata
+     .marcas           las marcas del comprobante: ARCA, PDF leído, verificado */
+.visor-pdf {
+  display: block; width: 100%; height: 72vh; min-height: 420px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--surface-2);
+}
+.drop-zone.chica { flex-direction: row; padding: 16px; gap: 10px; }
+/* Dentro de un .campo la zona es un <label>: sin el rótulo en mayúsculas de `.campo > label`. */
+.campo > label.drop-zone { font-size: .84rem; font-weight: 400; text-transform: none; letter-spacing: 0; }
+.texto-leido { padding: 0; }
+.texto-leido summary {
+  padding: 12px 20px; cursor: pointer; font-size: .82rem; font-weight: 700; color: var(--text-muted);
+}
+.texto-leido pre {
+  margin: 0; padding: 14px 20px; max-height: 360px; overflow: auto; border-top: 1px solid var(--border);
+  font-family: var(--mono); font-size: .74rem; line-height: 1.5; white-space: pre-wrap; color: var(--text);
+}
+input.importe.total { font-size: 1rem; color: var(--navy); }
+/* Número de expediente (ui.expediente): lleva al expediente en la mesa de
+   entradas. Mono, en negrita y azul, con el subrayado punteado de «esto lleva
+   a algún lado»; sin permiso para la mesa, el mismo número sin enlace. */
+.nro-exp { font-family: var(--mono); font-weight: 700; font-size: .83rem; color: var(--navy); white-space: nowrap; }
+a.nro-exp { color: var(--blue); text-decoration: none; border-bottom: 1px dotted var(--blue); }
+a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
+
+/* Marcas del comprobante (ui.marcas), como en gestion_adm: tres íconos debajo
+   del número, siempre los tres. Apagada en gris; encendida, un color por marca. */
+.marcas { display: flex; gap: 4px; align-items: center; margin-top: 3px; }
+.marca { display: inline-flex; color: var(--apagado); }
+.marca.arca.si { color: var(--ok); }      /* constatado en ARCA */
+.marca.bot.si  { color: var(--warn); }    /* el PDF lo leyó el sistema */
+.marca.ojo.si  { color: var(--blue); }    /* alguien lo verificó a ojo */
+.adjunto.ancho .adjunto-nombre { max-width: none; }
+
+
+/* ── 15d. Árboles con casillas (permisos, áreas por usuario) ──────────────
+     .data-table td .inp-celda        un campo (input o select) que se completa en la fila: la función
+                                      en un área, los renglones de una orden de ingreso; un input
+                                      deshabilitado se lee como texto, sin el marco
+     .menu-icono-muestra              el ícono de una opción del menú; .grande en la vista previa */
+.data-table td .inp-celda { width: 100%; min-width: 130px; padding: 4px 8px; border: 1px solid var(--border);
+                             border-radius: var(--radius-sm); font-family: var(--font); font-size: .82rem;
+                             background: #fff; color: var(--text); }
+.data-table td .inp-celda.mono { font-family: var(--mono); }
+.data-table td .inp-celda:focus { outline: none; border-color: var(--blue); box-shadow: var(--foco); }
+.data-table td input.inp-celda:disabled { background: transparent; border-color: transparent; }
+.menu-icono-muestra { display: inline-flex; align-items: center; justify-content: center; color: var(--navy); }
+.menu-icono-muestra svg { width: 15px; height: 15px; }
+.menu-icono-muestra.grande { width: 38px; height: 38px; border: 1px solid var(--border);
+                             border-radius: var(--radius-sm); background: #fff; }
+.menu-icono-muestra.grande svg { width: 20px; height: 20px; }
+
+
+/* ── 15e. Gráficos (Métricas del padrón) ────────────────────────────────
+   HTML y CSS, sin librería: en la intranet el CDN no siempre responde. Cada
+   marca lleva su title con los números y cada gráfico su tabla al lado.
+     .kpi-sub                           la línea chica debajo del número de un indicador
+     .leyenda > .leyenda-item > i.muestra-serie.(alta|baja|varon|mujer)
+     .reparto > .reparto-item           rótulo · barra (contra el mayor) · número · %
+     .evol > .evol-mes                  columnas por mes: arriba altas, abajo bajas, misma escala
+     .piramide > .piramide-fila         varones a la izquierda, mujeres a la derecha, misma escala */
+.kpi-sub { font-size: .72rem; color: var(--text-muted); margin-top: 1px; }
+.leyenda { display: inline-flex; gap: 14px; font-size: .78rem; color: var(--text); }
+.leyenda-item { display: inline-flex; align-items: center; gap: 6px; }
+.muestra-serie { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.muestra-serie.alta, .muestra-serie.varon { background: var(--serie-1); }
+.muestra-serie.mujer { background: var(--serie-2); }
+.muestra-serie.baja  { background: var(--serie-baja); }
+
+.reparto { display: flex; flex-direction: column; gap: 6px; max-width: 980px; }
+.reparto-item {
+  display: grid; grid-template-columns: minmax(140px, 300px) 1fr 70px 56px; gap: 12px; align-items: center;
+  font-size: .82rem; padding: 2px 0;
+}
+.reparto-item:hover { background: var(--surface-2); }
+.reparto-rot { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reparto-barra { height: 12px; background: var(--surface-2); border-radius: 0 4px 4px 0; }
+.reparto-barra > span { display: block; height: 100%; min-width: 2px; background: var(--serie-1); border-radius: 0 4px 4px 0; }
+.reparto-num { text-align: right; font-weight: 700; font-variant-numeric: tabular-nums; }
+.reparto-pct { text-align: right; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 700px) { .reparto-item { grid-template-columns: 1fr 60px 50px; } .reparto-barra { grid-column: 1 / -1; order: 9; } }
+
+.evol { display: flex; gap: 2px; height: 240px; padding-bottom: 30px; }
+.evol-escala {
+  display: flex; flex-direction: column; justify-content: space-between; padding-right: 8px;
+  font-size: .68rem; color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums;
+}
+.evol-mes { flex: 1 1 0; min-width: 6px; display: flex; flex-direction: column; position: relative; cursor: default; }
+.evol-mes:hover { background: var(--blue-light); }
+.evol-arriba, .evol-abajo { flex: 1 1 0; display: flex; justify-content: center; }
+.evol-arriba { align-items: flex-end; border-bottom: 1px solid var(--text-muted); }
+.evol-abajo  { align-items: flex-start; }
+.evol-barra { width: 70%; max-width: 28px; min-height: 2px; }
+.evol-barra.alta { background: var(--serie-1); border-radius: 4px 4px 0 0; }
+.evol-barra.baja { background: var(--serie-baja); border-radius: 0 0 4px 4px; }
+.evol-rot {
+  position: absolute; top: 100%; left: 0; right: 0; padding-top: 4px; text-align: center;
+  font-size: .64rem; color: var(--text-muted); line-height: 1.2; font-variant-numeric: tabular-nums;
+}
+.evol-rot b { display: block; color: var(--text); font-weight: 700; }
+
+.piramide { display: flex; flex-direction: column; gap: 4px; max-width: 900px; margin: 0 auto; }
+.piramide-fila { display: grid; grid-template-columns: 1fr 76px 1fr; align-items: center; gap: 8px; font-size: .8rem; }
+.piramide-fila:hover:not(.piramide-cab) { background: var(--surface-2); }
+.piramide-cab { font-size: .72rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.piramide-cab > :first-child { text-align: right; }
+.piramide-lado { display: flex; align-items: center; gap: 6px; }
+.piramide-lado.izq { justify-content: flex-end; }
+.piramide-rango { text-align: center; font-weight: 600; }
+.piramide-barra { height: 16px; min-width: 1px; }
+.piramide-barra.varon { background: var(--serie-1); border-radius: 4px 0 0 4px; }
+.piramide-barra.mujer { background: var(--serie-2); border-radius: 0 4px 4px 0; }
+.piramide-num { font-variant-numeric: tabular-nums; color: var(--text); min-width: 34px; }
+.piramide-lado.izq .piramide-num { text-align: right; }
+
+
+/* ── 16. Diálogos ────────────────────────────────────────────────────────
+   <div class="modal" id="modal-x"><div class="modal-caja">…</div></div>
+   abrirModal('modal-x') / cerrarModal('modal-x') en base.html. Escape y un
+   clic afuera también cierran.                                            */
+.modal {
+  display: none; position: fixed; inset: 0; z-index: 999;
+  background: rgba(13,37,69,.45); align-items: center; justify-content: center; padding: 16px;
+}
+.modal.abierto { display: flex; }
+.modal-caja {
+  background: var(--surface); border-radius: 12px; box-shadow: var(--shadow-lg);
+  padding: 24px 28px; width: 100%; max-width: 440px;
+}
+.modal-caja.ancha { max-width: 640px; }
+.modal-titulo { font-size: 1rem; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
+.modal-texto  { font-size: .85rem; color: var(--text-muted); margin-bottom: 14px; }
+.modal-acciones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }
+/* Cuerpo con una lista larga (el detalle de errores de una importación). */
+.modal-cuerpo { max-height: 50vh; overflow-y: auto; }
+/* Un diálogo que es un formulario largo (el instrumento de pago con su grilla
+   de cheques): más alto, y el cuerpo con aire para el foco de los campos. */
+.modal-cuerpo.alto { max-height: 68vh; padding: 2px 4px 2px 2px; }
+
+
+/* ── 17. Overlays globales ───────────────────────────────────────────────── */
+#proceso-overlay {
+  display: none; position: fixed; inset: 0; z-index: 9999;
+  background: rgba(13,37,69,.72); backdrop-filter: blur(2px);
+  align-items: center; justify-content: center;
+}
+#proceso-overlay.visible { display: flex; }
+.proceso-caja {
+  background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-lg);
+  padding: 28px 34px; text-align: center; max-width: 420px; border-top: 4px solid var(--blue);
+}
+.proceso-caja strong { display: block; font-size: 1rem; color: var(--navy); margin-bottom: 6px; }
+.proceso-caja p      { font-size: .85rem; color: var(--text); margin-bottom: 10px; }
+.proceso-caja small  { font-size: .75rem; color: var(--text-muted); }
+.proceso-spinner {
+  width: 38px; height: 38px; margin: 0 auto 16px; border-radius: 50%;
+  border: 3px solid var(--border); border-top-color: var(--blue);
+  animation: proceso-giro .8s linear infinite;
+}
+@keyframes proceso-giro { to { transform: rotate(360deg); } }
+#btn-ayuda {
+  position: fixed; right: 20px; bottom: 20px; z-index: 900;
+  display: inline-flex; align-items: center; gap: 7px; padding: 9px 15px; border-radius: 22px;
+  background: var(--navy); color: #fff; text-decoration: none;
+  font-size: .8rem; font-weight: 600; font-family: var(--font);
+  box-shadow: var(--shadow-lg); transition: background .15s, transform .15s;
+}
+#btn-ayuda:hover { background: var(--blue); transform: translateY(-1px); }
+
+
+/* ── 18. Login ───────────────────────────────────────────────────────────── */
+.login-page {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: linear-gradient(135deg, var(--navy) 0%, #1a4a8a 100%); padding: 20px;
+}
+.login-card { background: #fff; border-radius: 16px; box-shadow: var(--shadow-lg); width: 100%; max-width: 390px; overflow: hidden; }
+.login-top { background: linear-gradient(135deg, var(--navy), var(--navy-mid)); padding: 30px 32px 22px; text-align: center; color: #fff; }
+.login-top img { width: 60px; height: 60px; border-radius: 10px; margin-bottom: 12px; }
+.login-top h1 { font-size: 1.1rem; font-weight: 700; }
+.login-top p  { font-size: .78rem; opacity: .7; margin-top: 3px; }
+.login-body  { padding: 26px 30px; }
+.login-field { margin-bottom: 14px; }
+.login-field label {
+  display: block; margin-bottom: 5px; font-size: .74rem; font-weight: 700;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em;
+}
+.login-field input {
+  width: 100%; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 8px;
+  font-family: var(--font); font-size: .9rem; transition: border-color .2s, box-shadow .2s;
+}
+.login-field input:focus { outline: none; border-color: var(--blue); box-shadow: var(--foco); }
+.login-submit {
+  width: 100%; padding: 11px; margin-top: 6px; border: none; border-radius: 8px;
+  background: var(--blue); color: #fff; font-family: var(--font); font-size: .9rem; font-weight: 700;
+  cursor: pointer; transition: background .2s, box-shadow .2s;
+}
+.login-submit:hover { background: var(--navy); box-shadow: 0 4px 12px rgba(13,37,69,.3); }
+
+
+/* ── 18b. Aviso de pantalla completa (404, pantalla pendiente) ──────────── */
+.pantalla-aviso { max-width: 560px; margin: 60px auto; text-align: center; }
+.pantalla-aviso-icono { color: var(--blue); margin-bottom: 14px; }
+.pantalla-aviso h1 { font-size: 1.3rem; color: var(--navy); margin-bottom: 10px; }
+.pantalla-aviso p  { color: var(--text-muted); font-size: .9rem; line-height: 1.6; margin-bottom: 6px; }
+.pantalla-aviso .btn { margin-top: 18px; }
+
+
+/* ── 19. Utilidades ──────────────────────────────────────────────────────
+   Pocas y a propósito. Si una pantalla necesita muchas, falta un
+   componente.                                                             */
+.muted   { color: var(--text-muted); }
+.mono    { font-family: var(--mono); }
+.nowrap  { white-space: nowrap; }
+.derecha { text-align: right; }
+.centro  { text-align: center; }
+.fuerte  { font-weight: 700; }
+.chico   { font-size: .78rem; }
+.oculto  { display: none !important; }
+.fila    { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pila    { display: flex; flex-direction: column; }   /* el espacio lo da el margen de cada .card */
+.separado { margin-top: 10px; }
+.empuja  { margin-left: auto; }
+/* Un <form> que no debe armar caja propia: el botón de borrar de una fila,
+   que tiene que quedar al lado de los otros botones de acción. */
+.form-en-linea { display: contents; }
+
+@media print {
+  .app-header, .app-sidebar, .filter-bar, .pagination-bar, .abm-tabs,
+  .col-acciones, .acciones, #btn-ayuda { display: none !important; }
+  .app-main { padding: 0; }
+  .card { box-shadow: none; }
+}
+
+
+/* ── 20. Guía de estilos (/estilos) ──────────────────────────────────────
+   Solo para la guía: muestras de color y bloques de código para copiar.  */
+.codigo {
+  font-family: var(--mono); font-size: .76rem; line-height: 1.55; color: #1e3a5f;
+  background: #f4f7fc; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px; white-space: pre-wrap; word-break: break-word; margin-top: 8px;
+}
+.muestras { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+.muestra { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; background: #fff; }
+.muestra-color { height: 44px; }
+.muestra-texto { padding: 6px 10px; font-size: .74rem; }
+.muestra-texto code { display: block; color: var(--navy); font-weight: 600; }
+.iconos-guia { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.icono-guia {
+  display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px 4px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff;
+  font-family: var(--mono); font-size: .7rem; color: var(--text-muted);
+}
+.icono-guia svg { color: var(--navy); }
+.guia-indice { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.guia-seccion { scroll-margin-top: 76px; }
+.guia-seccion > .codigo { margin: 0 0 20px; }

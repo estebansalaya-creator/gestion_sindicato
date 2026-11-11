@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Expediente {{ e.nro_expediente }}{% endblock %}
+
+{#
+  El expediente: comprobante, PDF, liquidación e historia, y debajo el
+  panel para moverlo. Anular solo con la liquidación abierta y fuera de
+  órdenes de pago (mismas reglas que la auditoría de gestion_adm).
+#}
+{% macro dato(rotulo, valor, mono=False, ancho=False) -%}
+{% if valor is defined and valor not in (none, '') %}
+<div class="dato{{ ' ancho' if ancho }}"><div class="dato-lbl">{{ rotulo }}</div>
+  <div class="dato-val{{ ' mono' if mono }}">{{ valor }}</div></div>
+{% endif %}
+{%- endmacro %}
+{% macro f(v) %}{{ v.strftime('%d/%m/%Y') if v else '' }}{% endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Expediente <span class="mono">{{ e.nro_expediente }}</span></h1>
+    <p>{{ e.razon_social_emisor }} · {{ ui.estado(estados_label.get(e.estado, e.estado), estados_tipo.get(e.estado, 'neutro')) }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver a la bandeja', 'secondary', href=url_for('mesa.bandeja'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if e.estado == 'anulado' %}
+{{ ui.aviso('Anulado el ' ~ f(e.fecha_anulacion) ~ (' por ' ~ e.usuario_anulacion if e.usuario_anulacion else '') ~ '. Motivo: ' ~ (e.motivo_anulacion or '—'), 'danger') }}
+{% elif e.estado in contables %}
+{{ ui.aviso('El expediente ya pasó a la parte contable (' ~ estados_label[e.estado]|lower ~ '): los movimientos quedan en la historia pero el estado lo maneja el circuito de pagos.', 'info') }}
+{% endif %}
+
+<div class="con-resumen">
+  <div>
+    {# ── Comprobante ── #}
+    <div class="card">
+      {% call ui.card_head('Comprobante', nota=(c.tipo_desc ~ ' ' ~ c.numero_completo) if c else 'sin comprobante') %}
+        {% if c %}
+        <span class="marcas">
+          {% if c.constatacion_resultado == 'A' %}{{ ui.estado('Validado en ARCA', 'ok') }}
+          {% elif c.constatacion_resultado == 'R' %}{{ ui.estado('ARCA lo rechazó', 'danger') }}
+          {% elif c.constatacion_resultado == 'E' %}{{ ui.estado('ARCA no respondió', 'warn') }}
+          {% else %}{{ ui.estado('Sin constatar', 'neutro') }}{% endif %}
+          {% if c.leido_automatico %}{{ ui.estado('PDF coincide', 'ok') }}{% elif c.ruta_local %}{{ ui.estado('PDF sin cotejar', 'warn') }}{% endif %}
+        </span>
+        {% endif %}
+      {% endcall %}
+      {% if c %}
+      <div class="card-body">
+        <div class="datos">
+          {{ dato('Tipo', c.tipo_comprobante ~ ' · ' ~ (c.tipo_desc or '')) }}
+          {{ dato('Número', c.numero_completo, mono=True) }}
+          {{ dato('Fecha de emisión', f(c.fecha_emision)) }}
+          {{ dato('Período', ((c.periodo[4:] ~ '/' ~ c.periodo[:4]) if c.periodo) ~ ((' (' ~ f(c.periodo_desde) ~ ' al ' ~ f(c.periodo_hasta) ~ ')') if c.periodo_desde and c.periodo_hasta else '')) }}
+          {{ dato('CAE', c.cae, mono=True) }}
+          {{ dato('Vencimiento del CAE', f(c.fecha_vto_cae)) }}
+          {{ dato('Vencimiento del pago', f(c.fecha_vto_pago)) }}
+          {{ dato('Condición IVA del emisor', c.condicion_iva_emisor) }}
+          {{ dato('Neto gravado', '$ ' ~ (c.importe_neto_gravado|miles) if c.importe_neto_gravado else none) }}
+          {{ dato('No gravado', '$ ' ~ (c.importe_neto_no_grav|miles) if c.importe_neto_no_grav else none) }}
+          {{ dato('Exento', '$ ' ~ (c.importe_exento|miles) if c.importe_exento else none) }}
+          {{ dato('IVA', '$ ' ~ (c.importe_iva|miles) if c.importe_iva else none) }}
+          {{ dato('Otros tributos', '$ ' ~ (c.importe_otros|miles) if c.importe_otros else none) }}
+          {{ dato('Total', '$ ' ~ (c.importe_total|miles)) }}
+          {{ dato('Moneda', (c.moneda ~ ' · cambio ' ~ c.tipo_de_cambio) if c.moneda != 'PES' else none) }}
+          {{ dato('Cargó', (c.usuario_carga or '—') ~ ' · ' ~ c.fecha_carga.strftime('%d/%m/%Y %H:%M')) }}
+          {{ dato('Constatación', cst_obs, ancho=True) }}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── PDF ── #}
+    {% if c %}
+    <div class="card">
+      {% call ui.card_head('PDF del comprobante', nota=c.nombre_archivo or 'todavía no se adjuntó') %}
+        {% if c.ruta_local %}{{ ui.boton('Abrir en otra pestaña', 'secondary', chico=True, href=url_for('comprobantes.pdf', id_comprobante=c.id), icono_='ver', blank=True) }}{% endif %}
+      {% endcall %}
+      <div class="card-body">
+        {% if c.ruta_local %}
+        <iframe class="visor-pdf" src="{{ url_for('comprobantes.pdf', id_comprobante=c.id) }}" title="PDF del comprobante"></iframe>
+        {% endif %}
+        {% if cambiar_pdf %}
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('mesa.subir_pdf', exp_id=e.id) }}"
+              class="campos separado" data-proceso="Subiendo el PDF…">
+          <div class="campo" style="--span:9;">
+            <label class="drop-zone chica">
+              {{ ui.icono('subir', 22) }}<span id="pdf-nombre">{{ 'Elegí el PDF correcto para reemplazarlo' if c.ruta_local else 'Elegí el PDF del comprobante' }}</span>
+              <input type="file" name="pdf" id="pdf" accept=".pdf,application/pdf" class="oculto" required>
+            </label>
+          </div>
+          <div class="campo campo-boton" style="--span:3;">
+            {{ ui.boton('Reemplazar PDF' if c.ruta_local else 'Adjuntar PDF', 'secondary', submit=True, icono_='subir') }}
+          </div>
+        </form>
+        {% elif motivo_pdf and c.ruta_local %}
+        <p class="campo-ayuda separado">{{ motivo_pdf }}</p>
+        {% elif not c.ruta_local %}
+        <p class="campo-ayuda">{{ motivo_pdf }}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Liquidación ── #}
+    <div class="card">
+      {{ ui.card_head('Liquidación', nota='la auditoría de comprobantes la cierra y ahí nace la deuda') }}
+      <div class="data-table-wrap">
+        <table class="data-table compacta" data-exportar="Liquidación {{ e.nro_expediente }}">
+          <thead><tr><th>Estado</th><th>Período</th><th>Rubro de pasivo</th><th>Concepto de gasto</th><th class="th-right">Importe</th></tr></thead>
+          <tbody>
+            {% for l in liquidaciones %}
+            <tr>
+              <td>{% if l.fecha_cierre %}{{ ui.estado('Aprobada ' ~ f(l.fecha_cierre), 'ok') }}{% else %}{{ ui.estado('Pendiente de auditoría', 'warn') }}{% endif %}</td>
+              <td class="td-mono">{{ (l.periodo[4:] ~ '/' ~ l.periodo[:4]) if l.periodo else '—' }}</td>
+              <td>{{ l.rubro or '—' }}</td>
+              <td>{{ l.conceptos or '—' }}</td>
+              <td class="td-right td-fuerte" data-num="{{ l.importe_liquidado }}">{{ l.importe_liquidado|miles }}</td>
+            </tr>
+            {% else %}
+            <tr class="no-data-row"><td colspan="5" class="no-data">{{ 'Se sacó al anular el expediente.' if e.estado == 'anulado' else 'Sin liquidación.' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# ── Movimientos ── #}
+    <div class="card">
+      {{ ui.card_head('Movimientos', nota=(movimientos|length ~ ' en la historia del expediente')) }}
+      <div class="data-table-wrap">
+        <table class="data-table compacta" id="tbl-movs" data-exportar="Movimientos {{ e.nro_expediente }}">
+          <thead><tr><th>Fecha</th><th>Movimiento</th><th>Quedó</th><th>Usuario</th><th>Destino</th><th>Observaciones</th></tr></thead>
+          <tbody>
+            {% for m in movimientos %}
+            <tr>
+              <td class="nowrap" data-valor="{{ m.fecha.isoformat() }}">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+              <td class="td-fuerte">{{ tipos_mov_label.get(m.tipo, m.tipo) }}</td>
+              <td>{{ ui.estado(estados_label.get(m.estado_resultante, m.estado_resultante), estados_tipo.get(m.estado_resultante, 'neutro')) }}</td>
+              <td class="td-muted">{{ m.usuario or '—' }}</td>
+              <td>{{ m.area or '' }}{{ ' · ' if m.area and m.usuario_destino }}{{ m.usuario_destino or ('' if m.area else '—') }}</td>
+              <td>{{ m.observaciones or '' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  {# ── Debajo: el expediente y el movimiento ── #}
+  <div class="pila">
+    <aside class="card resumen">
+      {{ ui.card_head('Expediente') }}
+      <div class="card-body">
+        <div class="resumen-fila"><span>Estado</span>{{ ui.estado(estados_label.get(e.estado, e.estado), estados_tipo.get(e.estado, 'neutro')) }}</div>
+        <div class="resumen-fila"><span>Ingresó</span><strong>{{ e.creado.strftime('%d/%m/%Y') }}</strong></div>
+        {% if e.usuario_carga %}<div class="resumen-fila"><span>Cargó</span><strong>{{ e.usuario_carga }}</strong></div>{% endif %}
+        <div class="resumen-fila"><span>Destino</span><strong>{{ e.area or '' }}{{ ' · ' if e.area and e.usuario_destino }}{{ e.usuario_destino or ('' if e.area else '—') }}</strong></div>
+        {% if prov %}
+        <div class="resumen-fila"><span>Proveedor</span><strong>{{ prov.razon_social }}</strong></div>
+        <div class="resumen-fila"><span>CUIT</span><strong class="mono">{{ prov.cuit }}</strong></div>
+        {% if prov.condicion_iva %}<div class="resumen-fila"><span>IVA</span><strong>{{ prov.condicion_iva }}</strong></div>{% endif %}
+        {% endif %}
+        <div class="resumen-fila resumen-total"><span>Importe</span><strong>$ {{ (e.importe_total or 0)|miles }}</strong></div>
+      </div>
+    </aside>
+
+    {% if e.estado != 'anulado' %}
+    <div class="card">
+      {{ ui.card_head('Nuevo movimiento') }}
+      <form method="post" action="{{ url_for('mesa.mover', exp_id=e.id) }}" class="bloque" id="form-mover">
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label for="tipo">Movimiento <span class="req">*</span></label>
+            <select name="tipo" id="tipo" required onchange="ajustarMovimiento()">
+              <option value="">— Elegí —</option>
+              {% for k, t in tipos_mov %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+            </select>
+          </div>
+          {% if areas %}
+          <div class="campo destino oculto" style="--span:12;">
+            <label for="id_area">Área</label>
+            <select name="id_area" id="id_area"><option value="">—</option>
+              {% for a in areas %}<option value="{{ a.id }}"{{ ' selected' if a.id == e.id_area_destino }}>{{ a.nombre }}</option>{% endfor %}
+            </select>
+          </div>
+          {% endif %}
+          <div class="campo destino oculto" style="--span:12;">
+            <label for="id_usuario">Persona</label>
+            <select name="id_usuario" id="id_usuario"><option value="">—</option>
+              {% for u in usuarios %}<option value="{{ u.id }}"{{ ' selected' if u.id == e.id_usuario_destino }}>{{ u.nombre or u.email }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="campo" style="--span:12;">
+            <label for="observaciones">Observaciones <span class="req oculto" id="obs-req">*</span></label>
+            <textarea name="observaciones" id="observaciones" rows="3" maxlength="2000"></textarea>
+            <small class="campo-ayuda" id="mov-ayuda"></small>
+          </div>
+        </div>
+        <div class="resumen-botones">
+          {{ ui.boton('Registrar movimiento', submit=True, icono_='ok') }}
+          {% if not no_anular %}
+          {{ ui.boton('Anular expediente', 'danger', onclick="abrirModal('modal-anular')", icono_='baja') }}
+          {% endif %}
+        </div>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if not no_anular %}
+<div class="modal" id="modal-anular">
+  <form method="post" class="modal-caja" action="{{ url_for('mesa.anular', exp_id=e.id) }}">
+    <div class="modal-titulo">Anular el expediente {{ e.nro_expediente }}</div>
+    <div class="modal-texto">El expediente y su comprobante quedan anulados con el motivo, la fecha y quién lo hizo. Se saca la liquidación pendiente de auditoría. No se borra nada.</div>
+    <div class="campos">
+      <div class="campo" style="--span:12;">
+        <label for="motivo">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="motivo" maxlength="400" minlength="5" required>
+      </div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+      {{ ui.boton('Anular', 'danger', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<script>
+var AYUDA_MOV = {
+  derivacion: 'Pasa a «En revisión» con el destino elegido.',
+  observacion: 'Queda en la historia; el estado no cambia. Escribí la observación.',
+  aprobacion: 'Pasa a «Aprobado»: listo para la auditoría de comprobantes.',
+  rechazo: 'Pasa a «Rechazado». Escribí el motivo.',
+  archivo: 'Pasa a «Archivado».',
+  nota: 'Una nota en la historia; el estado no cambia.'
+};
+var CON_TEXTO = ['observacion', 'rechazo', 'nota'];
+function ajustarMovimiento() {
+  var t = document.getElementById('tipo').value;
+  document.querySelectorAll('#form-mover .destino').forEach(function (c) { c.classList.toggle('oculto', t !== 'derivacion'); });
+  document.getElementById('obs-req').classList.toggle('oculto', CON_TEXTO.indexOf(t) < 0);
+  document.getElementById('observaciones').required = CON_TEXTO.indexOf(t) >= 0;
+  document.getElementById('mov-ayuda').textContent = AYUDA_MOV[t] || '';
+}
+var fp = document.getElementById('pdf');
+if (fp) fp.addEventListener('change', function () {
+  if (this.files.length) document.getElementById('pdf-nombre').textContent = this.files[0].name;
+});
+</script>
+{% endblock %}

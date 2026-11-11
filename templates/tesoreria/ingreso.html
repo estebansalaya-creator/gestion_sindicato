@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden de ingreso {{ orden.nro_orden }}{% endblock %}
+
+{#
+  Ficha de una orden de ingreso (tes_mov.ingreso): motivos, a qué cuentas entró
+  y los valores de terceros que respaldan una cartera, con su estado de hoy.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de ingreso {{ orden.nro_orden }}</h1>
+    <p>{{ orden.observaciones or 'Ingreso de fondos por motivo.' }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_subdiario %}{{ ui.boton('Subdiario', 'secondary', href=url_for('tes_mov.subdiario'), icono_='volver') }}{% endif %}
+    {{ ui.boton('Imprimir', 'secondary', onclick='window.print()', icono_='imprimir') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if orden.estado == 'anulado' %}
+  {{ ui.aviso('Anulada el ' ~ (orden.fecha_anulacion.strftime('%d/%m/%Y') if orden.fecha_anulacion else '—') ~ ' por ' ~ (orden.usuario_anulacion or '—') ~ ': ' ~ (orden.motivo_anulacion or ''), 'danger') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Datos') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Número', orden.nro_orden, mono=True) }}
+      {{ dato('Fecha', orden.fecha.strftime('%d/%m/%Y')) }}
+      {{ dato('Importe', '$ ' ~ ((orden.importe_total or 0) | miles), mono=True) }}
+      {{ dato('Origen', 'Conciliación bancaria' if orden.origen == 'conciliacion' else 'Carga manual') }}
+      {{ dato('Registró', (orden.usuario_creacion or '—') ~ ' · ' ~ orden.creado.strftime('%d/%m/%Y %H:%M')) }}
+      {{ dato('Estado', orden.estado | capitalize) }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Motivos') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Motivos de {{ orden.nro_orden }}">
+      <thead><tr><th>Motivo</th><th>Descripción</th><th>Período</th><th class="th-right">Importe</th></tr></thead>
+      <tbody>
+        {% for m in motivos %}
+        <tr><td class="td-fuerte">{{ m.motivo or '—' }}</td><td class="td-wrap">{{ m.descripcion }}</td>
+          <td class="td-mono">{{ m.periodo | periodo if m.periodo else '—' }}</td>
+          <td class="td-right" data-num="{{ m.importe }}">{{ (m.importe or 0) | miles }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cuentas') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Cuentas de {{ orden.nro_orden }}">
+      <thead><tr><th>Cuenta</th><th>Tipo</th><th class="th-right">Importe</th></tr></thead>
+      <tbody>
+        {% for c in cuentas %}
+        <tr><td class="td-fuerte">{{ c.cuenta }}</td><td class="td-muted">{{ c.tipo_txt }}</td>
+          <td class="td-right" data-num="{{ c.importe }}">{{ (c.importe or 0) | miles }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if valores %}
+<div class="card">
+  {{ ui.card_head('Valores de terceros', nota='Con su estado de hoy: un cheque sigue su camino después de la orden.') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Valores de {{ orden.nro_orden }}">
+      <thead><tr><th>Tipo</th><th>Número</th><th>Banco</th><th>Librador</th><th>CUIT</th><th>Vence</th><th>Cartera</th>
+        <th class="th-right">Importe</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for v in valores %}
+        <tr><td>{{ v.tipo_valor | capitalize }}</td><td class="td-mono">{{ v.nro_cheque }}</td><td class="td-muted">{{ v.banco or '—' }}</td>
+          <td class="td-wrap">{{ v.razon_social_librador or '—' }}</td><td class="td-mono">{{ v.cuit_librador or '—' }}</td>
+          <td>{{ v.fecha_vencimiento.strftime('%d/%m/%Y') if v.fecha_vencimiento else '—' }}</td><td>{{ v.cuenta or '—' }}</td>
+          <td class="td-right" data-num="{{ v.importe }}">{{ (v.importe or 0) | miles }}</td>
+          <td>{{ ui.estado(v.estado | replace('_', ' ') | capitalize, 'ok' if v.estado == 'en_cartera' else 'danger' if v.estado in ('anulado', 'rechazado') else 'neutro') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if orden.estado != 'anulado' and puede_anular %}
+<div class="card resumen {{ 'warn' if impedimentos }}">
+  {{ ui.card_head('Anular') }}
+  <div class="card-body">
+    {% if impedimentos %}
+      <p>No se puede anular porque {{ impedimentos | join('; ') }}.</p>
+    {% else %}
+      <p class="td-muted">Se anula desde Anulaciones, con el motivo. Los valores que entraron con la orden salen de la cartera.</p>
+      <div class="resumen-botones">{{ ui.boton('Ir a Anulaciones', 'secondary', href=url_for('tes_mov.anulaciones_lista', tipo='ingreso', desde=orden.fecha.isoformat(), hasta=orden.fecha.isoformat())) }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

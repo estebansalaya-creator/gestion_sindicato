@@ -1,0 +1,46 @@
+# gestion_sindicato — lo que no va al repositorio
+
+# Variables de entorno: credenciales de MySQL, AEDA, contable, ARCA.
+.env
+.env.*
+!.env.example
+
+# Configuración de IIS de este servidor (rutas propias; ver su comentario).
+web.config
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Lo que la aplicación escribe en tiempo de ejecución: informes de los
+# importadores y cruces (con CUIL y nombres), comprobantes, PDF y el logo.
+# Las carpetas existen por su .gitignore propio.
+logs/*
+!logs/.gitignore
+adjuntos/*
+!adjuntos/.gitignore
+
+# Certificados y claves (ARCA)
+*.pem
+*.key
+*.crt
+certs/
+
+# Salidas sueltas y archivos para borrar
+Claude outputs/
+_to_delete/
+*.xlsx
+*.csv
+*.zip
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# El mensaje del próximo commit (lo usa subir_github.bat y lo borra).
+mensaje_commit*.txt

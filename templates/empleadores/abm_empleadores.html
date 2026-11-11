@@ -1,0 +1,416 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Empleadores{% endblock %}
+
+{#
+  Las solapas van escritas a mano y no las deja armar `abmSolapasAutomaticas`:
+  esa función toma como listado la PRIMERA tarjeta con una tabla, y acá la de
+  contactos aparece antes que la grilla.
+
+  `e` evita los «None» en pantalla: `{{ empleador.telefonos }}` con la columna
+  en NULL imprime la palabra None. Con `e.get(...) or ''` un NULL queda como
+  campo vacío, que es lo que es.
+#}
+{% set e = empleador or {} %}
+
+{% macro domicilio(prefijo) %}
+  <div class="campos">
+    <div class="campo" style="--span:3;">
+      <label>Provincia</label>
+      <select name="{{ prefijo }}_provincia_id" onchange="sincronizarProvincia(this, '{{ prefijo }}')">
+        {{ ui.opciones(provincias, e.get(prefijo ~ '_provincia_id'), texto='nombre') }}
+      </select>
+      {# La tabla guarda código y nombre. El nombre viaja en un hidden que
+         mantiene el `onchange`: así la grilla lo muestra sin un JOIN contra
+         p_provincia en cada consulta. #}
+      <input type="hidden" name="{{ prefijo }}_provincia_nombre"
+             value="{{ e.get(prefijo ~ '_provincia_nombre') or '' }}">
+    </div>
+    {# Departamento y localidad son texto: en esta base solo está cargado el
+       catálogo de provincias. Los campos *_id quedan para cuando haya uno. #}
+    <div class="campo" style="--span:3;">
+      <label>Departamento</label>
+      <input type="text" name="{{ prefijo }}_departamento_nombre" maxlength="100"
+             value="{{ e.get(prefijo ~ '_departamento_nombre') or '' }}">
+    </div>
+    <div class="campo" style="--span:3;">
+      <label>Localidad</label>
+      <input type="text" name="{{ prefijo }}_localidad_nombre" maxlength="100"
+             value="{{ e.get(prefijo ~ '_localidad_nombre') or '' }}">
+    </div>
+    <div class="campo" style="--span:3;">
+      <label>Código postal</label>
+      <input type="text" name="{{ prefijo }}_cp" maxlength="8" value="{{ e.get(prefijo ~ '_cp') or '' }}">
+    </div>
+    <div class="campo" style="--span:6;">
+      <label>Calle</label>
+      <input type="text" name="{{ prefijo }}_calle" maxlength="150" value="{{ e.get(prefijo ~ '_calle') or '' }}">
+    </div>
+    <div class="campo" style="--span:2;">
+      <label>Número</label>
+      <input type="text" name="{{ prefijo }}_numero" maxlength="10" value="{{ e.get(prefijo ~ '_numero') or '' }}">
+    </div>
+    <div class="campo" style="--span:2;">
+      <label>Piso</label>
+      <input type="text" name="{{ prefijo }}_piso" maxlength="5" value="{{ e.get(prefijo ~ '_piso') or '' }}">
+    </div>
+    <div class="campo" style="--span:2;">
+      <label>Depto</label>
+      <input type="text" name="{{ prefijo }}_depto" maxlength="10" value="{{ e.get(prefijo ~ '_depto') or '' }}">
+    </div>
+    {# Los ids de departamento y localidad se preservan al editar: perderlos
+       en cada guardado degradaría datos que hoy no sabemos volver a cargar. #}
+    <input type="hidden" name="{{ prefijo }}_departamento_id" value="{{ e.get(prefijo ~ '_departamento_id') or '' }}">
+    <input type="hidden" name="{{ prefijo }}_localidad_id" value="{{ e.get(prefijo ~ '_localidad_id') or '' }}">
+  </div>
+{% endmacro %}
+
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Empleadores</h1>
+    <p>Empresas que aportan cuota sindical. Domicilio legal y fiscal.</p>
+  </div>
+  {% if empleador %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nuevo empleador', href=url_for('empleadores.abm_empleadores'), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if (empleador or errores) else 'listado' %}
+{% set lista_solapas = [('listado', 'Listado', empleadores|length),
+                        ('datos', 'Editar' if empleador else 'Nuevo', None)] %}
+{% if empleador and empleador.id %}
+  {% set lista_solapas = lista_solapas + [('nomina', 'Nómina', nomina|length),
+                                          ('contactos', 'Contactos', contactos|length)] %}
+{% endif %}
+{{ ui.solapas(lista_solapas, inicial) }}
+
+<!-- ── Listado ────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por CUIT, razón social, localidad…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Todas</option>
+        <option value="1">Activas</option>
+        <option value="0">Inactivas</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-empleadores" data-exportar="Empleadores">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>CUIT</th>
+            <th>Razón social</th>
+            {# Viene ordenada desde el servidor por esta columna, de mayor a menor:
+               data-orden lo dice a la grilla para que marque la flecha y el
+               primer clic la invierta. #}
+            <th class="th-right" data-orden="desc" title="Afiliados con relación laboral vigente">Empleados activos</th>
+            <th>Nombre de fantasía</th>
+            <th>Localidad</th>
+            <th>Provincia</th>
+            <th class="th-right">Empleados</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for emp in empleadores %}
+          <tr class="{{ 'fila-baja' if not emp.Activo }}" data-activo="{{ 1 if emp.Activo else 0 }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('empleadores.abm_empleadores', edit=emp.id)) }}
+              {{ ui.accion('borrar', onclick='confirmarBorrar(this)',
+                           datos={'id': emp.id, 'nombre': emp.razon_social, 'empleados': emp.empleados}) }}
+            </div></td>
+            <td class="td-mono">{{ emp.CUIT }}</td>
+            <td class="td-fuerte">{{ emp.razon_social }}</td>
+            <td class="td-right">{{ emp.activos }}</td>
+            <td class="td-muted">{{ emp.nombre_fantasia or '—' }}</td>
+            <td>{{ emp.dom_localidad_nombre or '—' }}</td>
+            <td class="td-muted">{{ emp.dom_provincia_nombre or '—' }}</td>
+            <td class="td-right">{{ emp.empleados or '—' }}</td>
+            <td>{{ ui.estado('Activa', 'ok') if emp.Activo else ui.estado('Inactiva', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">No hay empleadores cargados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<!-- ── Datos ──────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head('Editar empleador' if empleador else 'Nuevo empleador') %}
+      {% if empleador %}{{ ui.boton('Cancelar', 'secondary', href=url_for('empleadores.abm_empleadores'), chico=True) }}{% endif %}
+    {% endcall %}
+
+    <form method="post" action="{{ url_for('empleadores.abm_empleadores') }}">
+      <input type="hidden" name="accion" value="{{ 'guardar' if empleador else 'nuevo' }}">
+      <input type="hidden" name="id"     value="{{ e.get('id') or '' }}">
+
+      <div class="bloque">
+        <div class="bloque-titulo">Datos generales</div>
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label for="CUIT">CUIT <span class="req">*</span></label>
+            {# Acepta guiones al pegar desde una constancia; el servidor los
+               limpia. `inputmode` saca el teclado alfabético en el celular. #}
+            <input type="text" name="CUIT" id="CUIT" required maxlength="13" class="mono"
+                   inputmode="numeric" placeholder="30-71429443-8"
+                   value="{{ e.get('CUIT') or '' }}" oninput="validarCuit(this)">
+            <small class="campo-ayuda" id="cuit-aviso"></small>
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Razón social <span class="req">*</span></label>
+            <input type="text" name="razon_social" required maxlength="100" value="{{ e.get('razon_social') or '' }}">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label>Nombre de fantasía</label>
+            <input type="text" name="nombre_fantasia" maxlength="100" value="{{ e.get('nombre_fantasia') or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Teléfonos</label>
+            <input type="text" name="telefonos" maxlength="50" value="{{ e.get('telefonos') or '' }}">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Email</label>
+            <input type="email" name="email" maxlength="100" value="{{ e.get('email') or '' }}">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label class="campo-check">
+              <input type="checkbox" name="Activo" value="1" {{ 'checked' if not empleador or e.get('Activo') }}>
+              Activa
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque">
+        <div class="fila" style="margin-bottom:14px;">
+          <div class="sub-solapas">
+            <button type="button" class="sub-solapa activa" data-solapa="dom"
+                    onclick="mostrarDomicilio('dom', this)">Domicilio legal</button>
+            <button type="button" class="sub-solapa" data-solapa="fdom"
+                    onclick="mostrarDomicilio('fdom', this)">Domicilio fiscal</button>
+          </div>
+          <span class="empuja">{{ ui.boton('Copiar legal → fiscal', 'ghost', onclick='copiarDomicilio()', chico=True) }}</span>
+        </div>
+        <div data-domicilio="dom">{{ domicilio('dom') }}</div>
+        <div data-domicilio="fdom" class="oculto">{{ domicilio('fdom') }}</div>
+      </div>
+
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label>Observaciones</label>
+            <textarea name="observaciones" rows="2">{{ e.get('observaciones') or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if empleador else 'Crear empleador', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ── Nómina ─────────────────────────────────────────────────────────────── -->
+{# Relaciones laborales de afiliados con este empleador (p_relaciones_laborales)
+   y la última DDJJ de OSEDA de cada uno para este CUIT, consultada en vivo en
+   contable de Railway (contable_oseda.py, solo lectura). #}
+{% if empleador and empleador.id %}
+<div class="abm-panel oculto" data-panel="nomina">
+  <div class="card">
+    {{ ui.card_head('Nómina de ' ~ empleador.razon_social, nota='DDJJ de OSEDA consultadas en contable (Railway).') }}
+    {% if aviso_ddjj %}{{ ui.aviso(aviso_ddjj, 'warning') }}{% endif %}
+    {% call ui.barra_filtros('Filtrar por CUIL o apellido…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-nomina-estado">
+        <option value="">Todos</option>
+        <option value="1">Activos</option>
+        <option value="0">Bajas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('DDJJ OSEDA') %}<select class="filtro" id="f-nomina-ddjj">
+        <option value="">Todos</option>
+        <option value="1">Con DDJJ</option>
+        <option value="0">Sin DDJJ</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-nomina" data-exportar="Nómina {{ empleador.razon_social }}">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>CUIL</th>
+            <th>Apellido y nombres</th>
+            <th>Estado</th>
+            <th class="th-right">Fecha alta</th>
+            <th class="th-right">Fecha baja</th>
+            <th class="th-right">Antigüedad (años)</th>
+            <th class="th-center">Última DDJJ OSEDA</th>
+            <th class="th-right">Rem. 5 última DDJJ</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in nomina %}
+          <tr class="{{ 'fila-baja' if not n.activo }}" data-activo="{{ 1 if n.activo else 0 }}"
+              data-ddjj="{{ 1 if n.ultimo_periodo else 0 }}">
+            <td><div class="acciones">
+              {% if n.id_afiliado %}{{ ui.accion('ver', href=url_for('afiliados.abm_afiliados', edit=n.id_afiliado), titulo='Ficha del afiliado') }}{% endif %}
+            </div></td>
+            <td class="td-mono">{{ n.cuil }}</td>
+            <td class="td-fuerte">{{ n.apellido_nombres or '(no está en el padrón)' }}</td>
+            <td>{{ ui.estado('Activo', 'ok') if n.activo else ui.estado('Baja', 'danger') }}</td>
+            <td class="td-right">{{ n.fecha_inicio.strftime('%d/%m/%Y') if n.fecha_inicio else '—' }}</td>
+            <td class="td-right"{% if n.baja_del_afiliado %} title="La relación no tiene fecha de egreso: es la fecha de baja del afiliado"{% endif %}>
+              {{ n.fecha_baja.strftime('%d/%m/%Y') if n.fecha_baja else '—' }}{% if n.baja_del_afiliado %} *{% endif %}</td>
+            <td class="td-right">{{ n.antiguedad if n.antiguedad is not none else '—' }}</td>
+            <td class="td-center td-mono">{{ n.ultimo_periodo | periodo if n.ultimo_periodo else '—' }}</td>
+            <td class="td-right">{{ (n.rem5_ultimo | miles) if n.rem5_ultimo is not none else '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">No hay afiliados con relación laboral con este empleador.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+    <p class="td-muted" style="margin-top:8px;">* Sin fecha de egreso en la relación: se muestra la fecha de baja del afiliado. La antigüedad de un activo se cuenta hasta hoy.</p>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── Contactos ──────────────────────────────────────────────────────────── -->
+{# Solo en edición: los contactos se cuelgan del id del empleador, que en el
+   alta todavía no existe. Va fuera del <form> de arriba porque trae
+   formularios propios, y anidar formularios no es válido en HTML. #}
+{% if empleador and empleador.id %}
+<div class="abm-panel oculto" data-panel="contactos">
+  <div class="card">
+    {{ ui.card_head('Contactos de ' ~ empleador.razon_social, nota='De acá sale el destinatario de los avisos.') }}
+    {% with entidad_tipo='empresa', entidad_id=empleador.id,
+            contactos=contactos, areas_contacto=areas_contacto %}
+      {% include '_contactos.html' %}
+    {% endwith %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Confirmación de borrado -->
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar empleador?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <div id="modal-aviso"></div>
+    <form method="post" action="{{ url_for('empleadores.abm_empleadores') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+
+<script>
+// ── Domicilios ───────────────────────────────────────────────────────────────
+function mostrarDomicilio(cual, boton) {
+  document.querySelectorAll('[data-domicilio]').forEach(function (d) {
+    d.classList.toggle('oculto', d.dataset.domicilio !== cual);
+  });
+  document.querySelectorAll('.sub-solapa').forEach(function (b) {
+    b.classList.toggle('activa', b === boton);
+  });
+}
+
+// Copia campo por campo y no clonando el HTML: clonar arrastraría los `name`
+// del domicilio legal y el formulario mandaría dos veces los mismos.
+function copiarDomicilio() {
+  var form = document.querySelector('[data-panel="datos"] form');
+  form.querySelectorAll('[name^="dom_"]').forEach(function (origen) {
+    var destino = form.querySelector('[name="f' + origen.name + '"]');
+    if (destino) destino.value = origen.value;
+  });
+  mostrarDomicilio('fdom', document.querySelector('[data-solapa="fdom"]'));
+}
+
+// El nombre de la provincia viaja en un hidden; el select solo tiene el código.
+function sincronizarProvincia(select, prefijo) {
+  var oculto = select.parentElement.querySelector('[name="' + prefijo + '_provincia_nombre"]');
+  if (oculto) oculto.value = select.value ? select.options[select.selectedIndex].text.trim() : '';
+}
+
+// ── CUIT: mismo cálculo que el servidor, para avisar antes de enviar ─────────
+function cuitValido(cuit) {
+  if (!/^\d{11}$/.test(cuit)) return false;
+  var pesos = [5,4,3,2,7,6,5,4,3,2], suma = 0;
+  for (var i = 0; i < 10; i++) suma += parseInt(cuit[i], 10) * pesos[i];
+  var resto = suma % 11;
+  var ver = resto === 0 ? 0 : (resto === 1 ? 9 : 11 - resto);
+  return ver === parseInt(cuit[10], 10);
+}
+
+function validarCuit(input) {
+  var limpio = input.value.replace(/\D/g, '');
+  var aviso  = document.getElementById('cuit-aviso');
+  aviso.classList.remove('ok', 'error');
+  if (!limpio) { aviso.textContent = ''; return; }
+  if (limpio.length < 11) {
+    aviso.textContent = limpio.length + ' de 11 dígitos';
+  } else if (cuitValido(limpio)) {
+    aviso.textContent = 'CUIT válido';
+    aviso.classList.add('ok');
+  } else {
+    aviso.textContent = 'El dígito verificador no cierra';
+    aviso.classList.add('error');
+  }
+}
+
+// ── Grilla ───────────────────────────────────────────────────────────────────
+function confirmarBorrar(boton) {
+  document.getElementById('modal-id').value = boton.dataset.id;
+  document.getElementById('modal-nombre').textContent = boton.dataset.nombre;
+  var n = parseInt(boton.dataset.empleados || '0', 10);
+  // Borrar un empleador con cuotas cargadas no las borra —están en otra tabla,
+  // atadas por CUIT y no por id— pero deja el dashboard mostrando el número
+  // pelado en lugar del nombre. Conviene saberlo antes y no después.
+  var aviso = document.getElementById('modal-aviso');
+  aviso.className = n > 0 ? 'alert alert-warning' : '';
+  aviso.textContent = n > 0
+    ? 'Tiene ' + n + ' empleado(s) con cuotas importadas. Las cuotas no se borran, '
+      + 'pero pierden el nombre de la empresa.'
+    : '';
+  abrirModal('modal-borrar');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  // Filtro, orden, paginación y exportación los pone base.html. Son casi
+  // 3.200 filas: sin paginar, el navegador las dibuja todas de una.
+  var estado = document.getElementById('f-estado');
+  gestion_admTable('tbl-empleadores', {
+    pageSize: 20,
+    filtroExtra: function (tr) { return !estado.value || tr.dataset.activo === estado.value; }
+  });
+  if (document.getElementById('tbl-nomina')) {
+    var nEstado = document.getElementById('f-nomina-estado');
+    var nDdjj   = document.getElementById('f-nomina-ddjj');
+    gestion_admTable('tbl-nomina', {
+      pageSize: 20,
+      filtroExtra: function (tr) {
+        return (!nEstado.value || tr.dataset.activo === nEstado.value)
+            && (!nDdjj.value   || tr.dataset.ddjj   === nDdjj.value);
+      }
+    });
+  }
+  var cuit = document.getElementById('CUIT');
+  if (cuit && cuit.value) validarCuit(cuit);
+});
+</script>
+{% endblock %}

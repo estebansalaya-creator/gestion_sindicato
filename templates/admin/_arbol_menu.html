@@ -1,0 +1,117 @@
+{#
+  Árbol del menú con casillas, el mismo en Roles y en Permisos por Usuario.
+  Tildar una opción tilda su rama (el menú lateral no muestra una opción cuya
+  rama no está permitida); destildar una rama destilda lo de adentro. El
+  servidor completa las ramas de todos modos (admin._con_ancestros).
+
+    {% import "admin/_arbol_menu.html" as am %}
+    {{ am.tabla(arbol, marcadas, fijas={id: 'texto'}, protegidas=set(), id='tbl-menu', exportar='…') }}
+    {{ am.script('tbl-menu') }}
+
+  fijas: las que vienen dadas (por un rol) — tildadas y sin poder tocarse,
+         con el texto en la columna «Por rol».
+  protegidas: tildadas y sin poder destildarse (viajan en un hidden).
+#}
+{% import "_ui.html" as ui %}
+
+{% macro tabla(arbol, marcadas, fijas={}, protegidas=[], id='tbl-menu', exportar='Opciones de menú', col_fijas=None) -%}
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por opción o URL…', tam_pagina=9999) %}
+    {% call ui.filtro('Mostrar') %}<select class="filtro" id="{{ id }}-f-marca">
+      <option value="">Todas las opciones</option>
+      <option value="1">Las que tiene</option>
+      <option value="0">Las que no tiene</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Tipo') %}<select class="filtro" id="{{ id }}-f-tipo">
+      <option value="">Ramas y pantallas</option>
+      <option value="P">Solo pantallas</option>
+    </select>{% endcall %}
+    {{ ui.boton('Tildar todas', 'ghost', chico=True, onclick="arbolTodas('" ~ id ~ "', true)") }}
+    {{ ui.boton('Destildar todas', 'ghost', chico=True, onclick="arbolTodas('" ~ id ~ "', false)") }}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="{{ id }}" data-exportar="{{ exportar }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Tiene</th>
+          <th>Opción</th>
+          <th>URL</th>
+          {% if col_fijas %}<th>{{ col_fijas }}</th>{% endif %}
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for n in arbol %}
+        {% set fija = n.id in fijas %}
+        {% set tiene = fija or n.id in marcadas %}
+        <tr class="{{ 'fila-baja' if not n.activo }}" data-id="{{ n.id }}" data-anc="{{ n.ancestros|join(',') }}"
+            data-tipo="{{ 'P' if n.url else 'R' }}">
+          <td class="td-center" data-valor="{{ 'Sí' if tiene else 'No' }}">
+            <input type="checkbox" class="arbol-check" name="menu_ids" value="{{ n.id }}"
+                   aria-label="{{ n.nombre }}" {{ 'checked' if tiene }}
+                   {{ 'disabled data-fija' if fija }}{{ ' data-protegida onclick="return false"' if n.id in protegidas }}>
+          </td>
+          <td class="td-arbol {{ 'td-fuerte' if not n.url }}" style="--sangria:{{ n.prof }};">{{ n.nombre }}
+            {% if n.id in protegidas %} <span class="chip" title="Sin esta pantalla nadie podría volver a dar permisos">obligatoria</span>{% endif %}</td>
+          <td class="td-mono td-muted">{{ n.url or '' }}</td>
+          {% if col_fijas %}<td>{% if fija %}<span class="chip">{{ fijas[n.id] }}</span>{% endif %}</td>{% endif %}
+          <td>{{ ui.estado('Activa', 'ok') if n.activo else ui.estado('Inactiva', 'neutro') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="{{ 5 if col_fijas else 4 }}" class="no-data">El menú está vacío.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+{%- endmacro %}
+
+{% macro script(id='tbl-menu') -%}
+<script>
+function arbolTodas(id, valor) {
+  document.querySelectorAll('#' + id + ' .arbol-check').forEach(function (c) {
+    if (c.dataset.fija !== undefined || c.dataset.protegida !== undefined) return;
+    c.checked = valor;
+  });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var tbl = document.getElementById('{{ id }}');
+  if (!tbl) return;
+  var porId = {};
+  tbl.querySelectorAll('tbody tr[data-id]').forEach(function (tr) { porId[tr.dataset.id] = tr; });
+  function check(id) { var tr = porId[id]; return tr && tr.querySelector('.arbol-check'); }
+  tbl.addEventListener('change', function (e) {
+    var c = e.target;
+    if (!c.classList.contains('arbol-check')) return;
+    var tr = c.closest('tr'), id = tr.dataset.id;
+    if (c.checked) {
+      (tr.dataset.anc ? tr.dataset.anc.split(',') : []).forEach(function (a) {
+        var x = check(a); if (x && !x.disabled) x.checked = true;
+      });
+    } else {
+      Object.keys(porId).forEach(function (k) {
+        if ((',' + porId[k].dataset.anc + ',').indexOf(',' + id + ',') < 0) return;
+        var x = check(k);
+        if (x && !x.disabled && x.dataset.protegida === undefined) x.checked = false;
+      });
+    }
+    var celda = c.closest('td'); celda.dataset.valor = c.checked ? 'Sí' : 'No';
+  });
+  // La grilla está dentro del formulario: Enter en el buscador lo mandaría.
+  tbl.closest('.card').querySelectorAll('.filter-bar input').forEach(function (i) {
+    i.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+  });
+  var fm = document.getElementById('{{ id }}-f-marca'), ft = document.getElementById('{{ id }}-f-tipo');
+  gestion_admTable('{{ id }}', {
+    pageSize: 9999,
+    filtroExtra: function (tr) {
+      var c = tr.querySelector('.arbol-check');
+      if (fm.value && (c.checked ? '1' : '0') !== fm.value) return false;
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{%- endmacro %}

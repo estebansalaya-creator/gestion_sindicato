@@ -1,0 +1,318 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Reintegro {{ r.nro_solicitud }}{% endblock %}
+
+{#
+  La ficha de una solicitud, en dos modos:
+
+    ver      /reintegros/solicitud/<id>   consulta, en cualquier estado
+    auditar  /reintegros/auditoria/<id>   importe reconocido por renglón
+
+  Es la misma ficha porque es la misma información: en la auditoría, además,
+  cada renglón trae su importe para corregir. En gestion_adm la consulta no
+  existía y «ver» una aprobada llevaba a la auditoría, que la rechazaba.
+#}
+{% set auditar = modo == 'auditar' %}
+
+{% macro dato(rotulo, valor, mono=False, ancho=False) -%}
+{% if valor is defined and valor not in (none, '') %}
+<div class="dato{{ ' ancho' if ancho }}"><div class="dato-lbl">{{ rotulo }}</div>
+  <div class="dato-val{{ ' mono' if mono }}">{{ valor }}</div></div>
+{% endif %}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ 'Auditoría de ' if auditar else 'Solicitud ' }}<span class="mono">{{ r.nro_solicitud }}</span></h1>
+    <p>{{ r.titular }} · {{ ui.estado(estados_label.get(r.estado, r.estado), estados_tipo.get(r.estado, 'neutro')) }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if auditar %}
+    {{ ui.boton('Volver a la bandeja', 'secondary', href=url_for('reintegros.auditoria'), icono_='volver') }}
+    {% else %}
+    {{ ui.boton('Volver al listado', 'secondary', href=url_for('reintegros.solicitud'), icono_='volver') }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if auditar %}
+<form method="post" id="form-auditoria" action="{{ url_for('reintegros.auditoria_resolver', id_reintegro=r.id) }}">
+<input type="hidden" name="accion" id="accion" value="aprobar">
+{% endif %}
+
+<div class="con-resumen">
+  <div>
+    <div class="card">
+      {{ ui.card_head('Datos de la solicitud') }}
+      <div class="card-body">
+        <div class="datos">
+          {{ dato('Titular', r.titular) }}
+          {{ dato('CUIL', r.cuil_titular, mono=True) }}
+          {{ dato('Documento', r.doc_titular, mono=True) }}
+          {{ dato('Fecha de solicitud', r.fecha_solicitud.strftime('%d/%m/%Y') if r.fecha_solicitud) }}
+          {{ dato('Cargó', r.usuario_solicitud) }}
+          {{ dato('CBU destino', r.cbu_destino, mono=True) }}
+          {{ dato('Alias', r.alias_destino) }}
+          {{ dato('Auditada', ((r.fecha_auditoria.strftime('%d/%m/%Y') ~ ' · ' ~ (r.usuario_auditoria or '')) if r.fecha_auditoria)) }}
+          {{ dato('Anulada', r.fecha_anulacion.strftime('%d/%m/%Y') if r.fecha_anulacion) }}
+          {{ dato('Motivo del rechazo', r.motivo_rechazo, ancho=True) }}
+          {{ dato('Observaciones', r.observaciones, ancho=True) }}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      {% call ui.card_head('Detalle', nota=(r.detalle|length ~ ' renglón' ~ ('es' if r.detalle|length != 1 else ''))) %}
+        {% if auditar %}
+        {{ ui.boton('Reconocer todo', 'secondary', chico=True, onclick='todos(true)') }}
+        {{ ui.boton('Todo en 0', 'secondary', chico=True, onclick='todos(false)') }}
+        {% endif %}
+      {% endcall %}
+      <div class="card-body">
+        {% for d in r.detalle %}
+        {% set reconocido = d.importe_aprobado if d.importe_aprobado is not none else d.importe_solicitado %}
+        <div class="renglon {{ 'rechazado' if (not auditar and d.importe_aprobado is not none and d.importe_aprobado == 0) }}"
+             data-id="{{ d.id }}" data-solic="{{ '%.2f'|format(d.importe_solicitado|float) }}">
+          <span class="renglon-num">{{ loop.index }}</span>
+          <div class="renglon-cabeza">
+            <div>
+              <div class="renglon-titulo">{{ d.afiliado }} <span class="chip">{{ d.parentesco }}</span></div>
+              <div class="renglon-sub">
+                {{ d.concepto }} · gasto {{ d.fecha_gasto.strftime('%d/%m/%Y') if d.fecha_gasto else 'sin fecha' }}
+                · comprobante {{ d.nro_comprobante or 'sin número' }}{% if d.cuil %} · CUIL {{ d.cuil }}{% endif %}
+              </div>
+              {% if d.comentario_solicitud %}<div class="renglon-sub"><em>«{{ d.comentario_solicitud }}»</em></div>{% endif %}
+            </div>
+            <div class="derecha">
+              <div class="dato-lbl">Solicitado</div>
+              <div class="dato-val mono">$ {{ d.importe_solicitado|miles }}</div>
+              {% if not auditar and d.importe_aprobado is not none %}
+              <div class="dato-lbl" style="margin-top:6px;">Reconocido</div>
+              <div class="dato-val mono">$ {{ d.importe_aprobado|miles }}</div>
+              {% endif %}
+            </div>
+          </div>
+
+          {% if d.adjuntos %}
+          <div class="adjuntos">
+            {% for a in d.adjuntos %}
+            <span class="adjunto">
+              <span class="adjunto-nombre" title="{{ a.nombre_archivo }}">{{ a.nombre_archivo }}</span>
+              {{ ui.accion('ver', href=url_for('reintegros.ver_adjunto', id_adjunto=a.id), titulo='Ver comprobante', blank=True) }}
+            </span>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="sin-adjunto">{{ ui.icono('alerta', 12) }} Este renglón no tiene comprobante adjunto.</div>
+          {% endif %}
+
+          {% if not auditar and d.comentario_autorizacion %}
+          <div class="renglon-sub" style="margin-top:8px;">Auditoría: {{ d.comentario_autorizacion }}</div>
+          {% endif %}
+
+          {% if auditar %}
+          <div class="campos" style="margin-top:12px;">
+            <div class="campo" style="--span:3;">
+              <label>Importe reconocido</label>
+              <input type="hidden" name="aprobado_{{ d.id }}" class="imp-real" id="aprob-{{ d.id }}"
+                     value="{{ '%.2f'|format(reconocido|float) }}">
+              <input type="text" inputmode="decimal" class="importe imp-vista" value="{{ reconocido|miles }}"
+                     oninput="mascaraImporte(this, 'aprob-{{ d.id }}'); recalcular();">
+            </div>
+            <div class="campo" style="--span:3;">
+              <span class="campo-label">Acción rápida</span>
+              <div class="fila" style="flex-wrap:nowrap;">
+                {{ ui.boton('Todo', 'secondary', chico=True, onclick='poner(' ~ d.id ~ ', true)') }}
+                {{ ui.boton('Rechazar', 'secondary', chico=True, onclick='poner(' ~ d.id ~ ', false)') }}
+              </div>
+            </div>
+            <div class="campo" style="--span:6;">
+              <label>Comentario de auditoría</label>
+              <input type="text" name="comentario_{{ d.id }}" maxlength="250"
+                     placeholder="Motivo del ajuste, tope aplicado…" value="{{ d.comentario_autorizacion or '' }}">
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% if auditar %}
+    <div class="card">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label for="observaciones">Observación general de la auditoría</label>
+            <textarea name="observaciones" id="observaciones" rows="2" maxlength="300"
+                      placeholder="Se agrega a las observaciones de la solicitud…"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if not auditar and r.ordenes %}
+    <div class="card">
+      {{ ui.card_head('Órdenes de pago') }}
+      <div class="data-table-wrap">
+        <table class="data-table compacta" data-exportar="Ordenes de pago {{ r.nro_solicitud }}">
+          <thead><tr><th>N° de orden</th><th>Fecha</th><th>Estado</th><th class="th-right">Importe</th></tr></thead>
+          <tbody>
+            {% for o in r.ordenes %}
+            <tr>
+              <td class="td-mono"><a href="{{ url_for('pagos.orden', id_orden=o.id) }}">{{ o.nro_orden }}</a></td>
+              <td>{{ o.fecha.strftime('%d/%m/%Y') }}</td>
+              <td>{{ ui.estado(orden_label.get(o.estado, o.estado), orden_tipo.get(o.estado, 'neutro')) }}</td>
+              <td class="td-right" data-num="{{ o.importe }}">{{ o.importe|miles }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Resumen -->
+  <aside class="card resumen {{ 'warn' if auditar }}">
+    {{ ui.card_head('Resultado de la auditoría' if auditar else 'Resumen') }}
+    <div class="card-body">
+      {% if auditar %}
+      <div class="resumen-fila"><span>Renglones</span><strong>{{ r.detalle|length }}</strong></div>
+      <div class="resumen-fila"><span>Solicitado</span><strong class="mono">$ {{ r.importe_solicitado|miles }}</strong></div>
+      <div class="resumen-fila"><span>Ajuste</span><strong class="mono" id="res-ajuste">$ 0,00</strong></div>
+      <div class="resumen-fila resumen-total"><span>Autorizado</span><strong id="res-total">$ 0,00</strong></div>
+      <div class="resumen-botones">
+        {{ ui.boton('Cerrar auditoría y autorizar', 'ok', submit=True, icono_='ok', onclick='return cerrarAuditoria();') }}
+        {{ ui.boton('Rechazar solicitud', 'danger', onclick="abrirModal('modal-rechazo')") }}
+      </div>
+      <p class="chico muted" style="margin-top:12px;line-height:1.45;">
+        Al cerrar la auditoría el importe queda autorizado y la solicitud pasa a <strong>Aprobada</strong>,
+        lista para la orden de pago. Un renglón en $ 0 queda rechazado; la solicitud sigue si hay otros con importe.
+      </p>
+      {% else %}
+      <div class="resumen-fila"><span>Estado</span>{{ ui.estado(estados_label.get(r.estado, r.estado), estados_tipo.get(r.estado, 'neutro')) }}</div>
+      <div class="resumen-fila"><span>Solicitado</span><strong class="mono">$ {{ r.importe_solicitado|miles }}</strong></div>
+      {% if r.importe_aprobado is not none %}
+      <div class="resumen-fila"><span>Aprobado</span><strong class="mono">$ {{ r.importe_aprobado|miles }}</strong></div>
+      {% endif %}
+      {% if r.ordenes %}
+      <div class="resumen-fila"><span>En órdenes de pago</span><strong class="mono">$ {{ r.en_ordenes|miles }}</strong></div>
+      {% endif %}
+      {% if r.estado in ('aprobada', 'pago_parcial') %}
+      <div class="resumen-fila resumen-total"><span>Saldo a pagar</span><strong>$ {{ r.saldo|miles }}</strong></div>
+      {% endif %}
+      <div class="resumen-botones">
+        {% if r.estado == 'en_auditoria' and puede_auditar %}
+        {{ ui.boton('Auditar', 'ok', href=url_for('reintegros.auditoria_ficha', id_reintegro=r.id), icono_='ok') }}
+        {% endif %}
+        {% if puede_editar %}
+        {{ ui.boton('Editar' if r.estado == 'borrador' else 'Corregir (vuelve a auditoría)', 'secondary',
+                    href=url_for('reintegros.solicitud', edit=r.id), icono_='editar') }}
+        {% endif %}
+        {{ ui.boton('Imprimir constancia', 'pdf', href=url_for('reintegros.constancia', id_reintegro=r.id),
+                    icono_='imprimir', blank=True) }}
+        {% if puede_anular %}
+        {{ ui.boton('Anular solicitud', 'danger', onclick="abrirModal('modal-anular')") }}
+        {% endif %}
+      </div>
+      {% if r.importado_csv %}
+      <p class="chico muted" style="margin-top:12px;">Importada del historial de AEDA: se pagó desde AEDA.</p>
+      {% endif %}
+      {% endif %}
+    </div>
+  </aside>
+</div>
+
+{% if auditar %}
+<div class="modal" id="modal-rechazo">
+  <div class="modal-caja">
+    <div class="modal-titulo">Rechazar la solicitud {{ r.nro_solicitud }}</div>
+    <div class="modal-texto">El rechazo es total y cierra el trámite. El motivo queda en la solicitud y sale en la constancia.</div>
+    <div class="campos">
+      <div class="campo" style="--span:12;">
+        <label for="motivo">Motivo del rechazo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="motivo" maxlength="250">
+      </div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-rechazo')") }}
+      {{ ui.boton('Confirmar rechazo', 'danger', submit=True, onclick='return rechazar();') }}
+    </div>
+  </div>
+</div>
+</form>
+{% endif %}
+
+{% if puede_anular and not auditar %}
+<div class="modal" id="modal-anular">
+  <form method="post" class="modal-caja" action="{{ url_for('reintegros.anular_solicitud', id_reintegro=r.id) }}">
+    <div class="modal-titulo">Anular la solicitud {{ r.nro_solicitud }}</div>
+    <div class="modal-texto">Queda anulada y no se paga. Para volver a pedirla hay que cargar una nueva.</div>
+    <div class="campos">
+      <div class="campo" style="--span:12;">
+        <label for="motivo-anulacion">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="motivo-anulacion" maxlength="250" required>
+      </div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+      {{ ui.boton('Anular', 'danger', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{% if auditar %}
+<script>
+function recalcular() {
+  var total = 0, solicitado = 0;
+  document.querySelectorAll('.renglon').forEach(function (reng) {
+    var v = parseFloat(reng.querySelector('.imp-real').value); if (isNaN(v)) v = 0;
+    var s = parseFloat(reng.dataset.solic) || 0;
+    total += v; solicitado += s;
+    reng.classList.toggle('rechazado', v <= 0);
+    reng.querySelector('.imp-vista').classList.toggle('excedido', v > s + 0.001);
+  });
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('res-ajuste').textContent = pesos(total - solicitado);
+  return total;
+}
+function poner(id, todo) {
+  var reng = document.querySelector('.renglon[data-id="' + id + '"]');
+  var v = todo ? parseFloat(reng.dataset.solic) || 0 : 0;
+  reng.querySelector('.imp-real').value = v.toFixed(2);
+  reng.querySelector('.imp-vista').value = numeroAR(v);
+  recalcular();
+}
+function todos(todo) {
+  document.querySelectorAll('.renglon').forEach(function (r) { poner(r.dataset.id, todo); });
+}
+function cerrarAuditoria() {
+  if (document.querySelector('.imp-vista.excedido')) {
+    alert('Hay renglones con más de lo solicitado. Corregilos antes de cerrar.'); return false;
+  }
+  var total = recalcular();
+  if (total <= 0) { alert('El total reconocido es $ 0. Si no corresponde reintegro, usá «Rechazar solicitud».'); return false; }
+  document.getElementById('accion').value = 'aprobar';
+  return confirm('¿Autorizar ' + pesos(total) + '? La solicitud queda aprobada y lista para la orden de pago.');
+}
+function rechazar() {
+  var m = document.getElementById('motivo');
+  if (!m.value.trim()) { alert('Indicá el motivo del rechazo.'); m.focus(); return false; }
+  document.getElementById('accion').value = 'rechazar';
+  return confirm('¿Rechazar la solicitud entera? Cierra el trámite.');
+}
+// Enter en un importe o un comentario no cierra la auditoría: el envío
+// implícito apretaría «Cerrar auditoría y autorizar», el primer botón.
+document.getElementById('form-auditoria').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault();
+});
+document.addEventListener('DOMContentLoaded', recalcular);
+</script>
+{% endif %}
+{% endblock %}

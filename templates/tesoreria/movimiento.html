@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}MOV-{{ mov.id }}{% endblock %}
+
+{#
+  Ficha de un movimiento entre cuentas (tes_mov.movimiento): quién entrega,
+  quién recibe, los cheques con que salió (extracción) y los valores que se
+  depositaron (depósito). Anular es de la pantalla Anulaciones.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>MOV-{{ mov.id }} · {{ tipo_txt }}</h1>
+    <p>{{ mov.comentario or 'Movimiento entre cuentas propias.' }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_subdiario %}{{ ui.boton('Subdiario', 'secondary', href=url_for('tes_mov.subdiario'), icono_='volver') }}{% endif %}
+    {{ ui.boton('Imprimir', 'secondary', onclick='window.print()', icono_='imprimir') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if mov.fecha_anulacion %}
+  {{ ui.aviso('Anulado el ' ~ mov.fecha_anulacion.strftime('%d/%m/%Y') ~ ' por ' ~ (mov.usuario_anulacion or '—') ~ ': ' ~ (mov.motivo_anulacion or ''), 'danger') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Datos') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Fecha', mov.fecha_emision.strftime('%d/%m/%Y')) }}
+      {{ dato('Tipo', tipo_txt) }}
+      {{ dato('Importe', '$ ' ~ ((mov.importe or 0) | miles), mono=True) }}
+      {{ dato('Registró', (mov.usuario_emision or '—') ~ ' · ' ~ mov.creado.strftime('%d/%m/%Y %H:%M')) }}
+      {{ dato('Estado', 'Anulado' if mov.fecha_anulacion else 'Vigente') }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cuentas') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-lineas" data-exportar="MOV-{{ mov.id }}">
+      <thead><tr><th>Cuenta</th><th>Tipo</th><th></th><th class="th-right">Debe</th><th class="th-right">Haber</th></tr></thead>
+      <tbody>
+        {% for l in lineas %}
+        <tr><td class="td-fuerte">{{ l.cuenta }}</td><td class="td-muted">{{ l.tipo_txt }}</td>
+          <td>{{ ui.estado('Entrega', 'neutro') if l.haber else ui.estado('Recibe', 'info') }}</td>
+          <td class="td-right" data-num="{{ l.debe }}">{{ (l.debe or 0) | miles if l.debe else '' }}</td>
+          <td class="td-right" data-num="{{ l.haber }}">{{ (l.haber or 0) | miles if l.haber else '' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if cheques %}
+<div class="card">
+  {{ ui.card_head('Cheques emitidos') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Cheques de MOV-{{ mov.id }}">
+      <thead><tr><th>Número</th><th>Chequera</th><th>A la orden de</th><th class="th-right">Importe</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for c in cheques %}
+        <tr><td class="td-mono">{{ c.cheque_numero }}</td><td>{{ c.chequera or '—' }}</td><td>{{ c.a_la_orden or '—' }}</td>
+          <td class="td-right" data-num="{{ c.importe_debito }}">{{ (c.importe_debito or 0) | miles }}</td>
+          <td>{{ ui.estado(c.estado | capitalize, 'danger' if c.estado == 'anulado' else 'neutro') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if valores %}
+<div class="card">
+  {{ ui.card_head('Valores depositados') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Valores de MOV-{{ mov.id }}">
+      <thead><tr><th>Tipo</th><th>Número</th><th>Banco</th><th>Librador</th><th>Vence</th><th class="th-right">Importe</th><th>Estado hoy</th></tr></thead>
+      <tbody>
+        {% for v in valores %}
+        <tr><td>{{ v.tipo_valor | capitalize }}</td><td class="td-mono">{{ v.nro_cheque }}</td><td class="td-muted">{{ v.banco or '—' }}</td>
+          <td class="td-wrap">{{ v.razon_social_librador or '—' }}</td>
+          <td>{{ v.fecha_vencimiento.strftime('%d/%m/%Y') if v.fecha_vencimiento else '—' }}</td>
+          <td class="td-right" data-num="{{ v.importe }}">{{ (v.importe or 0) | miles }}</td>
+          <td>{{ ui.estado(v.estado | replace('_', ' ') | capitalize, 'neutro') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if not mov.fecha_anulacion and puede_anular %}
+<div class="card resumen {{ 'warn' if impedimentos }}">
+  {{ ui.card_head('Anular') }}
+  <div class="card-body">
+    {% if impedimentos %}
+      <p>No se puede anular porque {{ impedimentos | join('; ') }}.</p>
+    {% else %}
+      <p class="td-muted">Se anula desde Anulaciones, con el motivo. Si fue un depósito, los cheques vuelven a la cartera.</p>
+      <div class="resumen-botones">{{ ui.boton('Ir a Anulaciones', 'secondary', href=url_for('tes_mov.anulaciones_lista', tipo='movimiento', desde=mov.fecha_emision.isoformat(), hasta=mov.fecha_emision.isoformat())) }}</div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

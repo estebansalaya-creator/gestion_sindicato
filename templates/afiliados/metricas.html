@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Métricas del padrón{% endblock %}
+
+{#
+  Métricas del padrón (padron_metricas.metricas). Los bloques van uno debajo
+  del otro. Los gráficos son HTML y CSS (sindicato.css, 15e: .reparto, .evol,
+  .piramide): sin librería que dependa de un CDN. Cada marca tiene su title
+  con los números, y cada gráfico tiene al lado su tabla.
+
+  Colores: altas --serie-1 / bajas --serie-baja; varones --serie-1 /
+  mujeres --serie-2. Validados para daltonismo y contraste sobre blanco.
+#}
+
+{# Números como acá: miles con punto, decimales con coma. #}
+{% macro entero(v) %}{{ '{:,}'.format((v or 0) | int) | replace(',', '.') }}{% endmacro %}
+{% macro decimal(v, d=1) %}{{ ('%.' ~ d ~ 'f') | format(v or 0) | replace('.', ',') }}{% endmacro %}
+{% macro pct(n, total) %}{{ decimal((n or 0) * 100 / total) if total else '0,0' }}%{% endmacro %}
+
+{# Un reparto: rótulo, barra (contra el mayor del bloque), cantidad y % del total. #}
+{% macro reparto(filas, total, vacio='Sin datos.') -%}
+{%- set mx = (filas | map(attribute='n') | max) if filas else 0 -%}
+<div class="reparto">
+  {% for r in filas %}
+  <div class="reparto-item" title="{{ r.etiqueta }}: {{ entero(r.n) }} ({{ pct(r.n, total) }})">
+    <span class="reparto-rot {{ 'td-muted' if r.etiqueta.startswith('Sin ') }}">{{ r.etiqueta }}</span>
+    <span class="reparto-barra"><span style="width:{{ (r.n * 100 / mx) | round(1) if mx else 0 }}%"></span></span>
+    <span class="reparto-num">{{ entero(r.n) }}</span>
+    <span class="reparto-pct">{{ pct(r.n, total) }}</span>
+  </div>
+  {% else %}
+  <div class="td-muted">{{ vacio }}</div>
+  {% endfor %}
+</div>
+{%- endmacro %}
+
+{% set k = m.kpi %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Métricas del padrón</h1>
+    <p>Quiénes son los afiliados, dónde trabajan, cómo entran y salen, y qué hay que corregir en el padrón.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Consulta del padrón', 'secondary', href=url_for('afiliados.padron'), icono_='grupo') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{# ── Indicadores: el padrón de hoy, sin filtros ── #}
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('usuario', 20) }}</div>
+    <div><div class="kpi-lbl">Afiliados activos</div><div class="kpi-val">{{ entero(k.titulares) }}</div>
+      <div class="kpi-sub">titulares</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Familiares a cargo</div><div class="kpi-val">{{ entero(k.familiares) }}</div>
+      <div class="kpi-sub">{{ entero(k.personas) }} personas en el padrón</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Grupo familiar</div>
+      <div class="kpi-val">{{ decimal(k.personas / k.titulares if k.titulares else 0, 2) }}</div>
+      <div class="kpi-sub">personas por afiliado</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+    <div><div class="kpi-lbl">Edad promedio</div><div class="kpi-val">{{ decimal(k.edad_titulares) }}</div>
+      <div class="kpi-sub">años, de los afiliados</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('empresa', 20) }}</div>
+    <div><div class="kpi-lbl">Empleadores</div><div class="kpi-val">{{ entero(k.empleadores) }}</div>
+      <div class="kpi-sub">con afiliados activos</div></div></div>
+  {% set neto = m.altas - m.bajas %}
+  <div class="kpi-card"><div class="kpi-ico {{ 'ok' if neto > 0 else 'danger' if neto < 0 }}">{{ ui.icono('historial', 20) }}</div>
+    <div><div class="kpi-lbl">Altas − bajas del período</div>
+      <div class="kpi-val">{{ '+' if neto > 0 }}{{ entero(neto) | replace('-', '−') }}</div>
+      <div class="kpi-sub">{{ entero(m.altas) }} altas, {{ entero(m.bajas) }} bajas</div></div></div>
+</div>
+
+{# ── Filtros: un GET. Los selects se aplican solos; las fechas esperan a Filtrar. ── #}
+<div class="card" data-sin-solapas>
+  <form method="get" action="{{ url_for('padron_metricas.metricas') }}" class="filter-bar" id="frm-filtros">
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro" onchange="this.form.submit()">
+      <option value="activos" {{ 'selected' if estado == 'activos' }}>Activos</option>
+      <option value="todos" {{ 'selected' if estado == 'todos' }}>Padrón completo, con las bajas</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Personas') %}<select name="personas" class="filtro" onchange="this.form.submit()">
+      <option value="todas" {{ 'selected' if personas == 'todas' }}>Titulares y familiares</option>
+      <option value="titulares" {{ 'selected' if personas == 'titulares' }}>Solo titulares</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Altas y bajas desde') %}<input type="date" name="desde" class="filtro" value="{{ desde.isoformat() }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ hasta.isoformat() }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    {% set con_filtro = estado != 'activos' or personas != 'todas' or desde != defecto_desde or hasta != hoy %}
+    {% if con_filtro %}
+    <a href="{{ url_for('padron_metricas.metricas') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled>{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count">{{ entero(m.total_filtro) }} personas
+        {{- ' activas' if estado == 'activos' }}{{ ', solo titulares' if personas == 'titulares' }}</span>
+    </div>
+  </form>
+  <div class="card-body td-muted chico">
+    Los indicadores de arriba y los controles del final son el padrón de hoy y no cambian con los filtros.
+    Las altas y bajas se cuentan sobre el padrón completo: una baja del período ya no está activa.
+  </div>
+</div>
+
+{# ── Altas y bajas por mes ── #}
+{% set ev = m.evolucion %}
+{% set mx_ev = [(ev | map(attribute='altas') | max) if ev else 0, (ev | map(attribute='bajas') | max) if ev else 0, 1] | max %}
+<div class="card">
+  {% call ui.card_head('Altas y bajas por mes', nota=(desde.strftime('%d/%m/%Y') ~ ' al ' ~ hasta.strftime('%d/%m/%Y') ~ (' · solo titulares' if personas == 'titulares' else ''))) %}
+    <span class="leyenda"><span class="leyenda-item"><i class="muestra-serie alta"></i>Altas</span>
+      <span class="leyenda-item"><i class="muestra-serie baja"></i>Bajas</span></span>
+  {% endcall %}
+  <div class="card-body">
+    {% if m.altas or m.bajas %}
+    <div class="evol" role="img" aria-label="Altas y bajas por mes; el detalle está en la tabla de abajo">
+      <div class="evol-escala"><span>{{ entero(mx_ev) }}</span><span>0</span><span>{{ entero(mx_ev) }}</span></div>
+      {% for r in ev %}
+      <div class="evol-mes" title="{{ r.periodo | periodo }} · {{ entero(r.altas) }} altas · {{ entero(r.bajas) }} bajas · neto {{ '+' if r.neto > 0 }}{{ r.neto }}">
+        <div class="evol-arriba">{% if r.altas %}<span class="evol-barra alta" style="height:{{ (r.altas * 100 / mx_ev) | round(1) }}%"></span>{% endif %}</div>
+        <div class="evol-abajo">{% if r.bajas %}<span class="evol-barra baja" style="height:{{ (r.bajas * 100 / mx_ev) | round(1) }}%"></span>{% endif %}</div>
+        <div class="evol-rot">{{ r.periodo[4:] }}{% if loop.first or r.periodo[4:] == '01' %}<b>{{ r.periodo[:4] }}</b>{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="td-muted">No hay altas ni bajas en el período.</div>
+    {% endif %}
+  </div>
+  {% call ui.barra_filtros('Filtrar por período…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" id="tbl-evol" data-exportar="Altas y bajas por mes">
+      <thead><tr><th>Período</th><th class="th-right">Altas</th>
+        <th class="th-right">Bajas</th><th class="th-right">Neto</th></tr></thead>
+      <tbody>
+        {% for r in ev | reverse %}
+        <tr><td class="td-mono">{{ r.periodo | periodo }}</td>
+          <td class="td-right" data-num="{{ r.altas }}">{{ entero(r.altas) }}</td>
+          <td class="td-right" data-num="{{ r.bajas }}">{{ entero(r.bajas) }}</td>
+          <td class="td-right td-fuerte" data-num="{{ r.neto }}">{{ '+' if r.neto > 0 }}{{ entero(r.neto) | replace('-', '−') }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{# ── Edad y sexo ── #}
+{% set mx_ed = [(m.edades | map(attribute='varones') | max), (m.edades | map(attribute='mujeres') | max), 1] | max %}
+{% set tot_ed = (m.edades | sum(attribute='varones')) + (m.edades | sum(attribute='mujeres')) %}
+<div class="card">
+  {% call ui.card_head('Edad y sexo', nota=('Solo titulares' if personas == 'titulares' else 'Titulares y familiares') ~ (', con las bajas' if estado == 'todos' else '')) %}
+    <span class="leyenda"><span class="leyenda-item"><i class="muestra-serie varon"></i>Varones</span>
+      <span class="leyenda-item"><i class="muestra-serie mujer"></i>Mujeres</span></span>
+  {% endcall %}
+  <div class="card-body">
+    <div class="piramide" role="img" aria-label="Pirámide de edad por sexo">
+      <div class="piramide-fila piramide-cab"><span>Varones · {{ entero(m.edades | sum(attribute='varones')) }}</span><span></span>
+        <span>Mujeres · {{ entero(m.edades | sum(attribute='mujeres')) }}</span></div>
+      {% for r in m.edades %}
+      <div class="piramide-fila" title="{{ r.rango }} años · {{ entero(r.varones) }} varones · {{ entero(r.mujeres) }} mujeres">
+        <span class="piramide-lado izq"><span class="piramide-num">{{ entero(r.varones) }}</span>
+          <span class="piramide-barra varon" style="width:{{ (r.varones * 100 / mx_ed) | round(1) }}%"></span></span>
+        <span class="piramide-rango">{{ r.rango }}</span>
+        <span class="piramide-lado"><span class="piramide-barra mujer" style="width:{{ (r.mujeres * 100 / mx_ed) | round(1) }}%"></span>
+          <span class="piramide-num">{{ entero(r.mujeres) }}</span></span>
+      </div>
+      {% endfor %}
+    </div>
+    {% if m.edad_sin_dato or m.sexo_otro %}
+    <p class="td-muted chico">
+      {% if m.edad_sin_dato %}{{ entero(m.edad_sin_dato) }} sin fecha de nacimiento.{% endif %}
+      {% if m.sexo_otro %}{{ entero(m.sexo_otro) }} con sexo X o sin cargar: no entran en la pirámide.{% endif %}
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Antigüedad ── #}
+{% set tot_ant = m.antiguedad | sum(attribute='n') %}
+<div class="card">
+  {{ ui.card_head('Antigüedad en el gremio', nota='Afiliados titulares, desde su fecha de alta') }}
+  <div class="card-body">{{ reparto(m.antiguedad, tot_ant) }}</div>
+</div>
+
+{# ── Afiliados por empleador ── #}
+<div class="card">
+  {{ ui.card_head('Afiliados por empleador',
+                  nota='Afiliados activos con relación laboral vigente, sin los filtros. Uno con dos empleos cuenta en los dos.') }}
+  {% if m.sin_empleador %}
+  <div class="card-body">
+    {{ ui.aviso(entero(m.sin_empleador) ~ ' titulares sin empleador vigente (' ~ pct(m.sin_empleador, m.titulares_filtro) ~ '): no están en esta lista. Ver el control «Titulares sin empleador vigente» más abajo.', 'warning') }}
+  </div>
+  {% endif %}
+  {% call ui.barra_filtros('Filtrar por razón social o CUIT…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-empleadores" data-exportar="Afiliados por empleador">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Empleador</th><th>CUIT</th>
+        <th class="th-right" data-orden="desc">Afiliados</th>
+        <th class="th-right">% de los afiliados</th>
+        <th class="th-right">Altas del período</th>
+      </tr></thead>
+      <tbody>
+        {% for e in m.empleadores %}
+        <tr>
+          <td><div class="acciones">
+            {% if e.id_emp and puede_empleadores %}{{ ui.accion('ver', href=url_for('empleadores.abm_empleadores', edit=e.id_emp), titulo='Ver el empleador y su nómina') }}{% endif %}
+          </div></td>
+          <td class="td-fuerte">{{ e.nombre }}{% if not e.id_emp %} {{ ui.estado('no está en Empleadores', 'warn') }}{% endif %}</td>
+          <td class="td-mono">{{ e.cuit }}</td>
+          <td class="td-right td-fuerte" data-num="{{ e.n }}">{{ entero(e.n) }}</td>
+          <td class="td-right td-muted" data-num="{{ (e.n * 100 / m.titulares_filtro) | round(1) if m.titulares_filtro else 0 }}">{{ pct(e.n, m.titulares_filtro) }}</td>
+          <td class="td-right {{ 'td-muted' if not e.altas }}" data-num="{{ e.altas }}">{{ entero(e.altas) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">Ningún afiliado tiene una relación laboral vigente.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{# ── Repartos ── #}
+{% set tot_par = m.parentesco | sum(attribute='n') %}
+<div class="card">
+  {{ ui.card_head('Composición del grupo familiar', nota='Titulares y familiares' ~ (', con las bajas' if estado == 'todos' else '')) }}
+  <div class="card-body">{{ reparto(m.parentesco, tot_par) }}</div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Provincia') }}
+  <div class="card-body">{{ reparto(m.provincias, m.total_filtro) }}</div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Localidad', nota='Las 15 con más personas') }}
+  <div class="card-body">{{ reparto(m.localidades, m.total_filtro) }}</div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Motivos de baja del período', nota=desde.strftime('%d/%m/%Y') ~ ' al ' ~ hasta.strftime('%d/%m/%Y')) }}
+  <div class="card-body">{{ reparto(m.motivos, m.bajas, vacio='No hubo bajas en el período.') }}</div>
+</div>
+
+{# ── Controles del padrón ── #}
+<div class="card" id="controles">
+  {{ ui.card_head('Controles del padrón', nota='Sobre el padrón de hoy: qué corregir y a quiénes') }}
+  {% call ui.barra_filtros('Filtrar por control…', tam_pagina=9999) %}
+    <label class="filtro-check"><input type="checkbox" class="filtro" id="f-con-casos" checked> Solo los que tienen casos</label>
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-controles" data-exportar="Controles del padrón">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Control</th><th>Qué hacer</th>
+        <th class="th-right">Casos</th><th class="th-right">%</th><th>Sobre</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for c in m.controles %}
+        <tr data-casos="{{ c.n }}" class="{{ 'fila-actual' if c.clave == control }}">
+          <td><div class="acciones">
+            {% if c.n %}{{ ui.accion('ver', href=url_for('padron_metricas.metricas', estado=estado, personas=personas, desde=desde.isoformat(), hasta=hasta.isoformat(), control=c.clave, _anchor='detalle'), titulo='Ver a quiénes') }}{% endif %}
+          </div></td>
+          <td class="td-fuerte">{{ c.que }}</td>
+          <td class="td-wrap td-muted">{{ c.hacer }}</td>
+          <td class="td-right td-fuerte" data-num="{{ c.n }}">{{ entero(c.n) }}</td>
+          <td class="td-right td-muted" data-num="{{ c.pct }}">{{ decimal(c.pct) }}%</td>
+          <td class="td-muted">{{ entero(c.sobre) }} {{ 'activos' if c.universo == 'activos' else 'bajas' }}</td>
+          <td data-valor="{{ 'Bien' if not c.n else 'Revisar' }}">
+            {% if not c.n %}{{ ui.estado('Bien', 'ok') }}
+            {% elif c.pct >= 5 %}{{ ui.estado('Revisar', 'danger') }}
+            {% else %}{{ ui.estado('Revisar', 'warn') }}{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% if control %}
+{% set c = m.controles | selectattr('clave', 'equalto', control) | first %}
+<div class="card" id="detalle">
+  {% call ui.card_head(c.que ~ ' · ' ~ entero(detalle | length), nota=c.hacer) %}
+    {{ ui.boton('Cerrar', 'secondary', chico=True, icono_='cerrar',
+                href=url_for('padron_metricas.metricas', estado=estado, personas=personas, desde=desde.isoformat(), hasta=hasta.isoformat(), _anchor='controles')) }}
+  {% endcall %}
+  {% call ui.barra_filtros('Filtrar por CUIL o apellido…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-detalle" data-exportar="{{ c.que }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>CUIL</th><th>Apellido y nombres</th><th>Parentesco</th><th>Titular</th>
+        <th>Nacimiento</th><th class="th-right">Edad</th><th>Sexo</th><th>Alta</th>
+        {% if control == 'certificado' %}<th>Certificado</th>{% endif %}
+        {% if c.universo == 'bajas' %}<th>Baja</th>{% endif %}
+        <th>Localidad</th>
+      </tr></thead>
+      <tbody>
+        {% for a in detalle %}
+        <tr class="{{ 'fila-baja' if not a.activo }}">
+          <td><div class="acciones">
+            {% if puede_abm %}{{ ui.accion('editar', href=url_for('afiliados.abm_afiliados', edit=a.id_afiliado), titulo='Corregir en el ABM', blank=True) }}
+            {% else %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=a.id_afiliado), blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ a.cuil or '—' }}</td>
+          <td class="td-fuerte">{{ a.apellido_nombres }}</td>
+          <td>{{ a.parentesco }}</td>
+          <td class="td-wrap">{% if a.cod_parentesco %}{{ a.titular or a.cuil_titular or '—' }}{% if a.titular and not a.titular_activo %} {{ ui.estado('de baja', 'danger') }}{% elif not a.titular %} {{ ui.estado('no está en el padrón', 'warn') }}{% endif %}{% else %}<span class="td-muted">—</span>{% endif %}</td>
+          <td>{{ a.fecha_nacimiento.strftime('%d/%m/%Y') if a.fecha_nacimiento else '—' }}</td>
+          <td class="td-right" data-num="{{ a.edad if a.edad is not none else '' }}">{{ a.edad if a.edad is not none else '—' }}</td>
+          <td>{{ a.sexo or '—' }}</td>
+          <td>{{ a.fecha_alta.strftime('%d/%m/%Y') if a.fecha_alta else '—' }}</td>
+          {% if control == 'certificado' %}<td>{{ a.fecha_certificado_estudios.strftime('%d/%m/%Y') if a.fecha_certificado_estudios else '—' }}</td>{% endif %}
+          {% if c.universo == 'bajas' %}<td>{{ a.fecha_baja.strftime('%d/%m/%Y') if a.fecha_baja else '—' }}</td>{% endif %}
+          <td class="td-muted">{{ a.localidad or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  // Las fechas del período esperan a Filtrar o a Enter (los selects ya mandan solos).
+  gestion_admTable('tbl-evol', { pageSize: 50 });
+  gestion_admTable('tbl-empleadores', { pageSize: 20 });
+  var fc = document.getElementById('f-con-casos');
+  gestion_admTable('tbl-controles', {
+    pageSize: 9999,
+    filtroExtra: function (tr) { return !fc.checked || tr.dataset.casos !== '0'; }
+  });
+  if (document.getElementById('tbl-detalle')) gestion_admTable('tbl-detalle', { pageSize: 50 });
+});
+</script>
+{% endblock %}

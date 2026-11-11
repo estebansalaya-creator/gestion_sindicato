@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Auditoría de reintegros{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Auditoría de reintegros</h1>
+    <p>Solicitudes enviadas a auditoría, a la espera del importe que se reconoce en cada renglón.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por N°, titular, CUIL o afiliado de un renglón…') %}
+    {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+      <option value="">Subsidios y reintegros</option>
+      {% for k, t in clases.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-auditoria" data-exportar="Reintegros en auditoria">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>N° solicitud</th>
+          <th>Fecha</th>
+          <th>Titular</th>
+          <th>CUIL</th>
+          <th>Clase</th>
+          <th>Concepto</th>
+          <th class="th-right">Renglones</th>
+          <th class="th-right">Adjuntos</th>
+          <th class="th-right">Solicitado</th>
+          <th>Cargó</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in reintegros %}
+XX, href=url_for('reintegros.auditoria_ficha', id_reintegro=r.id)) }}
+            {{ ui.accion('pdf', href=url_for('reintegros.constancia', id_reintegro=r.id),
+                         titulo='Constancia para imprimir', blank=True) }}
+          </div></td>
+          <td class="td-mono">{{ r.nro_solicitud }}</td>
+          <td>{{ r.fecha_solicitud.strftime('%d/%m/%Y') if r.fecha_solicitud else '—' }}</td>
+          <td class="td-fuerte" data-valor="{{ r.titular }}">{{ r.titular }}<span class="oculto"> {{ r.busqueda }}</span></td>
+          <td class="td-mono">{{ r.cuil_titular or '—' }}</td>
+          <td>{{ r.clase_txt }}</td>
+          <td class="td-muted td-recorte" title="{{ r.conceptos_txt }}">{{ r.conceptos_txt or '—' }}</td>
+          <td class="td-right">{{ r.renglones }}</td>
+          <td class="td-right {{ 'td-danger' if not r.adjuntos }}">{{ r.adjuntos }}</td>
+          <td class="td-right" data-num="{{ r.importe_solicitado }}">{{ r.importe_solicitado|miles }}</td>
+          <td class="td-muted">{{ r.usuario_solicitud or '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="11" class="no-data">No hay solicitudes esperando auditoría.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fClase = document.getElementById('f-clase');
+  gestion_admTable('tbl-auditoria', { pageSize: 20, filtroExtra: function (tr) {
+    return !fClase.value || tr.dataset.clase === fClase.value; } });
+});
+</script>
+{% endblock %}

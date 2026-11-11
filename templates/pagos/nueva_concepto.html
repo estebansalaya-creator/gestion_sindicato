@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden de pago por concepto{% endblock %}
+
+{#
+  Orden por concepto (pagos.concepto_nueva): un pago sin comprobante de
+  proveedor —gastos bancarios, impuestos, una devolución—. Cada renglón es un
+  concepto de gasto o un motivo de ingreso (para devolver algo cobrado), con
+  su descripción, período e importe. Uno o varios por orden.
+#}
+
+{% macro renglon(n, l, conceptos, motivos) -%}
+<div class="renglon">
+  <span class="renglon-num">{{ n }}</span>
+  <span class="renglon-quitar">{{ ui.accion('borrar', onclick='quitarRenglon(this)', titulo='Quitar renglón') }}</span>
+  <div class="campos">
+    <div class="campo" style="--span:3;">
+      <label>Tipo</label>
+      <select name="tipo" class="r-tipo" onchange="verTipo(this)">
+        <option value="gasto" {{ 'selected' if l.get('tipo', 'gasto') == 'gasto' }}>Gasto</option>
+        <option value="ingreso" {{ 'selected' if l.get('tipo') == 'ingreso' }}>Devolución de un ingreso</option>
+      </select>
+    </div>
+    <div class="campo" style="--span:5;">
+      <label>Concepto / motivo <span class="req">*</span></label>
+      <select name="id_concepto" class="r-concepto" data-valor="{{ l.get('id') or '' }}"></select>
+    </div>
+    <div class="campo" style="--span:2;">
+      <label>Período</label>
+      <input type="month" name="periodo" value="{{ (l.periodo[:4] ~ '-' ~ l.periodo[4:]) if l.get('periodo') else periodo_actual }}">
+    </div>
+    <div class="campo" style="--span:2;">
+      <label>Importe <span class="req">*</span></label>
+      <input type="text" name="importe" class="inp-importe importe r-importe" inputmode="decimal" value="{{ l.get('importe_txt') or '' }}" oninput="total()">
+    </div>
+    <div class="campo" style="--span:12;">
+      <label>Descripción <span class="req">*</span></label>
+      <input type="text" name="descripcion" maxlength="200" value="{{ l.get('descripcion') or '' }}">
+    </div>
+  </div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de pago por concepto</h1>
+    <p>Un pago sin comprobante de proveedor: gastos bancarios, impuestos, una devolución.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Emisión de pagos', 'secondary', href=url_for('pagos.emision'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<form method="post" id="form-concepto">
+<div class="con-resumen">
+  <div class="card">
+    {% call ui.card_head('Conceptos') %}
+      {{ ui.boton('Agregar renglón', 'secondary', chico=True, icono_='agregar', onclick='agregarRenglon()') }}
+    {% endcall %}
+    <div class="card-body" id="renglones">
+      {% for l in (lineas or [{}]) %}{{ renglon(loop.index, l, conceptos, motivos) }}{% endfor %}
+    </div>
+  </div>
+  <aside class="card resumen">
+    {{ ui.card_head('La orden') }}
+    <div class="card-body">
+      <div class="resumen-fila"><span>Renglones</span><strong id="r-n">0</strong></div>
+      <div class="resumen-fila resumen-total"><span>Total</span><strong id="r-total">0,00</strong></div>
+      <div class="campo separado">
+        <label for="observaciones">Observaciones</label>
+        <textarea name="observaciones" id="observaciones" rows="3">{{ observaciones or '' }}</textarea>
+      </div>
+      <div class="resumen-botones">{{ ui.boton('Crear la orden', submit=True, icono_='guardar') }}</div>
+      <small class="campo-ayuda">Queda en borrador: después se manda a aprobación y se paga desde la ficha.</small>
+    </div>
+  </aside>
+</div>
+</form>
+
+<template id="tpl-renglon">{{ renglon('#', {}, conceptos, motivos) }}</template>
+
+<script>
+var CONCEPTOS = {{ conceptos|tojson }}, MOTIVOS = {{ motivos|tojson }};
+function opciones(sel, lista, valor, vacio) {
+  sel.innerHTML = '<option value="">' + vacio + '</option>';
+  lista.forEach(function (c) {
+    var o = document.createElement('option'); o.value = c.id; o.textContent = c.descripcion;
+    if (String(c.id) === String(valor)) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+function verTipo(sel) {
+  var r = sel.closest('.renglon'), c = r.querySelector('.r-concepto'), ing = sel.value === 'ingreso';
+  opciones(c, ing ? MOTIVOS : CONCEPTOS, c.dataset.valor, ing ? '— Elegí el motivo de ingreso —' : '— Elegí el concepto de gasto —');
+  c.dataset.valor = '';
+}
+function numerar() {
+  document.querySelectorAll('#renglones .renglon').forEach(function (r, i) { r.querySelector('.renglon-num').textContent = i + 1; });
+  total();
+}
+function agregarRenglon() {
+  var nuevo = document.getElementById('tpl-renglon').content.firstElementChild.cloneNode(true);
+  document.getElementById('renglones').appendChild(nuevo);
+  var imp = nuevo.querySelector('.r-importe');
+  imp.addEventListener('input', function () { fmtMiles(this); total(); });
+  imp.addEventListener('blur', function () { fmtMilesBlur(this); });
+  verTipo(nuevo.querySelector('.r-tipo'));
+  numerar();
+}
+function quitarRenglon(b) {
+  var todos = document.querySelectorAll('#renglones .renglon');
+  if (todos.length > 1) b.closest('.renglon').remove();
+  numerar();
+}
+function aNumero(t) { var s = (t || '').trim(); if (!s) return 0; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); return parseFloat(s) || 0; }
+function total() {
+  var t = 0, n = 0;
+  document.querySelectorAll('#renglones .r-importe').forEach(function (i) { var v = aNumero(i.value); if (v > 0) { t += v; n++; } });
+  document.getElementById('r-n').textContent = n;
+  document.getElementById('r-total').textContent = t.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('#renglones .r-tipo').forEach(verTipo);
+  numerar();
+});
+</script>
+{% endblock %}

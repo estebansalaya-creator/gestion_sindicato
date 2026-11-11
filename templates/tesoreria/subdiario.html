@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Subdiario de cuentas de fondos{% endblock %}
+
+{#
+  Subdiario (tes_mov.subdiario): el libro único de tesorería, c_movimientos_de_fondos.
+  Lo escriben los pagos, las órdenes de ingreso y los movimientos entre cuentas.
+  Fecha y cuenta van al servidor (GET); la grilla filtra, ordena y exporta lo que
+  trajo. El saldo corre solo con una cuenta elegida y sin filtros de origen ni
+  de importe: con ellos la columna no sería el saldo de nada.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Subdiario de cuentas de fondos</h1>
+    <p>Todo lo que entró y salió de cada cuenta: pagos, órdenes de ingreso y movimientos entre cuentas.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% for o, titulo in nuevas %}
+      {{ ui.boton(titulo, 'secondary', href=url_for('tes_mov.movimiento_nuevo', operacion=o), icono_='agregar') }}
+    {% endfor %}
+    {% if puede_ingreso %}{{ ui.boton('Orden de ingreso', href=url_for('tes_mov.orden_ingreso'), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' movimientos con estos filtros: se muestran los primeros. Acotá las fechas o elegí una cuenta.', 'warning') }}{% endif %}
+
+<div class="card" data-sin-solapas>
+  <form method="get" action="{{ url_for('tes_mov.subdiario') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta') %}<select name="cuenta" class="filtro" onchange="this.form.submit()">
+      <option value="">Todas las cuentas</option>
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if f.cuenta == c.id }}>{{ c.texto }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Origen') %}<select name="origen" class="filtro" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, t in origenes.items() %}<option value="{{ k }}" {{ 'selected' if f.origen == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ f.desde.isoformat() if f.desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ f.hasta.isoformat() if f.hasta else '' }}">{% endcall %}
+    {% call ui.filtro('Importe desde') %}<input type="text" name="imp_desde" class="filtro inp-importe" inputmode="decimal" value="{{ f.imp_desde_txt }}">{% endcall %}
+    {% call ui.filtro('Importe hasta') %}<input type="text" name="imp_hasta" class="filtro inp-importe" inputmode="decimal" value="{{ f.imp_hasta_txt }}">{% endcall %}
+    <label class="filtro-check"><input type="checkbox" name="anulados" value="1" class="filtro" {{ 'checked' if f.anulados }} onchange="this.form.submit()"> Con los anulados</label>
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('tes_mov.subdiario') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar en el concepto, el número o a quién…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-subdiario" data-exportar="Subdiario de cuentas de fondos">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="asc">Fecha</th>
+        {% if not f.cuenta %}<th>Cuenta</th>{% endif %}
+        <th>Origen</th><th>Número</th><th>Concepto</th><th>A quién</th>
+        <th class="th-right">Debe</th><th class="th-right">Haber</th>
+        {% if con_saldo %}<th class="th-right">Saldo</th>{% endif %}
+        <th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for m in filas %}
+        <tr class="{{ 'fila-baja' if m.fecha_anulacion }}">
+          <td><div class="acciones">
+            {% if m.id_movimiento %}{{ ui.accion('ver', href=url_for('tes_mov.movimiento', id_movimiento=m.id_movimiento)) }}
+            {% elif m.id_ingreso %}{{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=m.id_ingreso)) }}
+            {% elif m.id_orden and puede_ordenes %}{{ ui.accion('ver', href=url_for('pagos.orden', id_orden=m.id_orden), titulo='Ver la orden de pago') }}{% endif %}
+          </div></td>
+          <td>{{ m.fecha.strftime('%d/%m/%Y') }}</td>
+          {% if not f.cuenta %}<td>{{ m.cuenta }}</td>{% endif %}
+          <td>{{ m.origen_txt }}</td>
+          <td class="td-mono">{{ m.numero or '—' }}</td>
+          <td class="td-wrap">{{ m.concepto or '' }}</td>
+          <td class="td-wrap td-muted">{{ m.beneficiario or '' }}</td>
+          <td class="td-right" data-num="{{ m.importe_debe or 0 }}">{{ (m.importe_debe or 0) | miles if m.importe_debe else '' }}</td>
+          <td class="td-right" data-num="{{ m.importe_haber or 0 }}">{{ (m.importe_haber or 0) | miles if m.importe_haber else '' }}</td>
+          {% if con_saldo %}<td class="td-right td-fuerte" data-num="{{ m.saldo }}">{{ (m.saldo or 0) | miles }}</td>{% endif %}
+          <td>{% if m.fecha_anulacion %}<span title="{{ m.motivo_anulacion or '' }}">{{ ui.estado('Anulado', 'danger') }}</span>{% else %}{{ ui.estado('Vigente', 'ok') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="11" class="no-data">No hay movimientos con estos filtros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card resumen">
+  {{ ui.card_head('Resumen', nota='Sin los anulados' ~ ('' if con_saldo else ' · el saldo se calcula con una cuenta elegida y sin filtros de origen ni de importe')) }}
+  <div class="card-body">
+    {% if con_saldo %}<div class="resumen-fila"><span>Saldo anterior</span><strong class="mono">$ {{ (saldo_anterior or 0) | miles }}</strong></div>{% endif %}
+    <div class="resumen-fila"><span>Debe (entró)</span><strong class="mono">$ {{ (debe or 0) | miles }}</strong></div>
+    <div class="resumen-fila"><span>Haber (salió)</span><strong class="mono">$ {{ (haber or 0) | miles }}</strong></div>
+    <div class="resumen-fila"><span>Neto</span><strong class="mono">$ {{ (debe - haber) | miles }}</strong></div>
+    {% if con_saldo %}<div class="resumen-fila resumen-total"><span>Saldo final</span><strong class="mono">$ {{ (saldo_final or 0) | miles }}</strong></div>{% endif %}
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-subdiario', { pageSize: 50 });
+});
+</script>
+{% endblock %}

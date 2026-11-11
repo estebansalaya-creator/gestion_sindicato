@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuenta Corriente — Proveedores{% endblock %}
+
+{#
+  Bandeja de la cuenta corriente (cc_prov.bandeja), con las columnas, los
+  nombres y los botones de gestion_adm (proveedores/cc_bandeja.html).
+  Saldo = Debe − Haber: acreedor (le debemos) negativo, en rojo; deudor (a
+  favor nuestro) positivo, en verde. Los filtros van al servidor; buscar un
+  proveedor manda sobre el resto (se ignoran saldo, rubro, estado y fecha).
+  Lo ingresado y sin auditar se muestra aparte: no es deuda todavía.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuenta Corriente de Proveedores</h1>
+    <p>Saldo por proveedor — débitos (liquidaciones) y créditos (pagos).</p>
+  </div>
+  {% if puede_aplicar %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Aplicación de Comprobantes', 'secondary', href=url_for('cc_prov.aplicaciones')) }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes() }}
+
+{% if filas %}
+{% set total_saldo = total_debe - total_haber %}
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Total Debe</div><div class="kpi-val monto importe-ok">{{ total_debe | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Total Haber</div><div class="kpi-val monto importe-danger">{{ total_haber | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if total_saldo < -0.01 else 'ok' }}">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo total{% if f.hasta and not f.q %} al {{ f.hasta.strftime('%d/%m/%Y') }}{% endif %}</div>
+      <div class="kpi-val monto {{ 'saldo-acreedor' if total_saldo < -0.01 else ('saldo-deudor' if total_saldo > 0.01 else '') }}">{{ total_saldo | miles }}</div>
+      <div class="kpi-sub">{{ filas|length }} proveedor(es) —
+        {{ 'acreedor' if total_saldo < -0.01 else ('deudor' if total_saldo > 0.01 else 'sin saldo') }}</div></div></div>
+</div>
+{% endif %}
+
+<div class="card">
+  {# Los filtros van a la base; en el navegador se pagina. El texto busca al
+     dejar de escribir y los combos se aplican al elegir; la fecha, con Filtrar. #}
+  <form method="get" action="{{ url_for('cc_prov.bandeja') }}" class="filter-bar" id="frm-filtros">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar proveedor</span>
+      <input type="search" name="q" value="{{ f.q }}" placeholder="Razón social, nombre de fantasía o CUIT…"
+             class="filter-input" oninput="debounceBuscarCC(this)">
+      {% if f.q %}<span class="campo-ayuda">Buscando proveedor: se ignoran saldo, rubro, estado y fecha.</span>{% endif %}
+    </label>
+    {% call ui.filtro('Saldo') %}<select name="saldo" class="filtro-srv" onchange="this.form.submit()">
+      <option value="acreedor" {{ 'selected' if f.saldo == 'acreedor' }}>Saldo acreedor (le debemos)</option>
+      <option value="deudor"   {{ 'selected' if f.saldo == 'deudor' }}>Saldo deudor (a favor nuestro)</option>
+      <option value="todos"    {{ 'selected' if f.saldo == 'todos' }}>Todos con movimientos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Rubro de pasivo') %}<select name="rubro" class="filtro-srv" onchange="this.form.submit()">
+      <option value="">— Todos —</option>
+      {% for r in rubros %}<option value="{{ r.id }}" {{ 'selected' if f.rubro == r.id }}>{{ r.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Estado') %}<select name="activo" class="filtro-srv" onchange="this.form.submit()">
+      <option value="1" {{ 'selected' if f.activo }}>Solo activos</option>
+      <option value="0" {{ 'selected' if not f.activo }}>Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Saldo al') %}<input type="date" name="hasta" class="filtro-srv" value="{{ f.hasta.isoformat() if f.hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm" title="Aplicar filtro">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('cc_prov.bandeja') }}" class="btn btn-secondary btn-sm" title="Quitar filtros">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count"></span>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar a Excel</button>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+  </form>
+
+  {% set nombre_excel = 'Cuenta corriente de proveedores'
+       ~ (' - búsqueda ' ~ f.q if f.q else (' - ' ~ nombre_rubro if nombre_rubro else ''))
+       ~ (' al ' ~ f.hasta.strftime('%d-%m-%Y') if f.hasta and not f.q else '') %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cc" data-exportar="{{ nombre_excel }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:84px;">Acciones</th>
+          <th>Proveedor</th>
+          <th style="width:112px;">CUIT</th>
+          <th class="th-center" data-tipo="n" style="width:58px;">Liq.</th>
+          <th class="th-center" data-tipo="n" style="width:70px;">Pagos</th>
+          <th class="th-right" style="width:124px;">Debe</th>
+          <th class="th-right" style="width:124px;">Haber</th>
+          <th class="th-right" style="width:124px;" data-orden="asc">Saldo</th>
+          <th class="th-right" style="width:126px;" title="Comprobantes cargados que todavía no aprobó nadie. No suman al saldo.">Pend. auditoría</th>
+          <th class="th-center" style="width:88px;">Últ. mov.</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in filas %}
+        {% set saldo = (p.saldo or 0) | float %}
+        <tr class="{{ 'fila-baja' if not p.activo }}">
+          <td><div class="acciones">
+            {# El rubro viaja con el link: el estado de cuenta muestra el mismo recorte. #}
+            {{ ui.accion('ver', href=url_for('cc_prov.estado_cuenta', id_proveedor=p.id_proveedor,
+                                             rubro=f.rubro if f.rubro and not f.q else None), titulo='Ver estado de cuenta') }}
+            {{ ui.accion('pdf', href=url_for('cc_prov.pdf_estado_cuenta', id_proveedor=p.id_proveedor), titulo='Ver PDF', blank=True) }}
+          </div></td>
+          <td class="td-fuerte">{{ p.razon_social }}{% if p.nombre_fantasia and p.nombre_fantasia|lower != p.razon_social|lower %} <span class="chico muted">({{ p.nombre_fantasia }})</span>{% endif %}</td>
+          <td class="td-mono td-muted">{{ p.cuit }}</td>
+          <td class="td-center">{{ p.cant_liquidaciones or 0 }}</td>
+          <td class="td-center">{{ p.cant_pagos or 0 }}</td>
+          <td class="td-right importe-ok" data-num="{{ p.total_debe or 0 }}">{% if p.total_debe %}{{ p.total_debe | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right importe-danger" data-num="{{ p.total_haber or 0 }}">{% if p.total_haber %}{{ p.total_haber | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ saldo }}">
+            <span class="{{ 'saldo-deudor' if saldo > 0.01 else ('saldo-acreedor' if saldo < -0.01 else 'saldo-cero') }}"
+                  title="{{ 'Saldo deudor: a favor nuestro' if saldo > 0.01 else ('Saldo acreedor: le debemos al proveedor' if saldo < -0.01 else 'Sin saldo') }}">
+              {% if saldo|abs > 0.01 %}{{ saldo | miles }}{% else %}—{% endif %}</span>
+          </td>
+          <td class="td-right" data-num="{{ p.pend_importe if p.pend_n else 0 }}">
+            {% if p.pend_n %}<span class="importe-pendiente" title="{{ p.pend_n }} comprobante(s) esperando auditoría. No suman al saldo.">{{ p.pend_importe | miles }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td class="td-center td-muted">{{ p.ultimo_movimiento.strftime('%d/%m/%Y') if p.ultimo_movimiento else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">No hay proveedores con movimientos.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+var _ccTimer = null;
+function debounceBuscarCC(inp) {
+  clearTimeout(_ccTimer);
+  _ccTimer = setTimeout(function () { inp.closest('form').submit(); }, 400);
+}
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-cc', { pageSize: 50 });
+});
+</script>
+{% endblock %}

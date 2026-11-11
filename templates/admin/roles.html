@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "admin/_arbol_menu.html" as am %}
+{% block title %}Roles{% endblock %}
+
+{#
+  Roles (admin.roles). Son fijos: el nombre es la clave que usa el código
+  (db.tiene_rol), así que no se crean, no se borran ni se renombran. Acá se
+  edita la descripción, si está activo y qué opciones del menú tiene: el
+  permiso es la opción. El Administrador conserva siempre Usuarios, Roles y Menú.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Roles</h1>
+    <p>Qué opciones del menú tiene cada rol. Cada persona ve la suma de las de sus roles y sus permisos sueltos.</p>
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', roles|length)] + ([('datos', 'Editar ' ~ rol.nombre, None)] if rol else []), inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por rol…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Todos</option>
+        <option value="1">Activos</option>
+        <option value="0">Inactivos</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-roles" data-exportar="Roles">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Rol</th>
+            <th>Descripción</th>
+            <th class="th-right">Usuarios activos</th>
+            <th class="th-right">Pantallas</th>
+            <th class="th-right">Prioridad</th>
+            <th>Usuario de MySQL</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ro in roles %}
+          <tr class="{{ 'fila-baja' if not ro.activo }}" data-activo="{{ ro.activo }}">
+            <td><div class="acciones">{{ ui.accion('editar', href=url_for('admin.roles', edit=ro.id)) }}</div></td>
+            <td class="td-fuerte">{{ ro.nombre }}</td>
+            <td class="td-wrap">{{ ro.descripcion or '' }}</td>
+            <td class="td-right" data-num="{{ ro.usuarios }}">{{ ro.usuarios }}</td>
+            <td class="td-right" data-num="{{ ro.pantallas }}">{{ ro.pantallas }}</td>
+            <td class="td-right td-muted" data-num="{{ ro.prioridad }}">{{ ro.prioridad }}</td>
+            <td class="td-mono td-muted">{{ ro.db_usuario or 'el de la aplicación' }}</td>
+            <td>{{ ui.estado('Activo', 'ok') if ro.activo else ui.estado('Inactivo', 'neutro') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+{% if rol %}
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <form method="post" action="{{ url_for('admin.roles') }}">
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="id" value="{{ rol.id }}">
+    <div class="card" data-sin-solapas>
+      {% call ui.card_head('Rol ' ~ rol.nombre, nota='El nombre no se cambia: es un valor interno del sistema.') %}
+        {{ ui.boton('Cancelar', 'secondary', href=url_for('admin.roles'), chico=True) }}
+      {% endcall %}
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label>Nombre</label>
+            <input type="text" value="{{ rol.nombre }}" readonly>
+          </div>
+          <div class="campo" style="--span:6;">
+            <label>Descripción</label>
+            <input type="text" name="descripcion" maxlength="250" value="{{ rol.descripcion or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="activo" value="1" {{ 'checked' if rol.activo }}
+                     {{ 'disabled' if rol.nombre == 'Administrador' }}>
+              Activo
+            </label>
+            {% if rol.nombre == 'Administrador' %}<input type="hidden" name="activo" value="1">{% endif %}
+          </div>
+          <div class="campo" style="--span:12;">
+            <small class="campo-ayuda">
+              {% if rol.db_usuario %}Conecta a MySQL como <span class="mono">{{ rol.db_usuario }}</span>; la contraseña sale de la
+              variable <span class="mono">SIND_DB_PASS_{{ rol.db_usuario|upper }}</span>.
+              {% else %}Conecta a MySQL con el usuario de la aplicación.{% endif %}
+              Se cambia en la base, no acá.
+            </small>
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar el rol', icono_='guardar', submit=True) }}
+      </div>
+    </div>
+    {{ ui.aviso('Quienes tienen el rol ven el cambio desde su próximo ingreso: los permisos se leen al iniciar sesión.', 'info') }}
+    {{ am.tabla(arbol, marcadas, protegidas=protegidas, id='tbl-menu', exportar='Opciones del rol ' ~ rol.nombre) }}
+    <div class="form-acciones">
+      {{ ui.boton('Guardar el rol', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+{{ am.script('tbl-menu') }}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado');
+  gestion_admTable('tbl-roles', {
+    filtroExtra: function (tr) { return !fe.value || tr.dataset.activo === fe.value; }
+  });
+});
+</script>
+{% endblock %}

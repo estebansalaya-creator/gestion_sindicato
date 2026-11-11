@@ -1,0 +1,544 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Proveedores{% endblock %}
+
+{#
+  ABM de proveedores: la ficha de gestion_adm con el sistema de estilos.
+
+    Listado · Datos (identificación, domicilio, impositivos, retenciones, pago,
+    grupo) · Cuentas contables · Contactos · Movimientos
+
+  Los bloques de retención de los impuestos en los que el sindicato no es
+  agente (Datos del sindicato) van deshabilitados: el navegador no los manda y
+  el servidor no pisa lo guardado.
+
+  `p` evita los «None» en pantalla.
+#}
+{% set p = proveedor or {} %}
+{% set editando = p.get('id') %}
+{% set nombres_imp = {'iva': 'IVA', 'ganancias': 'Ganancias', 'iibb': 'Ingresos Brutos', 'suss': 'SUSS'} %}
+{% set tipos_mov = {'ALTA': 'Alta', 'BAJA': 'Baja', 'REACTIVACION': 'Reactivación',
+                    'MODIFICACION': 'Modificación', 'ELIMINACION': 'Eliminación'} %}
+
+{% macro texto(campo, rotulo, span, largo, mono=False, req=False, ayuda=None, tipo='text', mayus=False, id_ayuda=None) -%}
+<div class="campo" style="--span:{{ span }};">
+  <label for="{{ campo }}">{{ rotulo }}{% if req %} <span class="req">*</span>{% endif %}</label>
+  <input type="{{ tipo }}" name="{{ campo }}" id="{{ campo }}" maxlength="{{ largo }}"
+         value="{{ p.get(campo) if p.get(campo) is not none else '' }}"
+         {{- ' class=mono' if mono }}{{ ' required' if req }}{{ ' style=text-transform:uppercase' if mayus }}>
+  {% if ayuda or id_ayuda %}<small class="campo-ayuda" {% if id_ayuda %}id="{{ id_ayuda }}"{% endif %}>{{ ayuda or '' }}</small>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro casilla(campo, texto_, span=3) -%}
+<div class="campo" style="--span:{{ span }};">
+  <label class="campo-check"><input type="checkbox" name="{{ campo }}" value="1"{{ ' checked' if p.get(campo) }}> {{ texto_ }}</label>
+</div>
+{%- endmacro %}
+
+{% macro alicuota(campo, rotulo='Alícuota %', span=2) -%}
+<div class="campo" style="--span:{{ span }};">
+  <label for="{{ campo }}">{{ rotulo }}</label>
+  <input type="text" inputmode="decimal" class="importe" name="{{ campo }}" id="{{ campo }}"
+         value="{{ ('%.2f'|format(p.get(campo)|float)).replace('.', ',') if p.get(campo) is not none else '' }}">
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Proveedores</h1>
+    <p>Datos fiscales, retenciones, forma de pago y cuentas contables de cada proveedor.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Nuevo proveedor', href=url_for('proveedores.abm', nuevo=1), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = request.args.get('solapa') if (editando and request.args.get('solapa') in ('cuentas', 'contactos', 'movimientos'))
+                 else ('datos' if (editando or nuevo or errores) else 'listado') %}
+{% set lista = [('listado', 'Listado', proveedores|length),
+                ('datos', ('Editar' if editando else 'Nuevo'), None)] %}
+{% if editando %}
+  {% set lista = lista + [('cuentas', 'Cuentas contables', ctas_pasivo|length + ctas_gasto|length),
+                          ('contactos', 'Contactos', contactos|length),
+                          ('movimientos', 'Movimientos', movimientos|length)] %}
+{% endif %}
+{{ ui.solapas(lista, inicial) }}
+
+
+<!-- ── Listado ────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por CUIT, razón social, fantasía, concepto…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activos</option>
+        <option value="0">Dados de baja</option>
+        <option value="">Activos y bajas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Rubro de pasivo') %}<select class="filtro" id="f-rubro">
+        <option value="">Todos los rubros</option>
+        {% for r in rubros_pasivo %}<option value="{{ r.id }}">{{ r.nombre }}</option>{% endfor %}
+        <option value="sin">Sin cuenta de pasivo</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Retenciones') %}<select class="filtro" id="f-ret">
+        <option value="">Con y sin retenciones</option>
+        <option value="iva">Retención IVA</option>
+        <option value="ganancias">Retención Ganancias</option>
+        <option value="iibb">Retención IIBB</option>
+        <option value="suss">Retención SUSS</option>
+        <option value="ninguna">Sin retenciones</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-proveedores" data-exportar="Proveedores">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>CUIT</th>
+            <th>Razón social</th>
+            <th>Nombre de fantasía</th>
+            <th>Condición IVA</th>
+            <th>Rubro de pasivo</th>
+            <th>Concepto de gasto</th>
+            <th>Retenciones</th>
+            <th>CBU / alias</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in proveedores %}
+          {% set rets = [] %}
+          {% for imp in ('iva', 'ganancias', 'iibb', 'suss') if f['ret_' ~ imp] %}{% set _ = rets.append(imp) %}{% endfor %}
+          <tr class="{{ 'fila-baja' if not f.activo }}{{ ' fila-actual' if editando and f.id == p.get('id') }}"
+              data-activo="{{ 1 if f.activo else 0 }}" data-rubros=" {{ f.rubros_ids or 'sin' }} "
+              data-ret=" {{ rets|join(' ') or 'ninguna' }} ">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('proveedores.abm', edit=f.id)) }}
+            </div></td>
+            <td class="td-mono">{{ f.cuit }}</td>
+            <td class="td-fuerte">{{ f.razon_social }}</td>
+            <td class="td-muted">{{ f.nombre_fantasia if f.nombre_fantasia and f.nombre_fantasia != f.razon_social else '—' }}</td>
+            <td>{{ f.condicion_iva_txt or '—' }}</td>
+            <td>{{ f.rubros or '—' }}</td>
+            <td class="td-muted td-recorte" title="{{ f.conceptos or '' }}">{{ f.conceptos or '—' }}</td>
+            <td data-valor="{{ rets|map('upper')|join(', ') }}">
+              {% for imp in rets %}<span class="chip">{{ nombres_imp[imp] }}{% if imp == 'ganancias' and f.ret_ganancias_codigo_sir %} {{ f.ret_ganancias_codigo_sir }}{% endif %}</span> {% else %}—{% endfor %}
+            </td>
+            <td class="td-mono">{{ f.cbu or f.cbu_alias or '—' }}</td>
+            <td data-valor="{{ 'Activo' if f.activo else 'Baja' }}">{{ ui.activo(f.activo) }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">
+            No hay proveedores. Se cargan desde AEDA con importar_aeda_proveedores.py.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+
+<!-- ── Datos ──────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+<form method="post" class="card" id="form-proveedor" action="{{ url_for('proveedores.abm') }}"
+      data-proceso="Guardando el proveedor…">
+  <input type="hidden" name="accion" value="{{ 'guardar' if editando else 'nuevo' }}">
+  <input type="hidden" name="id" value="{{ p.get('id') or '' }}">
+  {% call ui.card_head(p.get('razon_social') or 'Nuevo proveedor', nota=p.get('cuit')) %}
+    {% if editando %}
+    {{ ui.activo(p.get('activo')) }}
+    {{ ui.boton('Eliminar', 'danger', chico=True, icono_='borrar', onclick='eliminarProveedor()') }}
+    {% endif %}
+  {% endcall %}
+
+  <div class="bloque">
+    <div class="bloque-titulo">Identificación</div>
+    <div class="campos">
+      {{ texto('cuit', 'CUIT', 3, 13, mono=True, req=True, id_ayuda='cuit-ayuda') }}
+      {{ texto('razon_social', 'Razón social', 5, 200, req=True, mayus=True) }}
+      {{ texto('nombre_fantasia', 'Nombre de fantasía', 4, 200) }}
+      <div class="campo" style="--span:3;">
+        <label for="fecha_alta">Fecha de alta</label>
+        <input type="date" name="fecha_alta" id="fecha_alta"
+               value="{{ p.get('fecha_alta').isoformat() if p.get('fecha_alta') and p.get('fecha_alta') is not string else (p.get('fecha_alta') or '') }}">
+      </div>
+      <div class="campo" style="--span:3;">
+        <label class="campo-check"><input type="checkbox" name="activo" value="1"{{ ' checked' if p.get('activo', 1) }}> Activo</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Domicilio fiscal</div>
+    <div class="campos">
+      {{ texto('dom_calle', 'Calle y número', 6, 150, mayus=True) }}
+      {{ texto('dom_cp', 'Código postal', 2, 10, mono=True) }}
+      {{ texto('dom_localidad', 'Localidad', 4, 100, mayus=True) }}
+      <div class="campo" style="--span:4;">
+        <label for="dom_provincia_id">Provincia</label>
+        <select name="dom_provincia_id" id="dom_provincia_id">
+          {{ ui.opciones(provincias, p.get('dom_provincia_id'), clave='codigo', texto='nombre', vacio='—') }}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Datos impositivos</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="condicion_iva">Condición frente al IVA</label>
+        <select name="condicion_iva" id="condicion_iva" onchange="avisoMonotributo()">
+          {{ ui.opciones(condiciones_iva, p.get('condicion_iva'), clave='codigo', vacio='—') }}
+        </select>
+      </div>
+      <div class="campo" style="--span:3;">
+        <label for="condicion_iibb">Condición IIBB</label>
+        <select name="condicion_iibb" id="condicion_iibb">
+          <option value="">—</option>
+          {% for k, v in condiciones_iibb %}<option value="{{ k }}"{{ ' selected' if p.get('condicion_iibb') == k }}>{{ v }}</option>{% endfor %}
+        </select>
+      </div>
+      {{ texto('nro_iibb', 'N° de IIBB', 3, 30, mono=True) }}
+      {{ texto('jurisdiccion_iibb', 'Jurisdicción', 2, 2, mono=True, mayus=True) }}
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Retenciones</div>
+    {% if not (agentes.values()|select|list) %}
+    {{ ui.aviso('El sindicato no figura como agente de retención de ningún impuesto. Se marca en Administración del Sistema → Datos del Sindicato.', 'info') }}
+    {% endif %}
+    {% for imp in ('iva', 'ganancias', 'iibb', 'suss') %}
+    <fieldset class="grupo-campos{{ ' solo-lectura' if not agentes[imp] }}"{{ ' disabled' if not agentes[imp] }}>
+      <div class="campos">
+        <div class="campo" style="--span:3;">
+          <span class="campo-label">{{ nombres_imp[imp] }}
+            <span class="muted">{{ {'iva': 'RG 2854', 'ganancias': 'RG 830', 'iibb': '', 'suss': 'RG 1556'}[imp] }}</span></span>
+          <label class="campo-check">
+            <input type="checkbox" name="ret_{{ imp }}" value="1" id="ret_{{ imp }}"{{ ' checked' if p.get('ret_' ~ imp) }}> Aplica retención
+          </label>
+          {% if not agentes[imp] %}<small class="campo-ayuda">El sindicato no es agente de este impuesto.</small>{% endif %}
+        </div>
+        {% if imp == 'iva' %}
+          {{ alicuota('ret_iva_alicuota') }}
+          <div class="campo" style="--span:2;">
+            <label for="ret_iva_padron">Categoría padrón</label>
+            <select name="ret_iva_padron" id="ret_iva_padron">
+              <option value="">—</option>
+              {% for c in padron_iva %}<option{{ ' selected' if p.get('ret_iva_padron') == c }}>{{ c }}</option>{% endfor %}
+            </select>
+          </div>
+        {% elif imp == 'ganancias' %}
+          {% set cod = (p.get('ret_ganancias_codigo_sir') or '')|string %}
+          {% set cod = ('%03d'|format(cod|int)) if cod|int > 0 else '' %}
+          {% set cods = regimenes_rg830|map(attribute='codigo')|list %}
+          <div class="campo" style="--span:9;">
+            <label for="ret_ganancias_codigo_sir">Régimen</label>
+            <select name="ret_ganancias_codigo_sir" id="ret_ganancias_codigo_sir" onchange="resumenRegimen()">
+              <option value="" data-resumen="">— Elegí el régimen —</option>
+              {% for r in regimenes_rg830 %}
+              <option value="{{ r.codigo }}" data-resumen="{{ r.resumen }}"{{ ' selected' if r.codigo == cod }}>{{ r.codigo }} — {{ r.descripcion }}</option>
+              {% endfor %}
+              {% if cod and cod not in cods %}
+              <option value="{{ cod }}" selected data-resumen="Este régimen no tiene escala vigente en la tabla RG 830: con él no se retiene. Elegí otro.">{{ cod }} — no está en la tabla vigente</option>
+              {% endif %}
+            </select>
+            <small class="campo-ayuda" id="rg830-resumen"></small>
+            <small class="campo-ayuda error" id="aviso-monotributo"></small>
+          </div>
+        {% elif imp == 'iibb' %}
+          {{ alicuota('ret_iibb_alicuota') }}
+          <div class="campo" style="--span:3;">
+            <label for="ret_iibb_regimen">Régimen</label>
+            <select name="ret_iibb_regimen" id="ret_iibb_regimen">
+              <option value="">—</option>
+              {% for r in regimenes_iibb %}<option{{ ' selected' if p.get('ret_iibb_regimen') == r }}>{{ r }}</option>{% endfor %}
+              {% if p.get('ret_iibb_regimen') and p.get('ret_iibb_regimen') not in regimenes_iibb %}<option selected>{{ p.get('ret_iibb_regimen') }}</option>{% endif %}
+            </select>
+          </div>
+        {% else %}
+          {{ alicuota('ret_suss_alicuota') }}
+        {% endif %}
+      </div>
+    </fieldset>
+    {% endfor %}
+    <p class="campo-ayuda">La forma de cálculo, el mínimo no sujeto y los porcentajes de Ganancias salen de la tabla RG 830 vigente a la fecha de cada pago.</p>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Pago</div>
+    <div class="campos">
+      {{ texto('cbu', 'CBU', 4, 22, mono=True, id_ayuda='cbu-ayuda') }}
+      {{ texto('cbu_alias', 'Alias', 3, 50) }}
+      {{ texto('cheque_a_la_orden', 'Cheque a la orden de', 5, 100, ayuda='Si no coincide con la razón social.') }}
+      <div class="campo" style="--span:2;">
+        <label for="condicion_pago_dias">Días de crédito</label>
+        <input type="number" name="condicion_pago_dias" id="condicion_pago_dias" min="0" max="999"
+               value="{{ p.get('condicion_pago_dias') or 0 }}">
+      </div>
+      <div class="campo" style="--span:2;">
+        <label for="moneda">Moneda</label>
+        <select name="moneda" id="moneda">
+          {% for m in monedas %}<option{{ ' selected' if (p.get('moneda') or 'ARS') == m }}>{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Grupo</div>
+    <div class="campos">
+      {{ casilla('escabecera_grupo', 'Es cabecera de un grupo de proveedores', 4) }}
+      <div class="campo" style="--span:5;">
+        <label for="id_grupo">Pertenece al grupo de</label>
+        <select name="id_grupo" id="id_grupo">
+          <option value="">— Ninguno —</option>
+          {% for g in grupos if g.id != p.get('id') %}
+          <option value="{{ g.id }}"{{ ' selected' if p.get('id_grupo') == g.id }}>{{ g.razon_social }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+  </div>
+
+  {% if not editando %}
+  <div class="bloque">
+    <div class="bloque-titulo">Imputación</div>
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label for="id_rubro_pasivo_inicial">Rubro de pasivo <span class="req">*</span></label>
+        <select name="id_rubro_pasivo_inicial" id="id_rubro_pasivo_inicial" required>
+          {{ ui.opciones(rubros_pasivo, request.form.get('id_rubro_pasivo_inicial'), clave='id', texto='nombre', vacio='— Elegí —') }}
+        </select>
+        <small class="campo-ayuda">Contra qué cuenta corriente nace la deuda del proveedor.</small>
+      </div>
+      <div class="campo" style="--span:6;">
+        <label for="id_concepto_gasto_inicial">Concepto de gasto <span class="req">*</span></label>
+        <select name="id_concepto_gasto_inicial" id="id_concepto_gasto_inicial" required>
+          {{ ui.opciones(conceptos_gasto, request.form.get('id_concepto_gasto_inicial'), clave='id', vacio='— Elegí —') }}
+        </select>
+        <small class="campo-ayuda">La imputación de lo que se le compra. Después se agregan más en «Cuentas contables».</small>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:12;">
+        <label for="observaciones">Observaciones</label>
+        <textarea name="observaciones" id="observaciones" rows="2">{{ p.get('observaciones') or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-acciones">
+    {{ ui.boton('Cancelar', 'secondary', href=url_for('proveedores.abm')) }}
+    {{ ui.boton('Guardar cambios' if editando else 'Crear proveedor', submit=True, icono_='guardar') }}
+  </div>
+</form>
+{% if editando %}
+<form method="post" id="form-eliminar" class="oculto" action="{{ url_for('proveedores.abm') }}">
+  <input type="hidden" name="accion" value="borrar">
+  <input type="hidden" name="id" value="{{ p.get('id') }}">
+</form>
+{% endif %}
+</div>
+
+
+{% if editando %}
+<!-- ── Cuentas contables ──────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'cuentas' }}" data-panel="cuentas">
+  {% for clase, titulo, filas, col, cat, texto_cat in [
+       ('pasivo', 'Cuentas de pasivo', ctas_pasivo, 'id_rubro_pasivo', rubros_pasivo, 'nombre'),
+       ('gasto', 'Conceptos de gasto', ctas_gasto, 'id_concepto_gasto', conceptos_gasto, 'descripcion')] %}
+  <div class="card">
+    {{ ui.card_head(titulo, nota='contra qué cuenta corriente nace la deuda' if clase == 'pasivo' else 'la imputación de lo que se le compra') }}
+    <div class="data-table-wrap">
+      <table class="data-table compacta" data-exportar="{{ titulo }} {{ p.get('razon_social') }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>{{ 'Rubro' if clase == 'pasivo' else 'Concepto' }}</th><th>Descripción</th>
+          {% if clase == 'pasivo' %}<th>Moneda</th>{% endif %}
+          <th>Predeterminada</th>
+        </tr></thead>
+        <tbody>
+          {% for c in filas %}
+          <tr>
+            <td><div class="acciones">
+              <form method="post" class="form-en-linea" action="{{ url_for('proveedores.cuenta', pid=p.get('id'), clase=clase) }}"
+                    onsubmit="return confirm('¿Dar de baja esta cuenta?');">
+                <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" value="{{ c.id }}">
+                {{ ui.accion('borrar', submit=True, titulo='Dar de baja', deshabilitado=filas|length <= 1) }}
+              </form>
+            </div></td>
+            <td class="td-fuerte">{{ c.rubro if clase == 'pasivo' else c.concepto }}</td>
+            <td class="td-muted">{{ c.descripcion or '—' }}</td>
+            {% if clase == 'pasivo' %}<td>{{ c.moneda }}</td>{% endif %}
+            <td>{{ ui.si_no(c.predeterminada) }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="5" class="no-data">Sin cuentas activas: la deuda del proveedor no se puede imputar.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <form method="post" action="{{ url_for('proveedores.cuenta', pid=p.get('id'), clase=clase) }}" class="bloque">
+      <input type="hidden" name="accion" value="nuevo">
+      <div class="campos">
+        <div class="campo" style="--span:5;">
+          <label>{{ 'Rubro de pasivo' if clase == 'pasivo' else 'Concepto de gasto' }} <span class="req">*</span></label>
+          <select name="{{ col }}" required>{{ ui.opciones(cat, none, clave='id', texto=texto_cat, vacio='— Elegí —') }}</select>
+        </div>
+        <div class="campo" style="--span:3;">
+          <label>Descripción</label>
+          <input type="text" name="descripcion" maxlength="100">
+        </div>
+        {% if clase == 'pasivo' %}
+        <div class="campo" style="--span:1;">
+          <label>Moneda</label>
+          <select name="moneda">{% for m in monedas %}<option>{{ m }}</option>{% endfor %}</select>
+        </div>
+        {% endif %}
+        <div class="campo" style="--span:2;">
+          <label class="campo-check"><input type="checkbox" name="predeterminada" value="1"> Predeterminada</label>
+        </div>
+        <div class="campo campo-boton" style="--span:{{ 1 if clase == 'pasivo' else 2 }};">
+          {{ ui.boton('Agregar', 'secondary', submit=True, icono_='agregar', chico=True) }}
+        </div>
+      </div>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── Contactos ──────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'contactos' }}" data-panel="contactos">
+  <div class="card">
+    {{ ui.card_head('Contactos', nota='a quién se le avisan los pagos') }}
+    {% with entidad_tipo='proveedor', entidad_id=p.get('id'), contactos=contactos, areas_contacto=areas_contacto %}
+      {% include '_contactos.html' %}
+    {% endwith %}
+  </div>
+</div>
+
+<!-- ── Movimientos ────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'movimientos' }}" data-panel="movimientos">
+  <div class="card">
+    {{ ui.barra_filtros('Filtrar por campo, valor o usuario…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-movimientos" data-exportar="Movimientos {{ p.get('razon_social') }}">
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Campo</th><th>Antes</th><th>Después</th><th>Usuario</th><th>Origen</th></tr></thead>
+        <tbody>
+          {% for m in movimientos %}
+          <tr>
+            <td>{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td>{{ ui.estado(tipos_mov.get(m.tipo_movimiento, m.tipo_movimiento|capitalize), {'ALTA': 'ok', 'BAJA': 'danger', 'REACTIVACION': 'ok', 'ELIMINACION': 'danger'}.get(m.tipo_movimiento, 'neutro')) }}</td>
+            <td class="td-fuerte">{{ m.campo_label or m.campo }}</td>
+            <td class="td-muted td-recorte" title="{{ m.ant_txt or '' }}">{{ m.ant_txt if m.ant_txt not in (none, '') else '—' }}</td>
+            <td class="td-recorte" title="{{ m.act_txt or '' }}">{{ m.act_txt if m.act_txt not in (none, '') else '—' }}</td>
+            <td class="td-muted">{{ m.usuario or '—' }}</td>
+            <td class="td-muted">{{ m.origen_ref or m.origen }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="7" class="no-data">Sin movimientos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+{% endif %}
+
+<script>
+var URL_CUIT = "{{ url_for('proveedores.api_cuit', cuit='00000000000') }}".replace('00000000000', '');
+var ID_ACTUAL = "{{ p.get('id') or '' }}";
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
+/* CUIT: dígito verificador y si ya es de otro proveedor, mientras se tipea.
+   El servidor lo controla igual al guardar. */
+function avisarCuit() {
+  var el = document.getElementById('cuit'), ayuda = document.getElementById('cuit-ayuda');
+  var cuit = (el.value || '').replace(/\D/g, '');
+  ayuda.className = 'campo-ayuda'; ayuda.innerHTML = '';
+  if (!cuit) return;
+  if (cuit.length !== 11) { ayuda.classList.add('error'); ayuda.textContent = 'Tiene que tener 11 dígitos.'; return; }
+  fetch(URL_CUIT + cuit + (ID_ACTUAL ? '?excepto=' + ID_ACTUAL : ''), {credentials: 'same-origin'})
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (!j.valido) { ayuda.classList.add('error'); ayuda.textContent = 'No verifica el dígito de control.'; }
+      else if (j.existe) {
+        ayuda.classList.add('error');
+        ayuda.innerHTML = 'Ya es de <a href="' + esc(j.url) + '">' + esc(j.razon_social) + '</a>'
+          + (j.activo ? '' : ' (dado de baja)') + '.';
+      } else { ayuda.classList.add('ok'); ayuda.textContent = 'CUIT válido.'; }
+    });
+}
+
+/* CBU: cbuValido() está en base.html. */
+function avisarCbu() {
+  var c = (document.getElementById('cbu').value || '').replace(/\D/g, ''), a = document.getElementById('cbu-ayuda');
+  a.className = 'campo-ayuda'; a.textContent = '';
+  if (!c) return;
+  if (cbuValido(c)) { a.classList.add('ok'); a.textContent = 'CBU válido.'; }
+  else { a.classList.add('error'); a.textContent = c.length !== 22 ? 'Tiene ' + c.length + ' de 22 dígitos.' : 'No cierran los dígitos verificadores.'; }
+}
+
+function resumenRegimen() {
+  var sel = document.getElementById('ret_ganancias_codigo_sir');
+  if (!sel) return;
+  var op = sel.options[sel.selectedIndex];
+  document.getElementById('rg830-resumen').textContent = op ? (op.dataset.resumen || '') : '';
+}
+function avisoMonotributo() {
+  var c = parseInt(document.getElementById('condicion_iva').value, 10);
+  var ret = document.getElementById('ret_ganancias'), aviso = document.getElementById('aviso-monotributo');
+  if (!aviso) return;
+  aviso.textContent = ([6, 13, 16].indexOf(c) >= 0 && ret && ret.checked)
+    ? 'Es monotributista: no corresponde retenerle Ganancias.' : '';
+}
+
+function eliminarProveedor() {
+  if (confirm('¿Eliminar el proveedor? Si tiene comprobantes o retenciones no se puede: en ese caso, destildá «Activo».'))
+    document.getElementById('form-eliminar').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var fEstado = document.getElementById('f-estado'), fRubro = document.getElementById('f-rubro'),
+      fRet = document.getElementById('f-ret');
+  gestion_admTable('tbl-proveedores', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (fEstado.value && tr.dataset.activo !== fEstado.value) return false;
+      if (fRubro.value && tr.dataset.rubros.indexOf(' ' + fRubro.value + ' ') < 0) return false;
+      if (fRet.value && tr.dataset.ret.indexOf(' ' + fRet.value + ' ') < 0) return false;
+      return true;
+    }
+  });
+  if (document.getElementById('tbl-movimientos')) gestion_admTable('tbl-movimientos', { pageSize: 20 });
+
+  var cuit = document.getElementById('cuit');
+  cuit.addEventListener('change', avisarCuit);
+  if (cuit.value) avisarCuit();
+  var cbu = document.getElementById('cbu');
+  cbu.addEventListener('input', avisarCbu);
+  if (cbu.value) avisarCbu();
+  var ret = document.getElementById('ret_ganancias');
+  if (ret) ret.addEventListener('change', avisoMonotributo);
+  resumenRegimen();
+  avisoMonotributo();
+});
+</script>
+{% endblock %}

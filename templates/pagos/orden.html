@@ -1,0 +1,722 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden {{ o.nro_vis }}{% endblock %}
+
+{#
+  La ficha de una orden de pago (pagos.orden), de cualquier clase. Lo que se
+  puede hacer depende del estado y de quién mira:
+
+    borrador              mandar a aprobación (quien arma esa clase)
+    pendiente_aprobacion  aprobar o rechazar su nivel (quien está en Config. Aprobadores)
+    aprobada              pagar: fecha, instrumentos, retenciones (Emisión de Pagos)
+    sin pago vivo         anular la orden (Administrador)
+    pago emitido          anular el pago (Administrador): vuelve a «aprobada»
+
+  El pago: los instrumentos tienen que sumar el NETO (orden − retenciones); las
+  retenciones las calcula el servidor para la fecha elegida y se vuelven a
+  calcular al confirmar. Un pago en cheques es un instrumento por cheque.
+#}
+
+{% macro dato(rotulo, valor, mono=False, ancho=False) -%}
+{% if valor is defined and valor not in (none, '') %}
+<div class="dato{{ ' ancho' if ancho }}"><div class="dato-lbl">{{ rotulo }}</div>
+  <div class="dato-val{{ ' mono' if mono }}">{{ valor }}</div></div>
+{% endif %}
+{%- endmacro %}
+{% set pagable = o.estado == 'aprobada' and o.clase != 'sueldos' and puede_pagar %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de pago <span class="mono">{{ o.nro_vis }}</span></h1>
+    <p>{{ clases_txt.get(o.clase, o.clase) }} · {{ ui.estado(estados_txt.get(o.estado, o.estado), estado_tipo.get(o.estado, 'neutro')) }}
+      {% if o.emisor_unico %} · {{ o.emisor_unico.razon_social }}{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('PDF', 'pdf', href=url_for('pagos.orden_pdf', id_orden=o.id), icono_='pdf', blank=True) }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if o.estado == 'anulada' %}
+  {{ ui.aviso('Orden anulada' ~ (' el ' ~ o.fecha_anulacion.strftime('%d/%m/%Y %H:%M') if o.fecha_anulacion else '')
+              ~ (' por ' ~ o.usuario_anulacion if o.usuario_anulacion else '') ~ (': ' ~ o.motivo_anulacion if o.motivo_anulacion else '.'), 'warning') }}
+{% endif %}
+
+<div class="con-resumen">
+<div>
+  {% if pagable %}
+  {# ── Pagar ─────────────────────────────────────────────────────────────── #}
+  <form method="post" action="{{ url_for('pagos.pagar', id_orden=o.id) }}" id="form-pago" class="card">
+    {% call ui.card_head('Pagar la orden', nota='Los instrumentos cubren el neto: lo retenido no sale de la cuenta, se deposita a ARCA.') %}
+      {{ ui.boton('Agregar instrumento', 'secondary', chico=True, icono_='agregar', onclick='abrirInstrumento()') }}
+    {% endcall %}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:3;">
+          <label for="fecha_pago">Fecha de pago <span class="req">*</span></label>
+          <input type="date" name="fecha_pago" id="fecha_pago" value="{{ hoy }}" required>
+        </div>
+        <div class="campo" style="--span:9;">
+          <label for="obs-pago">Observaciones</label>
+          <input type="text" name="observaciones" id="obs-pago" maxlength="500">
+        </div>
+      </div>
+    </div>
+    <div class="data-table-wrap" data-sin-scroll-arriba>
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr><th class="col-acciones">Quitar</th><th>Instrumento</th><th>Cuenta</th><th class="th-right">Importe</th></tr></thead>
+        <tbody id="lista-instrumentos">
+          <tr class="no-data-row" id="sin-instrumentos"><td colspan="4" class="no-data">Todavía no hay instrumentos: «Agregar instrumento».</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      <div class="resumen-fila"><span>Orden (bruto)</span><strong class="mono">$ {{ (o.importe_total or 0) | miles }}</strong></div>
+      <div id="lista-retenciones"></div>
+      <div class="resumen-fila"><span>Retenciones</span><strong class="mono" id="txt-retenciones">calculando…</strong></div>
+      <div class="resumen-fila resumen-total"><span>Neto a pagar</span><strong id="txt-neto">—</strong></div>
+      <div class="resumen-fila"><span>Asignado en instrumentos</span><strong class="mono" id="txt-asignado">$ 0,00</strong></div>
+      <div class="resumen-fila"><span>Diferencia</span><strong class="mono" id="txt-diferencia">—</strong></div>
+      <div id="motivos-retencion" class="separado"></div>
+      <div class="form-acciones">
+        <button type="submit" class="btn btn-ok" id="btn-pagar" disabled>{{ ui.icono('ok') }}Confirmar el pago</button>
+      </div>
+    </div>
+  </form>
+  {% endif %}
+
+  {# ── Datos ─────────────────────────────────────────────────────────────── #}
+  <div class="card">
+    {{ ui.card_head('Datos de la orden') }}
+    <div class="card-body">
+      <div class="datos">
+        {{ dato('Clase', clases_txt.get(o.clase, o.clase)) }}
+        {{ dato('Fecha', o.fecha.strftime('%d/%m/%Y') if o.fecha) }}
+        {{ dato('Importe', '$ ' ~ ((o.importe_total or 0) | miles), mono=True) }}
+        {{ dato('Aprobación', (o.niveles_aprobados ~ ' de ' ~ o.niveles_requeridos ~ ' nivel(es)') if o.estado not in ('borrador', 'anulada') and not o.nro_orden.startswith('AEDA') else none) }}
+        {{ dato('Beneficiario', o.emisor_unico.razon_social if o.emisor_unico) }}
+        {{ dato('CUIT', o.emisor_unico.cuit if o.emisor_unico, mono=True) }}
+        {{ dato('Cargó', o.nombre_usuario or ('importada de AEDA' if o.nro_orden.startswith('AEDA') else none)) }}
+        {{ dato('N° interno', o.nro_orden if o.nro_orden != o.nro_vis else none, mono=True) }}
+        {{ dato('Observaciones', o.observaciones, ancho=True) }}
+      </div>
+    </div>
+  </div>
+
+  {# ── Detalle según la clase ────────────────────────────────────────────── #}
+  {% if o.detalle %}
+  <div class="card">
+    {{ ui.card_head('Comprobantes', nota=o.detalle|length ~ ' comprobante' ~ ('s' if o.detalle|length != 1)) }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Comprobante</th><th class="th-right">Fecha</th><th>Expediente</th>
+          {% if not o.emisor_unico %}<th>Emisor</th>{% endif %}
+          <th class="th-right">Importe comprob.</th><th class="th-right">En esta orden</th>
+        </tr></thead>
+        <tbody>
+          {% for d in o.detalle %}
+          <tr>
+            <td><span class="td-fuerte">{{ d.tipo_desc or 'Sin comprobante' }}</span> <span class="td-mono">{{ d.numero_completo or '' }}</span>
+              {% if d.comp_pdf %}{{ ui.accion('pdf', href=url_for('comprobantes.pdf', id_comprobante=d.id_comprobante), blank=True) }}{% endif %}
+              {{ ui.marcas(d) if d.id_comprobante }}</td>
+            <td class="td-right">{{ d.fecha_emision.strftime('%d/%m/%Y') if d.fecha_emision else '—' }}</td>
+            <td data-valor="{{ d.nro_expediente }}">{{ ui.expediente(d.id_expediente, d.nro_expediente) }}</td>
+            {% if not o.emisor_unico %}<td>{{ d.razon_social_emisor }}</td>{% endif %}
+            <td class="td-right td-mono">{{ (d.comp_importe or 0) | miles }}</td>
+            <td class="td-right td-mono td-fuerte">{{ (d.importe or 0) | miles }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if o.detalle_anticipo %}
+  <div class="card">
+    {{ ui.card_head('Anticipo') }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Proveedor</th><th>CUIT</th><th>Cuenta de pasivo</th><th>Imputación</th><th>Descripción</th><th class="th-right">Importe</th></tr></thead>
+        <tbody>
+          {% for a in o.detalle_anticipo %}
+          <tr>
+            <td class="td-fuerte">{{ a.razon_social }}</td><td class="td-mono">{{ a.cuit }}</td>
+            <td>{{ a.rubro or '—' }}</td><td>{{ a.imputacion or '—' }}</td>
+            <td class="td-wrap">{{ a.descripcion or '' }}</td>
+            <td class="td-right td-mono td-fuerte">{{ (a.importe or 0) | miles }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if o.detalle_concepto %}
+  <div class="card">
+    {{ ui.card_head('Conceptos') }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Tipo</th><th>Concepto / motivo</th><th>Descripción</th><th>Período</th><th class="th-right">Importe</th></tr></thead>
+        <tbody>
+          {% for c in o.detalle_concepto %}
+          <tr>
+            <td>{{ 'Gasto' if c.tipo == 'gasto' else 'Ingreso' }}</td>
+            <td>{{ c.nombre_concepto or c.nombre_motivo or '—' }}</td>
+            <td class="td-wrap">{{ c.descripcion }}</td>
+            <td class="td-mono">{{ (c.periodo[4:] ~ '/' ~ c.periodo[:4]) if c.periodo and c.periodo|length == 6 else '' }}</td>
+            <td class="td-right td-mono td-fuerte">{{ (c.importe or 0) | miles }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if o.detalle_reintegro %}
+  <div class="card">
+    {{ ui.card_head('Reintegros') }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th class="col-acciones">Ver</th><th>Solicitud</th><th>Titular</th><th>CUIL</th><th>CBU / alias</th><th>Descripción</th><th class="th-right">Importe</th></tr></thead>
+        <tbody>
+          {% for r in o.detalle_reintegro %}
+          <tr>
+            <td>{{ ui.accion('ver', href=url_for('reintegros.ficha', id_reintegro=r.id_reintegro)) }}</td>
+            <td class="td-mono">{{ r.nro_solicitud }}</td><td class="td-fuerte">{{ r.nombre }}</td>
+            <td class="td-mono">{{ r.cuil or '' }}</td>
+            <td class="td-mono">{{ r.cbu_destino or r.alias_destino or '—' }}</td>
+            <td class="td-wrap">{{ r.descripcion or '' }}</td>
+            <td class="td-right td-mono td-fuerte">{{ (r.importe or 0) | miles }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ── Pagos y retenciones ───────────────────────────────────────────────── #}
+  {% if o.pagos %}
+  <div class="card">
+    {{ ui.card_head('Pagos') }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th class="col-acciones">Acciones</th><th>N° pago</th><th class="th-right">Fecha</th><th>Instrumentos</th>
+          <th class="th-right">Bruto</th><th class="th-right">Retenido</th><th class="th-right">Neto</th><th>Estado</th><th>Emitió</th></tr></thead>
+        <tbody>
+          {% for p in o.pagos %}
+          <tr class="{{ 'fila-baja' if p.estado == 'anulado' }}">
+            <td><div class="acciones">
+              {% if es_admin and p.estado != 'anulado' %}
+              {{ ui.accion('baja', titulo='Anular el pago', onclick='anularPago(this)', datos={'id': p.id, 'nro': p.nro_origen or p.nro_pago}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-mono td-fuerte">{{ p.nro_origen or p.nro_pago }}</td>
+            <td class="td-right">{{ p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago }}</td>
+            <td class="td-wrap">
+              {% for i in p.instrumentos %}
+                {{ {'cheque': 'Cheque', 'transferencia': 'Transferencia', 'efectivo': 'Efectivo'}.get(i.tipo_instrumento, i.tipo_instrumento) }}
+                {%- if i.nro_cheque %} N° {{ i.nro_cheque }}{% if i.fecha_cheque %} ({{ i.fecha_cheque.strftime('%d/%m/%Y') }}){% endif %}{% endif %}
+                {%- if i.cbu_destino %} → <span class="mono">{{ i.cbu_destino }}</span>{% endif %}
+                · {{ i.cuenta }} · $ {{ (i.importe or 0) | miles }}{% if not loop.last %}<br>{% endif %}
+              {% else %}<span class="td-muted">{{ 'Sin detalle (AEDA)' if p.nro_pago.startswith('AEDA') else '—' }}</span>{% endfor %}
+            </td>
+            <td class="td-right td-mono">{{ (p.importe_total or 0) | miles }}</td>
+            <td class="td-right td-mono">{{ (p.retenido or 0) | miles }}</td>
+            <td class="td-right td-mono td-fuerte">{{ ((p.importe_total or 0) - (p.retenido or 0)) | miles }}</td>
+            <td>{{ ui.estado('Anulado', 'neutro') if p.estado == 'anulado' else ui.estado('Emitido', 'ok') }}
+              {% if p.estado == 'anulado' and p.motivo_anulacion %}<br><small class="td-muted">{{ p.motivo_anulacion }}</small>{% endif %}</td>
+            <td class="td-muted">{{ p.nombre_usuario or '' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {% if o.retenciones %}
+  <div class="card">
+    {{ ui.card_head('Retenciones') }}
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr><th class="col-acciones">Certificado</th><th>Impuesto</th><th>Régimen</th><th class="th-right">Base</th>
+          <th class="th-right">Alícuota</th><th class="th-right">Importe</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for r in o.retenciones %}
+          <tr class="{{ 'fila-baja' if r.anulado }}">
+            <td><div class="acciones">
+              {% if r.id_cert %}
+              {{ ui.accion('ver', titulo='Certificado ' ~ r.nro_certificado, href=url_for('pagos.certificado', id_cert=r.id_cert)) }}
+              {{ ui.accion('pdf', href=url_for('pagos.certificado_pdf', id_cert=r.id_cert), blank=True) }}
+              {% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ r.tipo }}</td><td class="td-mono">{{ r.regimen }}</td>
+            <td class="td-right td-mono">{{ (r.base_calculo or 0) | miles }}</td>
+            <td class="td-right td-mono">{{ '%.2f'|format(r.alicuota|float) }} %</td>
+            <td class="td-right td-mono td-fuerte">{{ (r.importe or 0) | miles }}</td>
+            <td>{{ ui.estado('Anulada', 'neutro') if r.anulado else ui.estado('Practicada', 'ok') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+{# ── Al costado: aprobación y anulación ──────────────────────────────────── #}
+<aside class="card resumen{{ ' warn' if o.estado in ('pendiente_aprobacion', 'rechazada') }}">
+  {{ ui.card_head('Estado: ' ~ estados_txt.get(o.estado, o.estado)) }}
+  <div class="card-body">
+    <div class="resumen-fila"><span>Importe</span><strong class="mono">$ {{ (o.importe_total or 0) | miles }}</strong></div>
+
+    {% if o.aprobaciones %}
+    <div class="separado">
+      {% for a in o.aprobaciones %}
+      <div class="resumen-fila"><span>Nivel {{ a.nivel }}{% if a.nombre_usuario %} · {{ a.nombre_usuario }}{% endif %}</span>
+        {{ ui.estado({'aprobado': 'Aprobó', 'rechazado': 'Rechazó', 'pendiente': 'Pendiente'}.get(a.estado, a.estado),
+                     {'aprobado': 'ok', 'rechazado': 'danger'}.get(a.estado, 'warn')) }}</div>
+      {% if a.observaciones %}<small class="campo-ayuda">{{ a.observaciones }}</small>{% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if o.estado == 'borrador' %}
+      {% if puede_enviar %}
+      {% if not hay_aprobadores %}
+        <div class="separado">{{ ui.aviso('No hay aprobadores configurados: sin eso la orden no se puede aprobar ni pagar.', 'warning') }}</div>
+      {% endif %}
+      <form method="post" action="{{ url_for('pagos.aprobacion', id_orden=o.id) }}" class="separado">
+        <input type="hidden" name="accion" value="enviar">
+        <div class="campo"><label for="obs-enviar">Observaciones</label><textarea name="observaciones" id="obs-enviar" rows="2"></textarea></div>
+        <div class="resumen-botones">{{ ui.boton('Enviar a aprobación', submit=True, icono_='ok') }}</div>
+      </form>
+      {% else %}
+      <p class="campo-ayuda separado">En borrador: la manda a aprobación quien arma esta clase de orden.</p>
+      {% endif %}
+    {% elif o.estado == 'pendiente_aprobacion' %}
+      {% if mis_niveles %}
+      <form method="post" action="{{ url_for('pagos.aprobacion', id_orden=o.id) }}" class="separado" id="form-aprobar">
+        <div class="campo"><label for="obs-aprobar">Observaciones <small>(obligatorias para rechazar)</small></label>
+          <textarea name="observaciones" id="obs-aprobar" rows="2"></textarea></div>
+        <div class="resumen-botones">
+          <button type="submit" name="accion" value="aprobar" class="btn btn-ok">{{ ui.icono('ok') }}Aprobar nivel {{ mis_niveles[0] }}</button>
+          <button type="submit" name="accion" value="rechazar" class="btn btn-danger">{{ ui.icono('cerrar') }}Rechazar</button>
+        </div>
+      </form>
+      {% else %}
+      <p class="campo-ayuda separado">Esperando la aprobación de los niveles pendientes.</p>
+      {% endif %}
+    {% elif o.estado == 'aprobada' and not pagable %}
+      <p class="campo-ayuda separado">{{ 'Las órdenes de sueldos se pagan por empleado.' if o.clase == 'sueldos' else 'Aprobada: la paga quien tiene Emisión de Pagos.' }}</p>
+    {% elif o.estado == 'rechazada' %}
+      <p class="campo-ayuda separado">Rechazada. Para rehacerla, se anula —eso libera sus comprobantes— y se arma de nuevo.</p>
+    {% endif %}
+
+    {% if es_admin and o.estado != 'anulada' and not o.pago_vivo %}
+    <div class="resumen-botones">
+      {{ ui.boton('Anular la orden', 'danger', icono_='baja', onclick="abrirModal('modal-anular')") }}
+    </div>
+    {% endif %}
+  </div>
+</aside>
+</div>
+
+{# ── Diálogos ────────────────────────────────────────────────────────────── #}
+<div class="modal" id="modal-anular">
+  <form method="post" action="{{ url_for('pagos.anular_orden', id_orden=o.id) }}" class="modal-caja">
+    <div class="modal-titulo">¿Anular la orden {{ o.nro_vis }}?</div>
+    <div class="modal-texto">Sus comprobantes vuelven a quedar disponibles para pagar{{ ' y los reintegros, para otra orden' if o.clase == 'reintegro' }}. No se borra nada.</div>
+    <div class="campo"><label for="motivo-orden">Motivo <span class="req">*</span></label>
+      <textarea name="motivo" id="motivo-orden" rows="2" required maxlength="250"></textarea></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+      {{ ui.boton('Anular', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+
+<div class="modal" id="modal-anular-pago">
+  <form method="post" id="form-anular-pago" class="modal-caja">
+    <div class="modal-titulo">¿Anular el pago <span id="anular-pago-nro"></span>?</div>
+    <div class="modal-texto">Se deshace todo lo que escribió: aplicación contra las facturas, retenciones y certificados
+      (quedan anulados), libro de fondos y detalle bancario. La orden vuelve a «aprobada». No se puede si está conciliado
+      o salió en un archivo de transferencias.</div>
+    <div class="campo"><label for="motivo-pago">Motivo <span class="req">*</span></label>
+      <textarea name="motivo" id="motivo-pago" rows="2" required maxlength="250"></textarea></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular-pago')") }}
+      {{ ui.boton('Anular el pago', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+
+{% if pagable %}
+<template id="tpl-quitar">{{ ui.accion('borrar', titulo='Quitar el instrumento') }}</template>
+<div class="modal" id="modal-instrumento">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Agregar instrumento de pago</div>
+    <div class="modal-cuerpo alto">
+      <div class="campos">
+        <div class="campo" style="--span:7;">
+          <label for="mi-cuenta">Cuenta de fondos <span class="req">*</span></label>
+          <select id="mi-cuenta" onchange="cargarChequeras()">
+            <option value="">— Elegí la cuenta —</option>
+            {% for c in cuentas %}
+            <option value="{{ c.id }}" data-tipo="{{ c.tipo_de_cuenta }}">{{ c.nombre }}{% if c.banco_nombre %} — {{ c.banco_nombre }}{% endif %}{% if c.predeterminada %} (predeterminada){% endif %}</option>
+            {% endfor %}
+          </select>
+          {% if not cuentas %}<small class="campo-ayuda error">No hay cuentas de fondos de pago habilitadas (Tesorería → Tablas → Cuentas de Fondos).</small>{% endif %}
+        </div>
+        <div class="campo" style="--span:5;">
+          <label for="mi-tipo">Instrumento <span class="req">*</span></label>
+          <select id="mi-tipo" onchange="verTipo()">
+            {% for k, t in tipos_instrumento %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="campo" style="--span:7;">
+          <label for="mi-importe">Importe <span class="req">*</span></label>
+          <input type="text" id="mi-importe" class="inp-importe importe" inputmode="decimal" oninput="regenerarCheques()">
+        </div>
+        <div class="campo campo-boton" style="--span:5;">
+          {{ ui.boton('Completar la diferencia', 'secondary', chico=True, onclick='completarDiferencia()') }}
+        </div>
+      </div>
+
+      <div id="bloque-cheque" class="oculto separado">
+        <div class="bloque-titulo">Cheques</div>
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label for="mi-chequera">Chequera <span class="req">*</span></label>
+            <select id="mi-chequera" onchange="regenerarCheques()"></select>
+            <small class="campo-ayuda" id="mi-chequera-info"></small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="mi-cant">Cantidad</label>
+            <input type="number" id="mi-cant" min="1" max="60" value="1" oninput="regenerarCheques()">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label for="mi-fecha">Primer vencimiento</label>
+            <input type="date" id="mi-fecha" onchange="regenerarCheques()">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label for="mi-modo">Vencen cada</label>
+            <select id="mi-modo" onchange="regenerarCheques()"><option value="dias">tantos días</option><option value="mes">mes (mismo día)</option></select>
+          </div>
+          <div class="campo" style="--span:2;" id="campo-dias">
+            <label for="mi-dias">Días</label>
+            <input type="number" id="mi-dias" min="1" max="365" value="30" oninput="regenerarCheques()">
+          </div>
+          <div class="campo" style="--span:12;">
+            <label class="campo-check"><input type="checkbox" id="mi-cruzado"> Cruzados</label>
+          </div>
+        </div>
+        <div class="data-table-wrap separado oculto" id="cheques-wrap" data-sin-scroll-arriba>
+          <table class="data-table compacta" data-sin-orden>
+            <thead><tr><th>#</th><th>N° de cheque</th><th>Vencimiento</th><th class="th-right">Importe</th></tr></thead>
+            <tbody id="cheques"></tbody>
+          </table>
+        </div>
+        <div class="resumen-fila"><span>Suma de los cheques</span><strong class="mono" id="cheques-suma"></strong></div>
+        <small class="campo-ayuda" id="cheques-nota"></small>
+      </div>
+
+      <div id="bloque-transferencia" class="separado">
+        <div class="campos">
+          <div class="campo" style="--span:7;">
+            <label for="mi-cbu">CBU o alias destino</label>
+            <input type="text" id="mi-cbu" class="mono" list="lista-cbu" maxlength="22">
+            <datalist id="lista-cbu">
+              {% for b in beneficiarios %}<option value="{{ b.cbu or b.alias }}">{{ b.nombre }}{% if b.alias and b.cbu %} · {{ b.alias }}{% endif %}</option>{% endfor %}
+            </datalist>
+            <small class="campo-ayuda" id="mi-cbu-ayuda">{{ 'Sale de la ficha de ' ~ beneficiarios[0].nombre ~ '.' if beneficiarios|length == 1 else ('Elegí de la lista: hay ' ~ beneficiarios|length ~ ' beneficiarios.' if beneficiarios else '') }}</small>
+          </div>
+          <div class="campo" style="--span:5;">
+            <label for="mi-ref">N° de referencia</label>
+            <input type="text" id="mi-ref" maxlength="100">
+          </div>
+        </div>
+      </div>
+      <small class="campo-ayuda error" id="mi-error"></small>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-instrumento')") }}
+      {{ ui.boton('Agregar', icono_='agregar', onclick='confirmarInstrumento()') }}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function anularPago(b) {
+  document.getElementById('anular-pago-nro').textContent = b.dataset.nro;
+  document.getElementById('form-anular-pago').action = '{{ url_for("pagos.anular_pago", id_pago=0) }}'.replace('/0/', '/' + b.dataset.id + '/');
+  abrirModal('modal-anular-pago');
+}
+{% if pagable %}
+var BRUTO = {{ (o.importe_total or 0)|float }}, NETO = BRUTO, CHEQUERAS = {{ chequeras|tojson }},
+    BENEF = {{ beneficiarios|tojson }}, CUENTA_PRED = '{{ cuenta_predeterminada or '' }}', nInstr = 0, TOPE_MENSUAL = 12;
+
+function cent(t) {
+  var s = String(t == null ? '' : t).trim().replace(/\s|\$/g, '');
+  if (!s) return 0;
+  if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.');
+  return Math.round((parseFloat(s) || 0) * 100);
+}
+function pesos(c) { return (c / 100).toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+function asignadoCent() {
+  var t = 0;
+  document.querySelectorAll('#lista-instrumentos tr[data-importe]').forEach(function (tr) { t += parseInt(tr.dataset.importe, 10); });
+  return t;
+}
+function error(t) { document.getElementById('mi-error').textContent = t || ''; return false; }
+
+function abrirInstrumento() {
+  error('');
+  document.getElementById('mi-cuenta').value = CUENTA_PRED;
+  document.getElementById('mi-tipo').value = 'transferencia';
+  document.getElementById('mi-importe').value = '';
+  document.getElementById('mi-ref').value = '';
+  document.getElementById('mi-cant').value = '1';
+  document.getElementById('mi-fecha').value = '';
+  document.getElementById('mi-cruzado').checked = false;
+  var u = BENEF.length === 1 ? (BENEF[0].cbu || BENEF[0].alias) : '';
+  document.getElementById('mi-cbu').value = u;
+  verTipo();
+  completarDiferencia();
+  abrirModal('modal-instrumento');
+}
+function verTipo() {
+  var t = document.getElementById('mi-tipo').value;
+  document.getElementById('bloque-cheque').classList.toggle('oculto', t !== 'cheque');
+  document.getElementById('bloque-transferencia').classList.toggle('oculto', t !== 'transferencia');
+  if (t === 'cheque') cargarChequeras();
+}
+function cargarChequeras() {
+  var id = document.getElementById('mi-cuenta').value, sel = document.getElementById('mi-chequera');
+  var propias = CHEQUERAS.filter(function (q) { return String(q.id_cuenta) === String(id); });
+  sel.innerHTML = '';
+  if (!propias.length) {
+    sel.innerHTML = '<option value="">' + (id ? 'La cuenta no tiene chequeras con números libres' : '— Elegí la cuenta —') + '</option>';
+  }
+  propias.forEach(function (q) {
+    var op = document.createElement('option');
+    op.value = q.id;
+    op.textContent = q.descripcion + ' · próximo ' + q.proximo + ' · quedan ' + q.disponibles;
+    sel.appendChild(op);
+  });
+  regenerarCheques();
+}
+function chequera() {
+  var id = document.getElementById('mi-chequera').value;
+  return CHEQUERAS.filter(function (q) { return String(q.id) === String(id); })[0] || null;
+}
+function completarDiferencia() {
+  var r = Math.round(NETO * 100) - asignadoCent();
+  document.getElementById('mi-importe').value = r > 0 ? pesos(r) : '';
+  regenerarCheques();
+}
+function sumarMeses(f, n) {
+  var d = new Date(f.getTime()), dia = d.getDate();
+  d.setDate(1); d.setMonth(d.getMonth() + n);
+  d.setDate(Math.min(dia, new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate()));
+  return d;
+}
+function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+/* Iguales en pesos enteros; los centavos y el resto, en el último. */
+function repartir(total, n) {
+  var base = Math.floor(total / n / 100) * 100, out = [];
+  for (var i = 0; i < n - 1; i++) out.push(base);
+  out.push(total - base * (n - 1));
+  return out;
+}
+function regenerarCheques() {
+  if (document.getElementById('mi-tipo').value !== 'cheque') return;
+  var q = chequera(), cantEl = document.getElementById('mi-cant'), f0 = document.getElementById('mi-fecha').value,
+      total = cent(document.getElementById('mi-importe').value), modo = document.getElementById('mi-modo').value,
+      cuerpo = document.getElementById('cheques'), wrap = document.getElementById('cheques-wrap'),
+      nota = document.getElementById('cheques-nota'), avisos = [];
+  document.getElementById('campo-dias').classList.toggle('oculto', modo === 'mes');
+  document.getElementById('mi-chequera-info').textContent = q ? ('Del ' + q.desde + ' al ' + q.hasta + '.') : '';
+  if (modo === 'mes' && parseInt(cantEl.value, 10) > TOPE_MENSUAL) {
+    cantEl.value = TOPE_MENSUAL;
+    avisos.push('Mensual, a lo sumo ' + TOPE_MENSUAL + ' cheques: un diferido a más de 360 días el banco lo rechaza.');
+  }
+  var n = parseInt(cantEl.value, 10) || 0;
+  cuerpo.innerHTML = '';
+  if (!q || n < 1 || !f0 || total <= 0) { wrap.classList.add('oculto'); nota.textContent = ''; document.getElementById('cheques-suma').textContent = ''; return; }
+  wrap.classList.remove('oculto');
+  if (n > q.disponibles) avisos.push('La chequera tiene ' + q.disponibles + ' número(s) libre(s) y se piden ' + n + '.');
+  var imp = repartir(total, n), dias = parseInt(document.getElementById('mi-dias').value, 10) || 30,
+      base = new Date(f0 + 'T00:00:00');
+  for (var i = 0; i < n; i++) {
+    var f = modo === 'mes' ? sumarMeses(base, i) : new Date(base.getTime() + i * dias * 86400000);
+    var num = q.proximo + i, tr = document.createElement('tr');
+    tr.innerHTML = '<td class="td-muted">' + (i + 1) + '</td>' +
+      '<td><input type="text" class="chq-nro importe' + (num > q.hasta ? ' excedido' : '') + '" value="' + num + '" onchange="renumerar(this)"></td>' +
+      '<td><input type="date" class="chq-fecha" value="' + iso(f) + '"></td>' +
+      '<td class="td-right"><input type="text" class="chq-importe importe" value="' + pesos(imp[i]) + '" oninput="sumarCheques()" onchange="redistribuir(this)"></td>';
+    cuerpo.appendChild(tr);
+  }
+  if (q.proximo + n - 1 > q.hasta) avisos.push('Los últimos números se pasan del final de la chequera (' + q.hasta + ').');
+  nota.className = 'campo-ayuda' + (avisos.length ? ' error' : '');
+  nota.textContent = avisos.length ? avisos.join(' ') : 'Los centavos van en el último cheque. Corregir un número renumera los siguientes; un importe, reparte el resto entre los siguientes.';
+  sumarCheques();
+}
+function renumerar(inp) {
+  var celdas = Array.prototype.slice.call(document.querySelectorAll('#cheques .chq-nro')), i = celdas.indexOf(inp),
+      base = parseInt((inp.value || '').replace(/\D/g, ''), 10), q = chequera();
+  if (!base) return;
+  for (var j = i; j < celdas.length; j++) celdas[j].value = String(base + (j - i));
+  celdas.forEach(function (c) { var v = parseInt(c.value, 10); c.classList.toggle('excedido', !!q && (v < q.desde || v > q.hasta)); });
+}
+function redistribuir(inp) {
+  var celdas = Array.prototype.slice.call(document.querySelectorAll('#cheques .chq-importe')), i = celdas.indexOf(inp);
+  inp.value = pesos(cent(inp.value));
+  var fijo = 0;
+  for (var k = 0; k <= i; k++) fijo += cent(celdas[k].value);
+  var resto = cent(document.getElementById('mi-importe').value) - fijo, siguientes = celdas.length - 1 - i;
+  if (siguientes > 0 && resto > 0) {
+    var imp = repartir(resto, siguientes);
+    for (var j = 0; j < siguientes; j++) celdas[i + 1 + j].value = pesos(imp[j]);
+  }
+  sumarCheques();
+}
+function sumarCheques() {
+  var s = 0;
+  document.querySelectorAll('#cheques .chq-importe').forEach(function (inp) { s += cent(inp.value); });
+  var el = document.getElementById('cheques-suma'), obj = cent(document.getElementById('mi-importe').value);
+  el.textContent = '$ ' + pesos(s);
+  el.className = 'mono ' + (s === obj ? 'td-ok' : 'td-danger');
+  return s;
+}
+function fila(o) {
+  var vacia = document.getElementById('sin-instrumentos');
+  if (vacia) vacia.remove();
+  var idx = nInstr++, tr = document.createElement('tr');
+  tr.dataset.importe = o.cent;
+  var etiqueta = o.tipo === 'cheque' ? 'Cheque N° ' + o.nro + ' · vence ' + o.fecha.split('-').reverse().join('/')
+               : o.tipo === 'transferencia' ? 'Transferencia' + (o.cbu ? ' → ' + o.cbu : '') : 'Efectivo';
+  var campos = {id_cuenta_fondos: o.cuenta, tipo_instrumento: o.tipo, importe_instrumento: (o.cent / 100).toFixed(2),
+                nro_cheque: o.nro || '', fecha_cheque: o.fecha || '', id_chequera: o.chequera || '',
+                cruzado: o.cruzado ? '1' : '0', cbu_destino: o.cbu || '', nro_referencia: o.ref || ''};
+  var ocultos = Object.keys(campos).map(function (k) {
+    var i = document.createElement('input'); i.type = 'hidden'; i.name = k; i.value = campos[k]; return i.outerHTML;
+  }).join('');
+  tr.innerHTML = '<td><div class="acciones"></div>' + ocultos + '</td>' +
+                 '<td></td><td class="td-muted"></td><td class="td-right td-mono">' + pesos(o.cent) + '</td>';
+  tr.children[1].textContent = etiqueta;
+  tr.children[2].textContent = o.cuentaNombre;
+  var quitar = document.getElementById('tpl-quitar').content.firstElementChild.cloneNode(true);
+  quitar.addEventListener('click', function () { tr.remove(); recalcular(); });
+  tr.querySelector('.acciones').appendChild(quitar);
+  document.getElementById('lista-instrumentos').appendChild(tr);
+}
+function confirmarInstrumento() {
+  error('');
+  var cuenta = document.getElementById('mi-cuenta'), tipo = document.getElementById('mi-tipo').value,
+      total = cent(document.getElementById('mi-importe').value),
+      resto = Math.round(NETO * 100) - asignadoCent(),
+      nombre = cuenta.value ? cuenta.options[cuenta.selectedIndex].text : '';
+  if (!cuenta.value) return error('Elegí la cuenta de fondos.');
+  if (total <= 0) return error('Escribí el importe.');
+  if (total > resto + 1) return error('El importe supera lo que falta asignar ($ ' + pesos(resto) + ').');
+  if (tipo === 'efectivo' && cuenta.options[cuenta.selectedIndex].dataset.tipo === 'B') return error('El efectivo sale de una caja, no de un banco.');
+  if (tipo === 'cheque') {
+    var q = chequera();
+    if (!q) return error('Elegí la chequera.');
+    var nros = document.querySelectorAll('#cheques .chq-nro'), fechas = document.querySelectorAll('#cheques .chq-fecha'),
+        imps = document.querySelectorAll('#cheques .chq-importe'), vistos = {}, cheques = [], suma = 0;
+    if (!nros.length) return error('Completá la cantidad de cheques y el primer vencimiento.');
+    for (var i = 0; i < nros.length; i++) {
+      var num = (nros[i].value || '').trim(), c = cent(imps[i].value);
+      if (!/^\d+$/.test(num)) return error('El número del cheque ' + (i + 1) + ' no es un número.');
+      if (+num < q.desde || +num > q.hasta) return error('El cheque ' + num + ' está fuera de la chequera (' + q.desde + ' al ' + q.hasta + ').');
+      if (!fechas[i].value) return error('Falta el vencimiento del cheque ' + (i + 1) + '.');
+      if (c <= 0) return error('El cheque ' + (i + 1) + ' quedó en cero.');
+      if (vistos[num]) return error('El número ' + num + ' está repetido.');
+      vistos[num] = true; suma += c;
+      cheques.push({nro: num, fecha: fechas[i].value, cent: c});
+    }
+    if (suma !== total) return error('Los cheques suman $ ' + pesos(suma) + ' y el importe es $ ' + pesos(total) + ': tienen que dar igual.');
+    var cruz = document.getElementById('mi-cruzado').checked;
+    cheques.forEach(function (ch) {
+      fila({cuenta: cuenta.value, cuentaNombre: nombre, tipo: 'cheque', cent: ch.cent, nro: ch.nro, fecha: ch.fecha,
+            chequera: q.id, cruzado: cruz});
+    });
+  } else {
+    fila({cuenta: cuenta.value, cuentaNombre: nombre, tipo: tipo, cent: total,
+          cbu: tipo === 'transferencia' ? document.getElementById('mi-cbu').value.trim() : '',
+          ref: tipo === 'transferencia' ? document.getElementById('mi-ref').value.trim() : ''});
+  }
+  recalcular();
+  if (Math.round(NETO * 100) - asignadoCent() <= 0) cerrarModal('modal-instrumento');
+  else { completarDiferencia(); document.getElementById('mi-importe').focus(); }
+}
+function recalcular() {
+  var asig = asignadoCent(), dif = Math.round(NETO * 100) - asig;
+  document.getElementById('txt-asignado').textContent = '$ ' + pesos(asig);
+  var d = document.getElementById('txt-diferencia');
+  d.textContent = '$ ' + pesos(Math.abs(dif)) + (dif < 0 ? ' de más' : '');
+  d.className = 'mono ' + (dif === 0 ? 'td-ok' : 'td-danger');
+  document.getElementById('btn-pagar').disabled = dif !== 0 || asig === 0;
+  if (!document.querySelector('#lista-instrumentos tr')) {
+    document.getElementById('lista-instrumentos').innerHTML = '<tr class="no-data-row" id="sin-instrumentos"><td colspan="4" class="no-data">Todavía no hay instrumentos: «Agregar instrumento».</td></tr>';
+  }
+}
+function cargarRetenciones() {
+  var f = document.getElementById('fecha_pago').value, motivos = document.getElementById('motivos-retencion');
+  if (!f) return;
+  document.getElementById('txt-retenciones').textContent = 'calculando…';
+  fetch('{{ url_for("pagos.api_retenciones", id_orden=o.id) }}?fecha_pago=' + encodeURIComponent(f), {credentials: 'same-origin'})
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) throw new Error(d.error);
+      NETO = d.neto;
+      var lista = document.getElementById('lista-retenciones');
+      lista.innerHTML = '';
+      (d.retenciones || []).forEach(function (r) {
+        var div = document.createElement('div');
+        div.className = 'resumen-fila chico';
+        div.innerHTML = '<span></span><span class="mono"></span>';
+        div.children[0].textContent = r.tipo + ' (' + r.regimen + ') ' + String(r.alicuota).replace('.', ',') + '% sobre $ ' + pesos(Math.round(r.base_calculo * 100));
+        div.children[1].textContent = '− $ ' + pesos(Math.round(r.importe * 100));
+        lista.appendChild(div);
+      });
+      document.getElementById('txt-retenciones').textContent = d.total_retenciones ? '− $ ' + pesos(Math.round(d.total_retenciones * 100)) : 'no corresponde';
+      document.getElementById('txt-neto').textContent = '$ ' + pesos(Math.round(NETO * 100));
+      motivos.innerHTML = '';
+      if (d.motivos && d.motivos.length) {
+        var a = document.createElement('div');
+        a.className = 'alert alert-info';
+        a.innerHTML = {{ ui.icono('info', 16)|tojson }} + '<div><ul></ul></div>';
+        d.motivos.forEach(function (m) { var li = document.createElement('li'); li.textContent = m; a.querySelector('ul').appendChild(li); });
+        motivos.appendChild(a);
+      }
+      recalcular();
+    })
+    .catch(function (e) {
+      document.getElementById('txt-retenciones').textContent = 'error';
+      motivos.innerHTML = '';
+      var a = document.createElement('div');
+      a.className = 'alert alert-danger';
+      a.textContent = 'No se pudieron calcular las retenciones: ' + e.message;
+      motivos.appendChild(a);
+      document.getElementById('btn-pagar').disabled = true;
+    });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('fecha_pago').addEventListener('change', cargarRetenciones);
+  document.getElementById('form-pago').addEventListener('submit', function () { document.getElementById('btn-pagar').disabled = true; });
+  cargarRetenciones();
+});
+{% endif %}
+</script>
+{% endblock %}

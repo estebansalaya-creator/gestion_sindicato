@@ -1,0 +1,899 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Gestión Sindical{% endblock %}
+
+{% block content %}
+{# Pendiente de integrar a sindicato.css: cuando esté, se borra esta línea. #}
+
+{# ── Macro: formato período ───────────────────────────────────────────────── #}
+{% macro fmt_periodo(p) %}
+  {%- set ps = p | string -%}
+  {%- set m  = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] -%}
+  {{ m[ps[4:] | int] }} {{ ps[:4] }}
+{%- endmacro %}
+
+<div class="page-header">
+  <div>
+    <h1>Gestión Sindical</h1>
+    <p>Cuotas sindicales — Ley 23.551 art. 38</p>
+  </div>
+</div>
+
+{# La solapa activa se guarda en el hash (#cuotas, #historial…): al volver a la
+   pantalla o recargarla, queda en la misma. #}
+{{ ui.solapas([('dashboard', 'Resumen', None), ('cuotas', 'Cuotas por período', None),
+               ('importar', 'Importar', None), ('historial', 'Historial', ultimas_importaciones|length)],
+              'dashboard') }}
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   SOLAPA 1 — RESUMEN
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="abm-panel" data-panel="dashboard">
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+      <div><div class="kpi-lbl">Períodos</div><div class="kpi-val">{{ dash.total_periodos or 0 }}</div></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-ico">{{ ui.icono('empresa', 20) }}</div>
+      <div><div class="kpi-lbl">Empresas</div><div class="kpi-val">{{ dash.total_empresas or 0 }}</div></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+      <div><div class="kpi-lbl">Empleados únicos</div><div class="kpi-val">{{ dash.total_cuiles or 0 }}</div></div>
+    </div>
+    {% if dash.ultimo %}
+    <div class="kpi-card">
+      <div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+      <div><div class="kpi-lbl">Cuotas {{ fmt_periodo(dash.ultimo_periodo) }}</div>
+        <div class="kpi-val monto">$ {{ (dash.ultimo.total_cuota or 0) | miles }}</div></div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-ico">{{ ui.icono('dinero', 20) }}</div>
+      <div><div class="kpi-lbl">Remuneraciones {{ fmt_periodo(dash.ultimo_periodo) }}</div>
+        <div class="kpi-val monto">$ {{ (dash.ultimo.total_remu or 0) | miles }}</div></div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="columnas-2-1">
+    <div class="card">
+      {{ ui.card_head('Evolución de cuotas — últimos ' ~ (evol | length) ~ ' períodos') }}
+      <div class="card-body">
+        <canvas id="chart-evol" height="180"></canvas>
+      </div>
+    </div>
+
+    {# El ranking es un recuadro de diez filas al costado del gráfico: no lleva
+       barra de filtros ni paginación, que ocuparían más que la tabla. #}
+    {% if top10 %}
+    <div class="card">
+      {{ ui.card_head('Top 10 empresas — ' ~ fmt_periodo(dash.ultimo_periodo)) }}
+      <div class="data-table-wrap">
+        <table class="data-table compacta">
+          <thead>
+            <tr><th>Empresa</th><th class="th-right">Empl.</th><th class="th-right">Cuota</th></tr>
+          </thead>
+          <tbody>
+            {% for e in top10 %}
+            <tr>
+              <td class="td-recorte" title="{{ e.empresa }}">{{ e.empresa }}</td>
+              <td class="td-right">{{ e.empleados }}</td>
+              <td class="td-right td-fuerte">{{ (e.total_cuota or 0) | miles }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Resumen por período') }}
+    {{ ui.barra_filtros('Filtrar por período…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-evol" data-exportar="Resumen por período">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Período</th>
+            <th class="th-right">Empresas</th>
+            <th class="th-right">Empleados</th>
+            <th class="th-right">Total remuneraciones</th>
+            <th class="th-right">Total cuotas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in evol | reverse %}
+          <tr>
+            <td><div class="acciones">
+              {{ ui.accion('ver', titulo='Ver las cuotas del período',
+                           onclick='irCuotas(this.dataset.periodo)', datos={'periodo': e.periodo}) }}
+            </div></td>
+            <td class="td-fuerte">{{ fmt_periodo(e.periodo) }}</td>
+            <td class="td-right">{{ e.empresas }}</td>
+            <td class="td-right">{{ e.empleados }}</td>
+            <td class="td-right">{{ (e.total_remu or 0) | miles }}</td>
+            <td class="td-right td-fuerte">{{ (e.total_cuota or 0) | miles }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="6" class="no-data">Sin datos aún.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+</div>
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   SOLAPA 2 — CUOTAS POR PERÍODO
+   El período se pide al servidor (/api/cuotas) y se carga solo al cambiarlo;
+   la búsqueda de la barra filtra lo ya cargado —por CUIT, empresa o CUIL—.
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="abm-panel oculto" data-panel="cuotas">
+
+  <div id="cuotas-kpis" class="kpi-row"></div>
+
+  <div class="card" id="card-cuotas">
+    {% call ui.barra_filtros('Filtrar por CUIT, empresa, CUIL…') %}
+      {% call ui.filtro('Período') %}
+        <select class="filtro" id="flt-periodo" onchange="cargarCuotas()">
+          {% for e in evol | reverse %}
+          <option value="{{ e.periodo }}">{{ fmt_periodo(e.periodo) }}</option>
+          {% endfor %}
+        </select>
+      {% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuotas" data-exportar="Cuotas">
+        <thead>
+          <tr>
+            <th>CUIT</th>
+            <th>Empresa</th>
+            <th>CUIL</th>
+            <th class="th-center">Período</th>
+            <th class="th-right">Remuneración</th>
+            <th class="th-right">Cuota</th>
+            <th class="th-right">Alta</th>
+            <th class="th-right">Baja</th>
+          </tr>
+        </thead>
+        <tbody id="tbody-cuotas">
+          <tr class="no-data-row"><td colspan="8" class="no-data">Elegí un período.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+</div>
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   SOLAPA 3 — IMPORTAR
+   Las dos tablas de esta solapa (archivos detectados y progreso) muestran el
+   estado de un proceso en curso, no datos para consultar: no llevan barra de
+   filtros ni exportación.
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="abm-panel oculto" data-panel="importar">
+
+  <div class="card" id="imp-card-upload">
+    <div class="card-head">
+      <div class="fila"><span class="paso-badge">1</span>
+        <span class="card-head-titulo">Seleccioná la carpeta con las planillas</span></div>
+    </div>
+    <div class="card-body">
+      <div id="imp-parse-error" class="alert alert-danger" style="display:none;"></div>
+      <div id="imp-drop-zone" class="drop-zone"
+           onclick="document.getElementById('imp-folder-input').click()">
+        {{ ui.icono('subir', 32) }}
+        <strong>Hacé clic para seleccionar una carpeta</strong>
+        <span class="chico">Se procesarán todos los <strong>.xlsx</strong> dentro de la carpeta</span>
+      </div>
+      <input type="file" id="imp-folder-input" webkitdirectory mozdirectory directory
+             multiple class="oculto" onchange="impOnCarpeta(this.files)">
+    </div>
+  </div>
+
+  <div class="card" id="imp-card-archivos" style="display:none;">
+    <div class="card-head">
+      <div class="fila"><span class="paso-badge">2</span>
+        <span class="card-head-titulo">Archivos detectados</span></div>
+      <div class="card-head-acciones"><span id="imp-badge-total" class="chip"></span></div>
+    </div>
+    <div class="data-table-wrap">
+      <table class="data-table" id="imp-tbl-archivos" data-sin-orden>
+        <thead>
+          <tr>
+            <th data-no-sort>N°</th><th data-no-sort>Archivo</th><th data-no-sort>Empresa / CUIT</th>
+            <th class="th-center" data-no-sort>Período</th>
+            <th class="th-right" data-no-sort>Empleados</th>
+            <th class="th-right" data-no-sort>Remu. total</th>
+            <th class="th-right" data-no-sort>Cuota total</th>
+            <th data-no-sort>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="imp-tbody-archivos"></tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      <div id="imp-warn-global" class="alert alert-warning" style="display:none;"></div>
+    </div>
+  </div>
+
+  <div class="card" id="imp-card-opciones" style="display:none;">
+    <div class="card-head">
+      <div class="fila"><span class="paso-badge">3</span>
+        <span class="card-head-titulo">Opciones de importación</span></div>
+    </div>
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <span class="campo-label">¿Qué hacer con duplicados (mismo CUIT / CUIL / Período)?</span>
+          <div class="opciones-tarjeta">
+            <label class="radio-card" id="imp-lbl-skip">
+              <input type="radio" name="imp_modo" value="skip" checked onchange="impActualizarModo()">
+              <div><strong>Ignorar</strong><span>No modifica el existente</span></div>
+            </label>
+            <label class="radio-card" id="imp-lbl-update">
+              <input type="radio" name="imp_modo" value="update" onchange="impActualizarModo()">
+              <div><strong>Actualizar</strong><span>Sobreescribe remuneración y cuota</span></div>
+            </label>
+            <label class="radio-card" id="imp-lbl-error">
+              <input type="radio" name="imp_modo" value="error" onchange="impActualizarModo()">
+              <div><strong>Detener</strong><span>Frena ese archivo con error</span></div>
+            </label>
+          </div>
+        </div>
+        <div class="campo" style="--span:12;">
+          <label for="imp-obs">Observaciones (opcional)</label>
+          <input type="text" id="imp-obs" maxlength="250"
+                 placeholder="Ej: Importación mensual validada…">
+        </div>
+      </div>
+    </div>
+    <div class="form-acciones">
+      <span id="imp-spinner" class="estado estado-proceso" style="display:none;"><span id="imp-spinner-txt">Procesando…</span></span>
+      {{ ui.boton('Cancelar / Nueva carpeta', 'secondary', onclick='impLimpiar()') }}
+      {{ ui.boton('Importar todos', 'primary', icono_='subir', onclick='impEjecutarLote()', id='imp-btn-importar') }}
+    </div>
+  </div>
+
+  <div class="card" id="imp-card-progreso" style="display:none;">
+    <div class="card-head">
+      <div class="fila"><span class="paso-badge">4</span>
+        <span class="card-head-titulo">Progreso</span></div>
+      <div class="card-head-acciones"><span id="imp-prog-label" class="chico muted"></span></div>
+    </div>
+    <div class="card-body">
+      <div class="progreso"><div id="imp-prog-bar" class="progreso-barra"></div></div>
+    </div>
+    <div class="data-table-wrap">
+      <table class="data-table" id="imp-tbl-prog" data-sin-orden>
+        <thead>
+          <tr>
+            <th data-no-sort>Archivo</th><th data-no-sort>CUIT</th><th class="th-center" data-no-sort>Período</th>
+            <th class="th-right" data-no-sort>Insert.</th><th class="th-right" data-no-sort>Actual.</th>
+            <th class="th-right" data-no-sort>Ignor.</th><th class="th-right" data-no-sort>Err.</th>
+            <th data-no-sort>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="imp-tbody-prog"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="imp-card-resultado" style="display:none;"></div>
+
+</div>
+
+
+{# ══════════════════════════════════════════════════════════════════════════
+   SOLAPA 4 — HISTORIAL
+   ══════════════════════════════════════════════════════════════════════════ #}
+<div class="abm-panel oculto" data-panel="historial">
+  <div class="card">
+    {{ ui.barra_filtros('Filtrar por archivo, CUIT, empresa…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-historial" data-exportar="Historial de importaciones">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th class="th-right">N°</th><th>Archivo</th><th>Empresa</th><th>CUIT</th>
+            <th class="th-center">Período</th>
+            <th class="th-right">Insert.</th><th class="th-right">Actual.</th>
+            <th class="th-right">Ignor.</th><th class="th-right">Err.</th>
+            <th>Usuario</th><th class="th-right">Fecha</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in ultimas_importaciones %}
+          <tr>
+            <td><div class="acciones">
+              {% if r.detalle_errores %}
+              {# El detalle viaja en data-detalle y no serializado en el onclick:
+                 un mensaje de error con comillas rompía el atributo. #}
+              {{ ui.accion('ver', titulo='Ver errores', onclick='verDetalle(this)',
+                           datos={'id': r.id, 'detalle': r.detalle_errores}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-right td-muted">{{ r.id }}</td>
+            <td class="td-mono td-recorte" title="{{ r.nombre_archivo }}">{{ r.nombre_archivo }}</td>
+            <td class="td-recorte" title="{{ r.empresa or '' }}">{{ r.empresa or '—' }}</td>
+            <td class="td-mono">{{ r.cuit[:2] }}-{{ r.cuit[2:10] }}-{{ r.cuit[10:] }}</td>
+            <td class="td-center">{{ fmt_periodo(r.periodo) }}</td>
+            <td class="td-right {{ 'td-ok' if r.insertados else 'td-muted' }}">{{ r.insertados }}</td>
+            <td class="td-right {{ 'td-fuerte' if r.actualizados else 'td-muted' }}">{{ r.actualizados }}</td>
+            <td class="td-right td-muted">{{ r.ignorados }}</td>
+            <td class="td-right {{ 'td-danger' if r.errores else 'td-muted' }}">{{ r.errores }}</td>
+            <td>{{ r.usuario_nombre or '—' }}</td>
+            <td class="td-right">
+              {{ r.fecha_importacion.strftime('%d/%m/%Y %H:%M') if r.fecha_importacion else '—' }}
+            </td>
+            <td>
+              {% if r.estado == 'ok' %}{{ ui.estado('OK', 'ok') }}
+              {% elif r.estado == 'parcial' %}{{ ui.estado('Parcial', 'warn') }}
+              {% else %}{{ ui.estado('Error', 'danger') }}{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="13" class="no-data">Sin importaciones registradas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+
+{# ── Diálogo: detalle de errores de una importación ──────────────────────── #}
+<div class="modal" id="modal-errores">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Detalle de errores — importación #<span id="modal-err-id"></span></div>
+    <div class="modal-cuerpo" id="modal-err-body"></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cerrar', 'secondary', onclick="cerrarModal('modal-errores')") }}
+    </div>
+  </div>
+</div>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+/* ── URLs ────────────────────────────────────────────────────────────────── */
+var URL_API_CUOTAS  = "{{ url_for('sindicato.api_cuotas') }}";
+var URL_IMPORTAR    = "{{ url_for('sindicato.fisca_importar_cuotas_post') }}";
+var URL_HISTORIAL   = "{{ url_for('sindicato.fisca_importaciones_log') }}";
+
+/* Íconos del sistema para lo que se arma por JS: los mismos SVG que
+   ui.icono(), sin copiarlos a mano. */
+var ICONO = {
+  calendario: {{ ui.icono('calendario', 20) | tojson }},
+  empresa:    {{ ui.icono('empresa', 20) | tojson }},
+  grupo:      {{ ui.icono('grupo', 20) | tojson }},
+  dinero:     {{ ui.icono('dinero', 20) | tojson }},
+  planilla:   {{ ui.icono('planilla', 20) | tojson }}
+};
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOLAPAS
+   ui.solapas() cambia de panel con abmSolapa(); acá va lo que cada solapa
+   hace al abrirse, y el hash para volver a la misma.
+═══════════════════════════════════════════════════════════════════════════ */
+function alActivar(nombre) {
+  history.replaceState(null, '', '#' + nombre);
+  if (nombre === 'dashboard') initChart();
+  // Al abrir la solapa de cuotas se carga el último período: el select ya
+  // lo tiene elegido, y una grilla vacía esperando un clic no informa nada.
+  if (nombre === 'cuotas' && !_periodoPedido) cargarCuotas();
+}
+
+function showTab(nombre) {
+  abmSolapa(nombre);
+  alActivar(nombre);
+}
+
+function irCuotas(periodo) {
+  document.getElementById('flt-periodo').value = periodo;
+  showTab('cuotas');
+  if (_periodoPedido !== String(periodo)) cargarCuotas();
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('.abm-tab').forEach(function (t) {
+    t.addEventListener('click', function () { alActivar(t.dataset.panel); });
+  });
+  var hash = window.location.hash.replace('#', '');
+  showTab(document.querySelector('.abm-tab[data-panel="' + hash + '"]') ? hash : 'dashboard');
+  // tbl-evol y tbl-historial las inicia base.html al cargar, como a toda grilla
+  // con filas; la de cuotas, que se llena por fetch, la inicia cargarCuotas().
+  impActualizarModo();
+});
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   GRÁFICO EVOLUCIÓN
+═══════════════════════════════════════════════════════════════════════════ */
+var _chartEvol = null;
+var _evolData  = {{ evol | tojson }};
+
+// Los colores salen de los tokens de sindicato.css, no escritos acá.
+function token(nombre) {
+  return getComputedStyle(document.documentElement).getPropertyValue(nombre).trim();
+}
+function conAlfa(hex, a) {
+  var h = hex.replace('#', '');
+  return 'rgba(' + parseInt(h.substr(0, 2), 16) + ',' + parseInt(h.substr(2, 2), 16) + ','
+       + parseInt(h.substr(4, 2), 16) + ',' + a + ')';
+}
+
+function initChart() {
+  if (_chartEvol) return;
+  var ctx = document.getElementById('chart-evol');
+  // Sin Chart.js (el CDN no respondió) el resto de la pantalla sigue andando.
+  if (!ctx || !_evolData.length || typeof Chart === 'undefined') return;
+
+  var labels = _evolData.map(function(e) {
+    var s = String(e.periodo);
+    var m = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+    return m[parseInt(s.slice(4))] + ' ' + s.slice(0,4);
+  });
+  var dataCuotas = _evolData.map(function(e){ return parseFloat(e.total_cuota || 0); });
+  var dataRemu   = _evolData.map(function(e){ return parseFloat(e.total_remu  || 0); });
+
+  _chartEvol = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [
+        { label: 'Cuotas', data: dataCuotas, backgroundColor: conAlfa(token('--blue'), .8),
+          borderRadius: 4, yAxisID: 'y' },
+        { label: 'Remuneraciones', data: dataRemu, backgroundColor: conAlfa(token('--accent'), .35),
+          borderRadius: 4, yAxisID: 'y1' }
+      ]
+    },
+    options: {
+      responsive: true,
+      plugins: {
+        legend: { position: 'top', labels: { font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              return ctx.dataset.label + ': $ ' +
+                ctx.parsed.y.toLocaleString('es-AR', { minimumFractionDigits: 2 });
+            }
+          }
+        }
+      },
+      scales: {
+        y:  { position: 'left',  ticks: { font: { size: 10 },
+              callback: function(v){ return '$ ' + (v/1000).toFixed(0) + 'k'; } } },
+        y1: { position: 'right', grid: { drawOnChartArea: false },
+              ticks: { font: { size: 10 },
+              callback: function(v){ return '$ ' + (v/1000000).toFixed(1) + 'M'; } } }
+      }
+    }
+  });
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOLAPA CUOTAS — carga vía API
+═══════════════════════════════════════════════════════════════════════════ */
+var _periodoPedido = '';
+
+/* gestion_admTable toma las filas al iniciarse, así que con cada período nuevo
+   hay que volver a iniciarla: se borra la instancia guardada (tbl._grilla), que
+   si no la devuelve tal cual con las filas viejas. Antes se reemplazan los
+   controles de la barra y la cabecera por copias: un clon no arrastra los
+   listeners, y sin esto cada recarga sumaba otra instancia escuchando —el
+   filtro corría N veces y Exportar a Excel bajaba N archivos—. */
+function reiniciarControles(card) {
+  card.querySelectorAll('.filter-input, .page-size-select, .btn-filtrar, .btn-quitar-filtro, ' +
+                        '.btn-exportar, .filtro, thead').forEach(function (el) {
+    var copia = el.cloneNode(true);
+    if (el.tagName === 'INPUT' || el.tagName === 'SELECT') copia.value = el.value;
+    el.replaceWith(copia);
+  });
+}
+
+function cargarCuotas() {
+  var periodo = document.getElementById('flt-periodo').value;
+  if (!periodo) return;
+  _periodoPedido = periodo;
+
+  var tbody = document.getElementById('tbody-cuotas');
+  tbody.innerHTML = '<tr class="no-data-row"><td colspan="8" class="no-data">' +
+    '<span class="estado estado-proceso">Cargando…</span></td></tr>';
+
+  fetch(URL_API_CUOTAS + '?periodo=' + encodeURIComponent(periodo))
+    .then(function(r){ return r.json(); })
+    .then(function(resp) {
+      if (periodo !== _periodoPedido) return;     // llegó tarde: ya se pidió otro
+      if (!resp.ok) { tbody.innerHTML = filaMensaje(resp.error, 'danger'); return; }
+      renderCuotasKpis(resp.totales, resp.periodo);
+      renderCuotasTabla(resp.registros, resp.periodo);
+    })
+    .catch(function() {
+      tbody.innerHTML = filaMensaje('Error de conexión', 'danger');
+    });
+}
+
+function filaMensaje(texto, tipo) {
+  return '<tr class="no-data-row"><td colspan="8" class="no-data">' +
+    '<span class="estado estado-' + tipo + '">' + escH(texto) + '</span></td></tr>';
+}
+
+function renderCuotasKpis(t, periodo) {
+  document.getElementById('cuotas-kpis').innerHTML =
+    mkKpi('Período',        fmtPer(periodo),          '',   ICONO.calendario) +
+    mkKpi('Empresas',       t.empresas,               '',   ICONO.empresa) +
+    mkKpi('Empleados',      t.empleados,              '',   ICONO.grupo) +
+    mkKpi('Remuneraciones', '$ ' + fmtM(t.remuneracion), '', ICONO.dinero, true) +
+    mkKpi('Cuotas',         '$ ' + fmtM(t.cuota),     'ok', ICONO.dinero, true);
+}
+
+function mkKpi(lbl, val, variante, ico, monto) {
+  return '<div class="kpi-card"><div class="kpi-ico ' + variante + '">' + ico + '</div>' +
+         '<div><div class="kpi-lbl">' + escH(lbl) + '</div>' +
+         '<div class="kpi-val' + (monto ? ' monto' : '') + '">' + escH(val) + '</div></div></div>';
+}
+
+function renderCuotasTabla(rows, periodo) {
+  var html = '';
+  if (!rows.length) {
+    html = '<tr class="no-data-row"><td colspan="8" class="no-data">Sin registros para este período.</td></tr>';
+  } else {
+    rows.forEach(function(r) {
+      // data-num: el importe sin formato, para sumar el pie. No va en
+      // data-valor: el Excel lee ese atributo con formato argentino y
+      // «2321251.1» le daría 23.212.511. El texto de la celda ya está bien.
+      html +=
+        '<tr>' +
+        '<td class="td-mono">' + escH(fmtCuit(r.cuit)) + '</td>' +
+        '<td class="td-recorte" title="' + escH(r.empresa_nombre || '') + '">' + escH(r.empresa_nombre || '—') + '</td>' +
+        '<td class="td-mono">' + escH(r.cuil) + '</td>' +
+        '<td class="td-center">' + fmtPer(r.periodo) + '</td>' +
+        '<td class="td-right" data-num="' + (r.remuneracion || 0) + '">' + fmtM(r.remuneracion) + '</td>' +
+        '<td class="td-right td-fuerte" data-num="' + (r.cuota || 0) + '">' + fmtM(r.cuota) + '</td>' +
+        '<td class="td-right">' + escH(r.alta || '—') + '</td>' +
+        '<td class="td-right' + (r.baja ? ' td-danger' : '') + '">' + escH(r.baja || '—') + '</td>' +
+        '</tr>';
+    });
+    html += '<tr class="total-row">' +
+      '<td colspan="4">TOTAL</td>' +
+      '<td class="td-right" id="tot-remu"></td>' +
+      '<td class="td-right" id="tot-cuota"></td>' +
+      '<td colspan="2"></td></tr>';
+  }
+  document.getElementById('tbody-cuotas').innerHTML = html;
+  document.getElementById('tbl-cuotas').dataset.exportar = 'Cuotas ' + fmtPer(periodo);
+
+  var card = document.getElementById('card-cuotas');
+  reiniciarControles(card);
+  document.getElementById('tbl-cuotas')._grilla = null;
+  gestion_admTable('tbl-cuotas', { pageSize: 20, onRender: sumarTotales });
+  // Quitar filtro vuelve el período al último: si era otro, hay que pedirlo.
+  // Corre después del de gestion_admTable, que es el que repone el select.
+  card.querySelector('.btn-quitar-filtro').addEventListener('click', function () {
+    if (document.getElementById('flt-periodo').value !== _periodoPedido) cargarCuotas();
+  });
+}
+
+// El pie suma lo filtrado entero, no la página que se ve.
+function sumarTotales(filas) {
+  var remu = 0, cuota = 0;
+  filas.forEach(function (tr) {
+    remu  += parseFloat(tr.cells[4].dataset.num || 0);
+    cuota += parseFloat(tr.cells[5].dataset.num || 0);
+  });
+  var r = document.getElementById('tot-remu'), c = document.getElementById('tot-cuota');
+  if (r) r.textContent = fmtM(remu);
+  if (c) c.textContent = fmtM(cuota);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SOLAPA IMPORTAR  (mismo parseo que la pantalla de importación)
+═══════════════════════════════════════════════════════════════════════════ */
+var _impArchivos = [];
+
+function impOnCarpeta(files) {
+  impLimpiarEstado();
+  var xlsFiles = Array.from(files).filter(function(f){
+    return /\.(xlsx|xls)$/i.test(f.name) && !f.name.startsWith('~$');
+  });
+  if (!xlsFiles.length) { impError('No se encontraron archivos .xlsx en la carpeta.'); return; }
+  _impArchivos = xlsFiles.map(function(f){ return { file:f, nombre:f.name, parsed:null, estado:'parseando', error:null }; });
+  impMostrarTabla();
+  impParsearTodos();
+}
+
+function impParsearTodos() {
+  var done = 0;
+  _impArchivos.forEach(function(arch) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var wb  = XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+        var raw = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header:1, defval:'' });
+        arch.parsed = impParsear(raw);
+        arch.estado = arch.parsed.warnings.length ? 'warn' : 'ok';
+      } catch(err) { arch.estado='error'; arch.error=err.message; }
+      done++;
+      impActualizarFila(arch);
+      if (done === _impArchivos.length) impOnTodosParsed();
+    };
+    reader.readAsArrayBuffer(arch.file);
+  });
+}
+
+function impParsear(raw) {
+  var h = String(raw[2] ? raw[2][0] : '');
+  var cm = h.match(/Cuit[:\s]+(\d{11})/i);
+  var pm = h.match(/Per[ií]odo\s*:?\s*(\d{6})/i);
+  var em = h.match(/Empresa[:\s]+(.+?)\s{3,}/i);
+  if (!cm) throw new Error('No se detectó CUIT');
+  if (!pm) throw new Error('No se detectó Período');
+  var filas=[], warns=[], totR=0, totC=0;
+  for (var i=4; i<raw.length; i++) {
+    var r=raw[i], cuil=String(r[0]||'').replace(/[^0-9]/g,'');
+    if (cuil.length!==11) continue;
+    var remu=parseFloat(String(r[3]||'0').replace(/[^0-9.]/g,''))||0;
+    var cuota=parseFloat(String(r[4]||'0').replace(/[^0-9.]/g,''))||0;
+    var aRaw=String(r[5]||'').replace(/[^0-9]/g,'');
+    var bRaw=String(r[6]||'').replace(/[^0-9]/g,'');
+    var obs=[];
+    if (!remu) { obs.push('Remu cero'); warns.push(cuil+': remu cero'); }
+    if (!cuota){ obs.push('Cuota cero'); warns.push(cuil+': cuota cero'); }
+    totR+=remu; totC+=cuota;
+    filas.push({ cuil:cuil, beneficiario:String(r[1]||'').trim(),
+      periodo:parseInt(String(r[2]||pm[1]).trim(),10)||parseInt(pm[1],10),
+      remuneracion:remu, cuota:cuota,
+      alta:aRaw.length===6?aRaw.slice(0,4)+'-'+aRaw.slice(4,6):(aRaw||null),
+      baja:bRaw.length===6?bRaw.slice(0,4)+'-'+bRaw.slice(4,6):(bRaw||null),
+      obs:obs.join('; ') });
+  }
+  if (!filas.length) throw new Error('Sin filas válidas');
+  return { cuit:cm[1], periodo:parseInt(pm[1],10), empresa:(em?em[1].trim():'—'),
+           filas:filas, warnings:warns, totalR:totR, totalC:totC };
+}
+
+function impMostrarTabla() {
+  document.getElementById('imp-badge-total').textContent =
+    _impArchivos.length + ' archivo' + (_impArchivos.length!==1?'s':'');
+  var tbody = document.getElementById('imp-tbody-archivos');
+  tbody.innerHTML = '';
+  _impArchivos.forEach(function(a,i) {
+    var tr=document.createElement('tr'); tr.id='imp-arch-'+i;
+    tr.innerHTML = impFilaArchivo(a,i); tbody.appendChild(tr);
+  });
+  document.getElementById('imp-card-archivos').style.display = '';
+}
+
+function impFilaArchivo(a,i) {
+  var p=a.parsed, est='';
+  if (a.estado==='parseando') est=estadoHTML('proceso', 'Leyendo…');
+  else if (a.estado==='ok')   est=estadoHTML('ok', 'OK');
+  else if (a.estado==='warn') est=estadoHTML('warn', 'Con obs.', (p&&p.warnings||[]).join('; '));
+  else                        est=estadoHTML('danger', 'Error', a.error);
+  return '<td class="td-muted">'+(i+1)+'</td>'+
+    '<td class="td-mono td-recorte" title="'+escH(a.nombre)+'">'+escH(a.nombre)+'</td>'+
+    '<td>'+(p?escH(p.empresa)+'<br><small class="mono muted">'+fmtCuit(p.cuit)+'</small>':'—')+'</td>'+
+    '<td class="td-center">'+(p?fmtPer(p.periodo):'—')+'</td>'+
+    '<td class="td-right">'+(p?p.filas.length:'—')+'</td>'+
+    '<td class="td-right">'+(p?fmtM(p.totalR):'—')+'</td>'+
+    '<td class="td-right">'+(p?fmtM(p.totalC):'—')+'</td>'+
+    '<td>'+est+'</td>';
+}
+
+function impActualizarFila(arch) {
+  var idx=_impArchivos.indexOf(arch);
+  var tr=document.getElementById('imp-arch-'+idx);
+  if (tr) tr.innerHTML=impFilaArchivo(arch,idx);
+}
+
+function impOnTodosParsed() {
+  var conErr = _impArchivos.filter(function(a){ return a.estado==='error'; });
+  var ok     = _impArchivos.filter(function(a){ return a.parsed; });
+  if (conErr.length) {
+    var w=document.getElementById('imp-warn-global');
+    w.style.display=''; w.innerHTML='<div><strong>'+conErr.length+' archivo(s) no pudo leerse</strong> y será omitido.</div>';
+  }
+  if (ok.length) { document.getElementById('imp-card-opciones').style.display=''; impActualizarModo(); }
+}
+
+function impFilaProgreso(a, celdas, est) {
+  return '<td class="td-mono td-recorte" title="'+escH(a.nombre)+'">'+escH(a.nombre)+'</td>'+
+    '<td class="td-mono">'+fmtCuit(a.parsed.cuit)+'</td>'+
+    '<td class="td-center">'+fmtPer(a.parsed.periodo)+'</td>'+ celdas + '<td>'+est+'</td>';
+}
+
+function impEjecutarLote() {
+  var aprocesar = _impArchivos.filter(function(a){ return a.parsed; });
+  if (!aprocesar.length) return;
+  var modo = document.querySelector('input[name="imp_modo"]:checked').value;
+  var obs  = document.getElementById('imp-obs').value.trim();
+
+  document.getElementById('imp-btn-importar').disabled=true;
+  document.getElementById('imp-spinner').style.display='';
+  document.getElementById('imp-card-progreso').style.display='';
+  document.getElementById('imp-card-resultado').style.display='none';
+  document.getElementById('imp-card-resultado').innerHTML='';
+
+  var vacias = '<td class="td-right td-muted">—</td><td class="td-right td-muted">—</td>' +
+               '<td class="td-right td-muted">—</td><td class="td-right td-muted">—</td>';
+  var tbody=document.getElementById('imp-tbody-prog');
+  tbody.innerHTML='';
+  aprocesar.forEach(function(a,i){
+    var tr=document.createElement('tr'); tr.id='imp-prog-'+i;
+    tr.innerHTML=impFilaProgreso(a, vacias, estadoHTML('neutro', 'En espera'));
+    tbody.appendChild(tr);
+  });
+  document.getElementById('imp-card-progreso').scrollIntoView({ behavior:'smooth', block:'start' });
+
+  var resultados=[], totI=0, totA=0, totN=0, totE=0;
+
+  function sig(idx) {
+    if (idx>=aprocesar.length) { impFinalizar(resultados,totI,totA,totN,totE); return; }
+    var arch=aprocesar[idx], total=aprocesar.length;
+    document.getElementById('imp-prog-bar').style.width=(idx/total*100)+'%';
+    document.getElementById('imp-prog-label').textContent=(idx+1)+' / '+total;
+    document.getElementById('imp-spinner-txt').textContent='Importando "'+arch.nombre+'"…';
+    var tr=document.getElementById('imp-prog-'+idx);
+    if (tr) tr.querySelector('td:last-child').innerHTML=estadoHTML('proceso', 'Enviando…');
+
+    fetch(URL_IMPORTAR, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        nombre_archivo:arch.nombre, cuit:arch.parsed.cuit,
+        empresa:arch.parsed.empresa, periodo:arch.parsed.periodo,
+        total_filas:arch.parsed.filas.length, modo_dup:modo, observaciones:obs,
+        registros:arch.parsed.filas.map(function(f){
+          return { cuil:f.cuil, periodo:f.periodo, remuneracion:f.remuneracion,
+                   cuota:f.cuota, alta:f.alta, baja:f.baja,
+                   observaciones:[f.obs,obs].filter(Boolean).join(' | ')||null };
+        })
+      })
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(resp) {
+      var ins=resp.insertados||0, act=resp.actualizados||0,
+          ign=resp.ignorados||0, err=resp.errores||0;
+      totI+=ins; totA+=act; totN+=ign; totE+=err;
+      var est=!resp.ok?estadoHTML('danger', 'Error', resp.error):
+               err>0?estadoHTML('warn', 'Parcial'):estadoHTML('ok', 'OK');
+      var tr=document.getElementById('imp-prog-'+idx);
+      if (tr) {
+        tr.classList.toggle('fila-alerta', err>0||!resp.ok);
+        tr.innerHTML=impFilaProgreso(arch,
+          '<td class="td-right '+(ins?'td-ok':'td-muted')+'">'+ins+'</td>'+
+          '<td class="td-right '+(act?'td-fuerte':'td-muted')+'">'+act+'</td>'+
+          '<td class="td-right td-muted">'+ign+'</td>'+
+          '<td class="td-right '+(err?'td-danger':'td-muted')+'">'+err+'</td>', est);
+      }
+      resultados.push({ arch:arch, resp:resp }); sig(idx+1);
+    })
+    .catch(function(){
+      var tr=document.getElementById('imp-prog-'+idx);
+      if (tr) tr.querySelector('td:last-child').innerHTML=estadoHTML('danger', 'Sin conexión');
+      resultados.push({ arch:arch, resp:{ok:false,error:'Error de conexión'} }); sig(idx+1);
+    });
+  }
+  sig(0);
+}
+
+function impFinalizar(resultados, ins, act, ign, err) {
+  document.getElementById('imp-btn-importar').disabled=false;
+  document.getElementById('imp-spinner').style.display='none';
+  document.getElementById('imp-prog-bar').style.width='100%';
+  var archOk=resultados.filter(function(r){ return r.resp.ok&&!r.resp.errores; }).length;
+  var archErr=resultados.filter(function(r){ return !r.resp.ok||r.resp.errores; });
+
+  var html='<div class="card">'+
+    '<div class="card-head"><div><span class="card-head-titulo">Lote completado — '+
+      resultados.length+' archivo(s)</span></div>'+
+    '<div class="card-head-acciones">'+(archErr.length?estadoHTML('warn','Con problemas'):estadoHTML('ok','OK'))+'</div></div>'+
+    '<div class="card-body"><div class="fila">'+
+    mkResCard('OK', archOk, 'ok')+mkResCard('Con err.', archErr.length, archErr.length?'danger':'muted')+
+    mkResCard('Insertados', ins, 'ok')+mkResCard('Actual.', act, 'info')+
+    mkResCard('Ignorados', ign, 'muted')+mkResCard('Err. fila', err, err?'danger':'muted')+
+    '</div></div>';
+  if (archErr.length) {
+    html+='<div class="card-body"><div class="alert alert-warning"><div><strong>Archivos con problemas:</strong><ul>';
+    archErr.forEach(function(r){ html+='<li><strong>'+escH(r.arch.nombre)+'</strong>: '+escH(r.resp.error||(r.resp.errores+' fila(s) con error'))+'</li>'; });
+    html+='</ul></div></div></div>';
+  }
+  html+='<div class="form-acciones">'+
+    '<button type="button" class="btn btn-secondary" onclick="impLimpiar()">Nueva importación</button>'+
+    '<button type="button" class="btn btn-ghost" onclick="showTab(\'historial\')">Ver historial →</button>'+
+    '</div></div>';
+
+  var res=document.getElementById('imp-card-resultado');
+  res.style.display=''; res.innerHTML=html;
+  res.scrollIntoView({ behavior:'smooth', block:'start' });
+  // El historial de la cuarta solapa es el que se dibujó al entrar: para ver
+  // las importaciones recién hechas hay que recargar la pantalla. Antes acá se
+  // reiniciaba la grilla del historial, lo que no traía filas nuevas y con la
+  // barra de filtros nueva duplicaba sus controles.
+}
+
+function mkResCard(lbl, val, variante) {
+  return '<div class="res-card"><div class="res-card-lbl">'+escH(lbl)+'</div>'+
+    '<div class="res-card-val '+variante+'">'+val+'</div></div>';
+}
+
+function impLimpiarEstado() {
+  _impArchivos=[];
+  ['imp-card-archivos','imp-card-opciones','imp-card-progreso','imp-card-resultado'].forEach(function(id){
+    document.getElementById(id).style.display='none';
+  });
+  document.getElementById('imp-card-resultado').innerHTML='';
+  document.getElementById('imp-tbody-archivos').innerHTML='';
+  document.getElementById('imp-tbody-prog').innerHTML='';
+  document.getElementById('imp-warn-global').style.display='none';
+  document.getElementById('imp-prog-bar').style.width='0%';
+  document.getElementById('imp-parse-error').style.display='none';
+}
+function impLimpiar() { impLimpiarEstado(); document.getElementById('imp-folder-input').value=''; document.getElementById('imp-obs').value=''; }
+function impError(msg) { var e=document.getElementById('imp-parse-error'); e.innerHTML='<div>'+escH(msg)+'</div>'; e.style.display=''; }
+// La tarjeta elegida ya se marca sola por CSS (:has(input:checked)); la clase
+// queda para navegadores que no soporten :has.
+function impActualizarModo() {
+  ['skip','update','error'].forEach(function(v){
+    var inp=document.querySelector('input[name="imp_modo"][value="'+v+'"]');
+    var lbl=document.getElementById('imp-lbl-'+v);
+    if (inp&&lbl) lbl.className='radio-card'+(inp.checked?' activo':'');
+  });
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DIÁLOGO DETALLE ERRORES
+═══════════════════════════════════════════════════════════════════════════ */
+function verDetalle(boton) {
+  document.getElementById('modal-err-id').textContent = boton.dataset.id;
+  var errs = [];
+  try { errs = JSON.parse(boton.dataset.detalle || '[]'); } catch(e) { errs = [boton.dataset.detalle]; }
+  document.getElementById('modal-err-body').innerHTML = errs.length
+    ? '<div class="alert alert-warning"><ol>' +
+        errs.map(function(e){ return '<li>' + escH(e) + '</li>'; }).join('') + '</ol></div>'
+    : '<p class="muted">Sin detalle.</p>';
+  abrirModal('modal-errores');
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════════════════════════════ */
+// El mismo marcado que ui.estado(): píldora con texto.
+function estadoHTML(tipo, texto, titulo) {
+  return '<span class="estado estado-' + tipo + '"' + (titulo ? ' title="' + escH(titulo) + '"' : '') +
+         '>' + escH(texto) + '</span>';
+}
+// Importes como el filtro `miles`: 1.234,56, sin signo; el $ va en los títulos.
+function fmtM(n) {
+  return parseFloat(n||0).toLocaleString('es-AR', { minimumFractionDigits:2, maximumFractionDigits:2 });
+}
+function fmtCuit(c) { return c && c.length===11 ? c.slice(0,2)+'-'+c.slice(2,10)+'-'+c.slice(10) : (c||'—'); }
+function fmtPer(p) {
+  var s=String(p||'');
+  if (s.length!==6) return s;
+  var m=['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return m[parseInt(s.slice(4),10)]+' '+s.slice(0,4);
+}
+function escH(s) {
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+
+{% endblock %}

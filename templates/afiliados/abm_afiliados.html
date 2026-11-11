@@ -1,0 +1,825 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Afiliados{% endblock %}
+
+{#
+  El padrón en sus dos modos, la misma pantalla:
+
+    consulta  /afiliados/padron?ver=ID   solo lectura: listado y ficha
+    abm       /afiliados?edit=ID         alta, modificación y baja
+
+  Quien está en la consulta y además tiene permiso de ABM (`puede_abm`) ve
+  los botones para editar, que lo llevan a la misma ficha en /afiliados.
+
+  Mismo esqueleto que empleadores —solapas escritas a mano, edición por
+  ?edit=ID— más las solapas propias de un afiliado: grupo familiar,
+  contactos y movimientos.
+
+  `a` evita los «None» en pantalla: Jinja imprime la palabra None para un NULL.
+#}
+{% set a = afiliado or {} %}
+{% set es_titular = a.get('cod_parentesco') == 0 %}
+{% set consulta = modo == 'consulta' %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ 'Padrón de afiliados' if consulta else 'ABM de afiliados' }}</h1>
+    <p>{{ 'Consulta de titulares y familiares.' if consulta else
+          'Alta, modificación y baja. Las bajas son lógicas: quedan con fecha y motivo, y se pueden revertir.' }}</p>
+  </div>
+  {% if (afiliado and not consulta) or (consulta and puede_abm) %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nuevo afiliado', href=url_for('afiliados.abm_afiliados', nuevo=1), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{# ?nuevo=1 abre directo el formulario vacío: es a donde lleva «Nuevo afiliado»,
+   también desde la consulta. #}
+{% set inicial = 'datos' if (afiliado or errores or (not consulta and request.args.get('nuevo'))) else 'listado' %}
+{# ?solapa=… vuelve a la solapa desde la que se guardó (empleadores, documentación). #}
+{% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'documentacion', 'contactos', 'movimientos') %}
+  {% set inicial = request.args.get('solapa') %}
+{% endif %}
+{% set lista_solapas = [('listado', 'Listado', afiliados|length)] %}
+{# En la consulta no hay «Nuevo»: la solapa de datos aparece solo con una ficha abierta. #}
+{% if not consulta or editando %}
+  {% set lista_solapas = lista_solapas + [('datos', 'Ficha' if consulta else ('Editar' if editando else 'Nuevo'), None)] %}
+{% endif %}
+{% if editando %}
+  {% set lista_solapas = lista_solapas + [('grupo', 'Grupo familiar', grupo|length),
+                                          ('empleadores', 'Empleadores', relaciones|length),
+                                          ('documentacion', 'Documentación', documentos|length),
+                                          ('contactos', 'Contactos', contactos|length),
+                                          ('movimientos', 'Movimientos', movimientos|length)] %}
+{% endif %}
+{{ ui.solapas(lista_solapas, inicial) }}
+
+
+<!-- ── Listado ────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por CUIL, apellido, documento, empleador…') %}
+      {# Arranca en «Activos»: es lo que se busca casi siempre. Quitar filtro
+         vuelve acá, no a «Todos». #}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="activo" selected>Activos</option>
+        <option value="baja">Bajas</option>
+        <option value="">Activos y bajas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Titular o familiar') %}<select class="filtro" id="f-tipo">
+        <option value="">Titulares y familiares</option>
+        <option value="titular">Solo titulares</option>
+        <option value="familiar">Solo familiares</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Sexo') %}<select class="filtro" id="f-sexo">
+        <option value="">Todos</option>
+        <option value="F">Femenino</option>
+        <option value="M">Masculino</option>
+        <option value="X">X</option>
+        <option value="-">Sin dato</option>
+      </select>{% endcall %}
+      {# Edad en años cumplidos, ambos extremos incluidos. Con un extremo
+         puesto, quien no tiene fecha de nacimiento queda afuera: no hay forma
+         de saber si entra en el rango. #}
+      {% call ui.filtro('Edad desde') %}<input type="number" class="filtro filtro-num" id="f-edad-desde"
+          min="0" max="120" step="1" inputmode="numeric">{% endcall %}
+      {% call ui.filtro('Edad hasta') %}<input type="number" class="filtro filtro-num" id="f-edad-hasta"
+          min="0" max="120" step="1" inputmode="numeric">{% endcall %}
+      {% call ui.filtro('Atributo') %}<select class="filtro" id="f-atributo">
+        <option value="">Todos</option>
+        <option value="con">Con algún atributo</option>
+        <option value="sin">Sin atributos</option>
+        {% for atr in atributos %}<option value="{{ atr.id }}">{{ atr.rotulo }}</option>{% endfor %}
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-afiliados" data-exportar="Padron de afiliados">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>CUIL</th>
+            <th>Apellido y nombres</th>
+            <th>Estado</th>
+            <th>Parentesco</th>
+            <th>CUIL titular</th>
+            <th>Documento</th>
+            <th class="th-right">Edad</th>
+            <th>Empleador</th>
+            <th>Localidad</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in afiliados %}
+          <tr class="{{ 'fila-baja' if not f.activo }}"
+              data-estado="{{ 'activo' if f.activo else 'baja' }}"
+              data-tipo="{{ 'titular' if f.cod_parentesco == 0 else 'familiar' }}"
+              data-sexo="{{ f.sexo or '-' }}"
+              data-edad="{{ f.edad if f.edad is not none else '' }}"
+              data-atributos="{{ f.atributos|map(attribute='id')|join(',') }}">
+            <td><div class="acciones">
+              {% if consulta %}
+              {{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado)) }}
+              {% endif %}
+              {% if not consulta or puede_abm %}
+              {{ ui.accion('editar', href=url_for('afiliados.abm_afiliados', edit=f.id_afiliado)) }}
+              {% endif %}
+              {% if not consulta and f.cod_parentesco == 0 and f.cuil %}
+              {{ ui.accion('agregar', href=url_for('afiliados.abm_afiliados', familiar_de=f.cuil),
+                           titulo='Agregar familiar') }}
+              {% endif %}
+            </div></td>
+            <td class="td-mono">{{ f.cuil or '—' }}</td>
+            {# Los atributos debajo del nombre, como las marcas de un comprobante;
+               al Excel va solo el nombre (data-valor). #}
+            <td class="td-fuerte" data-valor="{{ f.nombre_completo }}">{{ f.nombre_completo }}
+              {% if f.atributos %}<span class="marcas">{% for atr in f.atributos %}{{ ui.estado(atr.rotulo, 'info') }}{% endfor %}</span>{% endif %}</td>
+            <td>{{ ui.activo(f.activo, f.fecha_baja) }}</td>
+            <td class="td-muted">{{ f.parentesco or '—' }}</td>
+            <td class="td-mono">{{ f.cuil_titular if f.cod_parentesco != 0 and f.cuil_titular else '—' }}</td>
+            <td class="td-mono">{{ f.nro_documento or '—' }}</td>
+            <td class="td-right">{{ f.edad if f.edad is not none else '—' }}</td>
+            <td>{{ f.empleador or '—' }}</td>
+            <td class="td-muted">{{ f.localidad or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="11" class="no-data">
+            El padrón está vacío. Se carga desde AEDA con importar_aeda_afiliados.py.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+
+<!-- ── Datos ──────────────────────────────────────────────────────────────── -->
+{% if not consulta or editando %}
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {# En el encabezado, junto al nombre: parentesco y edad, lo primero que se
+       mira para saber si a un familiar le corresponde algo. #}
+    {% set fn = a.get('fecha_nacimiento') %}
+    {% set edad = (hoy.year - fn.year - (1 if (hoy.month, hoy.day) < (fn.month, fn.day) else 0)) if fn else none %}
+    {% set parentesco_ficha = (parentescos|selectattr('codigo', 'equalto', a.get('cod_parentesco'))|map(attribute='descripcion')|list or [none])[0] %}
+    {% set nombre_ficha = a.get('apellido_nombres') or '' %}
+    {% if editando %}
+      {% if parentesco_ficha %}{% set nombre_ficha = nombre_ficha ~ ' · ' ~ parentesco_ficha %}{% endif %}
+      {% if edad is not none %}{% set nombre_ficha = nombre_ficha ~ ' · ' ~ edad ~ (' año' if edad == 1 else ' años') %}{% endif %}
+    {% endif %}
+    {% call ui.card_head(nombre_ficha if consulta
+                         else (('Editar · ' ~ nombre_ficha) if editando
+                         else ('Nuevo familiar' if a.get('cuil_titular') else 'Nuevo afiliado'))) %}
+      {% if consulta %}
+        {{ ui.activo(a.get('activo'), a.get('fecha_baja')) }}
+        {% if puede_abm %}
+        {{ ui.boton('Editar', 'primary', icono_='editar', chico=True,
+                    href=url_for('afiliados.abm_afiliados', edit=a.get('id_afiliado'))) }}
+        {% endif %}
+        {{ ui.boton('Volver al listado', 'secondary', href=url_for('afiliados.padron'), chico=True) }}
+      {% elif editando %}
+        {{ ui.activo(a.get('activo'), a.get('fecha_baja')) }}
+        {% if a.get('activo') %}
+          {{ ui.boton('Dar de baja', 'danger', icono_='baja', chico=True, onclick="abrirModal('modal-baja')") }}
+        {% else %}
+          <form method="post" action="{{ url_for('afiliados.abm_afiliados') }}" class="form-en-linea"
+                onsubmit="return confirm('¿Reactivar a este afiliado?');">
+            <input type="hidden" name="accion" value="reactivar">
+            <input type="hidden" name="id" value="{{ a.get('id_afiliado') }}">
+            {{ ui.boton('Reactivar', 'ok', icono_='reactivar', chico=True, submit=True) }}
+          </form>
+        {% endif %}
+        {{ ui.boton('Cancelar', 'secondary', href=url_for('afiliados.abm_afiliados'), chico=True) }}
+      {% endif %}
+    {% endcall %}
+
+    {% if editando and not a.get('activo') %}
+    <div class="card-aviso">
+      {{ ui.aviso('Dado de baja el ' ~ a.get('fecha_baja').strftime('%d/%m/%Y')
+                  ~ (' · ' ~ motivo_baja if motivo_baja else '') ~ ('.' if consulta else '. Los cambios se pueden guardar igual.'), 'warning') }}
+    </div>
+    {% endif %}
+
+    {# Un familiar: de quién es, arriba de todo y bien visible. El titular sale
+       del grupo que ya se leyó; si no está cargado, se dice. #}
+    {% if a.get('cod_parentesco') not in (none, 0) and a.get('cuil_titular') %}
+    {% set tit = (grupo|selectattr('cod_parentesco', 'equalto', 0)|list or [none])[0] %}
+    {% set ct = a.get('cuil_titular') %}
+    <div class="card-aviso">
+      <div class="alert alert-info titular-de">{{ ui.icono('grupo', 18) }}
+        <div>
+          <span class="titular-de-rotulo">Familiar de</span>
+          {% if tit %}
+            {% if consulta %}<a href="{{ url_for('afiliados.padron', ver=tit.id_afiliado) }}">{{ tit.apellido_nombres }}</a>
+            {% else %}<a href="{{ url_for('afiliados.abm_afiliados', edit=tit.id_afiliado) }}">{{ tit.apellido_nombres }}</a>{% endif %}
+          {% else %}<span>titular no cargado en el padrón</span>{% endif %}
+          <span class="titular-de-cuil">CUIL {{ ct[:2] ~ '-' ~ ct[2:10] ~ '-' ~ ct[10:] if ct|length == 11 else ct }}</span>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <form method="post" action="{{ url_for('afiliados.abm_afiliados') }}" id="form-afiliado">
+      <input type="hidden" name="accion" value="{{ 'guardar' if editando else 'nuevo' }}">
+      <input type="hidden" name="id" value="{{ a.get('id_afiliado') or '' }}">
+      {# En la consulta, el mismo formulario deshabilitado: se lee igual que en
+         el ABM y no hay una segunda ficha que mantener. #}
+      {% if consulta %}<fieldset class="solo-lectura" disabled>{% endif %}
+
+      <div class="bloque">
+        <div class="bloque-titulo">Grupo familiar</div>
+        <div class="campos">
+          <div class="campo" style="--span:4;">
+            <label for="cod_parentesco">Parentesco <span class="req">*</span></label>
+            <select name="cod_parentesco" id="cod_parentesco" required onchange="sincronizarTitular()">
+              {{ ui.opciones(parentescos, a.get('cod_parentesco'), vacio='— Elegir —') }}
+            </select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="cuil_titular">CUIL del titular</label>
+            <input type="text" name="cuil_titular" id="cuil_titular" class="mono" maxlength="13"
+                   inputmode="numeric" value="{{ a.get('cuil_titular') or '' }}"
+                   oninput="avisarCuil(this, 'titular-ayuda')">
+            <small class="campo-ayuda" id="titular-ayuda"></small>
+          </div>
+          {# En el alta se carga y abre el historial. Después es el de la relación
+             vigente y se cambia en la solapa Empleadores: dos lugares para el
+             mismo dato terminan diciendo cosas distintas. #}
+          <div class="campo" style="--span:5;">
+            <label for="cuit_empleador">{{ 'Empleador actual' if editando else 'Empleador (CUIT)' }}</label>
+            <input type="text" name="cuit_empleador" id="cuit_empleador" class="mono" maxlength="13"
+                   inputmode="numeric" value="{{ a.get('cuit_empleador') or '' }}"
+                   {% if editando %}readonly title="Se cambia en la solapa Empleadores"{% else %}oninput="buscarEmpleador(this)"{% endif %}>
+            <small class="campo-ayuda {{ 'ok' if empleador }}" id="empleador-ayuda">
+              {{- empleador.razon_social if empleador else ('Sin relación laboral vigente' if editando else '') -}}
+            </small>
+            {% if editando and not consulta %}
+            <small class="campo-ayuda"><a href="#" onclick="abmSolapa('empleadores'); return false;">Se cambia en la solapa Empleadores</a></small>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque">
+        <div class="bloque-titulo">Identificación</div>
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label for="cuil">CUIL</label>
+            {# Acepta guiones al pegar desde una constancia; el servidor los limpia. #}
+            <input type="text" name="cuil" id="cuil" class="mono" maxlength="13" inputmode="numeric"
+                   placeholder="20-12345678-9" value="{{ a.get('cuil') or '' }}"
+                   oninput="avisarCuil(this, 'cuil-ayuda'); sincronizarTitular()">
+            <small class="campo-ayuda" id="cuil-ayuda"></small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="tipo_documento">Tipo doc.</label>
+            <select name="tipo_documento" id="tipo_documento">
+              {{ ui.opciones(tipos_doc, a.get('tipo_documento') or 'DU', vacio=None) }}
+            </select>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="nro_documento">Documento</label>
+            <input type="text" name="nro_documento" id="nro_documento" class="mono" maxlength="10"
+                   inputmode="numeric" value="{{ a.get('nro_documento') or '' }}">
+            <small class="campo-ayuda solo-edicion">Vacío: se toma del CUIL</small>
+          </div>
+          <div class="campo" style="--span:5;"></div>
+
+          {# Un solo campo, como lo guarda AEDA: partir apellido y nombres por
+             regla falla con los apellidos compuestos. #}
+          <div class="campo" style="--span:8;">
+            <label for="apellido_nombres">Apellido y nombres <span class="req">*</span></label>
+            <input type="text" name="apellido_nombres" id="apellido_nombres" required maxlength="100"
+                   value="{{ a.get('apellido_nombres') or '' }}">
+            <small class="campo-ayuda solo-edicion">Primero el apellido, como en el DNI</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="sexo">Sexo</label>
+            <select name="sexo" id="sexo">
+              {{ ui.opciones([{'codigo': 'F', 'descripcion': 'Femenino'}, {'codigo': 'M', 'descripcion': 'Masculino'},
+                              {'codigo': 'X', 'descripcion': 'X'}], a.get('sexo')) }}
+            </select>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="fecha_nacimiento">Nacimiento</label>
+            <input type="date" name="fecha_nacimiento" id="fecha_nacimiento"
+                   value="{{ a.get('fecha_nacimiento') or '' }}">
+          </div>
+
+          <div class="campo" style="--span:3;">
+            <label for="estado_civil">Estado civil</label>
+            <select name="estado_civil" id="estado_civil">{{ ui.opciones(estados_civiles, a.get('estado_civil')) }}</select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="nacionalidad">Nacionalidad</label>
+            <select name="nacionalidad" id="nacionalidad">
+              {{ ui.opciones(nacionalidades, a.get('nacionalidad') if a.get('nacionalidad') is not none else (12 if not editando else none)) }}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque">
+        <div class="bloque-titulo">Domicilio</div>
+        <div class="campos">
+          <div class="campo" style="--span:6;">
+            <label for="domicilio_calle">Calle</label>
+            <input type="text" name="domicilio_calle" id="domicilio_calle" maxlength="100" value="{{ a.get('domicilio_calle') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="domicilio_numero">Número</label>
+            <input type="text" name="domicilio_numero" id="domicilio_numero" maxlength="5" value="{{ a.get('domicilio_numero') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="domicilio_piso">Piso</label>
+            <input type="text" name="domicilio_piso" id="domicilio_piso" maxlength="4" value="{{ a.get('domicilio_piso') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="domicilio_depto">Depto</label>
+            <input type="text" name="domicilio_depto" id="domicilio_depto" maxlength="4" value="{{ a.get('domicilio_depto') or '' }}">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label for="localidad">Localidad</label>
+            <input type="text" name="localidad" id="localidad" maxlength="20" value="{{ a.get('localidad') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="codigo_postal">Código postal</label>
+            <input type="text" name="codigo_postal" id="codigo_postal" maxlength="8" value="{{ a.get('codigo_postal') or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="provincia">Provincia</label>
+            <select name="provincia" id="provincia">{{ ui.opciones(provincias, a.get('provincia'), texto='nombre') }}</select>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque">
+        <div class="bloque-titulo">Afiliación</div>
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label for="fecha_alta">Fecha de alta</label>
+            <input type="date" name="fecha_alta" id="fecha_alta" value="{{ a.get('fecha_alta') or '' }}">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label for="cbu_pago">CBU para pagos</label>
+            <input type="text" name="cbu_pago" id="cbu_pago" class="mono" maxlength="26" inputmode="numeric"
+                   value="{{ a.get('cbu_pago') or '' }}" oninput="avisarCbu(this)">
+            <small class="campo-ayuda" id="cbu-ayuda"></small>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="fecha_certificado_estudios">Certificado de estudios</label>
+            <input type="date" name="fecha_certificado_estudios" id="fecha_certificado_estudios"
+                   value="{{ a.get('fecha_certificado_estudios') or '' }}">
+            <small class="campo-ayuda">Hijos de 21 a 25 años</small>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="incapacidad" value="1" {{ 'checked' if a.get('incapacidad') }}> Con discapacidad
+            </label>
+          </div>
+          <div class="campo" style="--span:12;">
+            <span class="campo-label">Atributos</span>
+            <div class="fila">
+              {% for atr in atributos %}
+              <label class="campo-check" title="{{ atr.descripcion or '' }}">
+                <input type="checkbox" name="atributos" value="{{ atr.id }}" {{ 'checked' if atr.id in atributos_sel }}>
+                {{ atr.rotulo }}
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label for="observaciones">Observaciones</label>
+            <textarea name="observaciones" id="observaciones" rows="3">{{ a.get('observaciones') or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+
+      {% if consulta %}</fieldset>{% else %}
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if editando else 'Crear afiliado', icono_='guardar', submit=True) }}
+      </div>
+      {% endif %}
+    </form>
+  </div>
+</div>
+{% endif %}
+
+
+{% if editando %}
+<!-- ── Grupo familiar ─────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'grupo' }}" data-panel="grupo">
+  <div class="card">
+    {% set titular = (grupo|selectattr('cod_parentesco', 'equalto', 0)|list or [none])[0] %}
+    {% call ui.card_head('Grupo familiar', nota='CUIL del titular ' ~ (a.get('cuil_titular') or '—')) %}
+      {% if titular and not consulta %}
+      {{ ui.boton('Agregar familiar', 'ghost', icono_='agregar', chico=True,
+                  href=url_for('afiliados.abm_afiliados', familiar_de=a.get('cuil_titular'))) }}
+      {% endif %}
+    {% endcall %}
+    {% if not titular %}
+    <div class="card-aviso">
+      {{ ui.aviso('No hay un titular cargado con CUIL ' ~ (a.get('cuil_titular') or '—') ~ '.'
+                  ~ ('' if consulta else ' Para agregar familiares a este grupo, primero hay que cargar al titular.'), 'warning') }}
+    </div>
+    {% endif %}
+    <div class="data-table-wrap">
+      <table class="data-table compacta" data-exportar="Grupo familiar">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>Parentesco</th><th>CUIL</th><th>Apellido y nombres</th>
+          <th class="th-right">Edad</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for g in grupo %}
+          <tr class="{{ 'fila-actual' if g.id_afiliado == a.get('id_afiliado') }} {{ 'fila-baja' if not g.activo }}">
+            <td><div class="acciones">
+              {% if consulta %}
+              {{ ui.accion('ver', href=url_for('afiliados.padron', ver=g.id_afiliado)) }}
+              {% else %}
+              {{ ui.accion('editar', href=url_for('afiliados.abm_afiliados', edit=g.id_afiliado)) }}
+              {% endif %}
+            </div></td>
+            <td>{{ g.parentesco or g.cod_parentesco }}</td>
+            <td class="td-mono">{{ g.cuil or '—' }}</td>
+            <td class="td-fuerte">{{ g.apellido_nombres }}</td>
+            <td class="td-right">{{ g.edad if g.edad is not none else '—' }}</td>
+            <td>{{ ui.activo(g.activo, g.fecha_baja) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- ── Empleadores ─────────────────────────────────────────────────────────── -->
+{# El historial de p_relaciones_laborales. El vigente más nuevo es el empleador
+   de la ficha: al guardar acá, la ficha se actualiza sola. #}
+<div class="abm-panel {{ 'oculto' if inicial != 'empleadores' }}" data-panel="empleadores">
+  <div class="card">
+    {{ ui.card_head('Historial de empleadores', nota='El vigente es el empleador actual de la ficha.') }}
+    {% if not a.get('cuil') %}
+    <div class="card-aviso">
+      {{ ui.aviso('Sin CUIL no hay historial: las relaciones laborales se identifican por el CUIL.'
+                  ~ ('' if consulta else ' Cargalo en la ficha.'), 'warning') }}
+    </div>
+    {% endif %}
+    <div class="data-table-wrap">
+      <table class="data-table compacta" id="tbl-empleadores" data-exportar="Historial de empleadores">
+        <thead><tr>
+          {% if not consulta %}<th class="col-acciones" data-no-sort>Acciones</th>{% endif %}
+          <th>Empleador</th><th>CUIT</th>
+          <th class="th-right">Desde</th><th class="th-right">Hasta</th>
+          <th>Estado</th><th>Categoría</th><th>Observaciones</th>
+        </tr></thead>
+        <tbody>
+          {% for r in relaciones %}
+          <tr>
+            {% if not consulta %}
+            <td><div class="acciones">
+              {{ ui.accion('editar', onclick='editarRelacion(this)', datos={
+                   'id': r.id_relacion, 'cuit': r.cuit_empleador,
+                   'desde': r.fecha_inicio.isoformat() if r.fecha_inicio else '',
+                   'hasta': r.fecha_fin.isoformat() if r.fecha_fin else '',
+                   'categoria': r.categoria, 'obs': r.observaciones}) }}
+              <form method="post" action="{{ url_for('afiliados.empleadores', id_af=a.get('id_afiliado')) }}"
+                    class="form-en-linea" data-nombre="{{ r.razon_social or r.cuit_empleador }}"
+                    onsubmit="return confirm('¿Eliminar del historial la relación con ' + this.dataset.nombre + '?');">
+                <input type="hidden" name="accion" value="borrar">
+                <input type="hidden" name="id_relacion" value="{{ r.id_relacion }}">
+                {{ ui.accion('borrar', submit=True) }}
+              </form>
+            </div></td>
+            {% endif %}
+            <td class="td-fuerte">{{ r.razon_social or '' }}{% if not r.razon_social %}<span class="chip chip-alerta">no está en el padrón</span>{% endif %}</td>
+            <td class="td-mono">{{ r.cuit_empleador }}</td>
+            <td class="td-right">{{ r.fecha_inicio.strftime('%d/%m/%Y') if r.fecha_inicio else '—' }}</td>
+            <td class="td-right">{{ r.fecha_fin.strftime('%d/%m/%Y') if r.fecha_fin else '—' }}</td>
+            <td>
+              {%- if r.vigente %}{{ ui.estado('Vigente', 'ok') }}
+              {%- elif r.fecha_fin %}{{ ui.estado('Finalizada', 'neutro') }}
+              {%- else %}<span title="Sin fecha de egreso: vino así de AEDA, con el afiliado de baja">{{ ui.estado('Inactiva', 'neutro') }}</span>
+              {%- endif -%}
+            </td>
+            <td>{{ r.categoria or '—' }}</td>
+            <td class="td-muted td-wrap">{{ r.observaciones or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="{{ 7 if consulta else 8 }}" class="no-data">Sin empleadores registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% if not consulta and a.get('cuil') %}
+    <form method="post" action="{{ url_for('afiliados.empleadores', id_af=a.get('id_afiliado')) }}"
+          id="form-relacion" onsubmit="return validarRelacion()">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id_relacion" id="rel-id" value="">
+      <div class="bloque">
+        <div class="bloque-titulo" id="rel-titulo">Agregar empleador</div>
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label for="rel-cuit">CUIT del empleador <span class="req">*</span></label>
+            <input type="text" name="rel_cuit" id="rel-cuit" class="mono" maxlength="13" inputmode="numeric"
+                   required oninput="buscarEmpleador(this, 'rel-cuit-ayuda')">
+            <small class="campo-ayuda" id="rel-cuit-ayuda"></small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="rel-desde">Desde <span class="req">*</span></label>
+            <input type="date" name="rel_desde" id="rel-desde" max="{{ hoy.isoformat() }}" required>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="rel-hasta">Hasta</label>
+            <input type="date" name="rel_hasta" id="rel-hasta">
+            <small class="campo-ayuda">Vacío: sigue trabajando ahí</small>
+          </div>
+          <div class="campo" style="--span:5;">
+            <label for="rel-categoria">Categoría</label>
+            <input type="text" name="rel_categoria" id="rel-categoria" maxlength="60">
+          </div>
+          <div class="campo" style="--span:12;">
+            <label for="rel-observaciones">Observaciones</label>
+            <input type="text" name="rel_observaciones" id="rel-observaciones" maxlength="255">
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        <span id="rel-cancelar" class="oculto">{{ ui.boton('Cancelar', 'secondary', onclick='cancelarRelacion()') }}</span>
+        <span id="rel-submit-nuevo">{{ ui.boton('Agregar empleador', icono_='agregar', submit=True) }}</span>
+        <span id="rel-submit-editar" class="oculto">{{ ui.boton('Guardar cambios', icono_='guardar', submit=True) }}</span>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Documentación ───────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'documentacion' }}" data-panel="documentacion">
+  <div class="card">
+    {{ ui.card_head('Documentación', nota='DNI, certificados, recetas: el archivo queda guardado con la ficha.') }}
+    {% with url_guardar=url_for('afiliados.documentacion', id_af=a.get('id_afiliado')),
+            ver_endpoint='afiliados.ver_documento', ver_args={'id_af': a.get('id_afiliado')},
+            documentos=documentos, tipos=tipos_doc_adj, faltantes=doc_faltantes,
+            extensiones=doc_extensiones, max_mb=doc_max_mb, solo_lectura=consulta %}
+      {% include '_documentacion.html' %}
+    {% endwith %}
+  </div>
+</div>
+
+<!-- ── Contactos ──────────────────────────────────────────────────────────── -->
+{# Fuera del <form> de datos: el parcial trae formularios propios, y anidar
+   formularios no es válido en HTML. #}
+<div class="abm-panel {{ 'oculto' if inicial != 'contactos' }}" data-panel="contactos">
+  <div class="card">
+    {{ ui.card_head('Contactos', nota='De acá sale el destinatario de los avisos al afiliado.') }}
+    {% with entidad_tipo='afiliado', entidad_id=a.get('id_afiliado'),
+            contactos=contactos, areas_contacto=areas_contacto, solo_lectura=consulta %}
+      {% include '_contactos.html' %}
+    {% endwith %}
+  </div>
+</div>
+
+<!-- ── Movimientos ────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'movimientos' }}" data-panel="movimientos">
+  <div class="card">
+    {{ ui.card_head('Movimientos', nota='Cada cambio de la ficha, campo por campo, con quién y cuándo.') }}
+    {{ ui.barra_filtros('Filtrar por campo, valor, usuario…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-movimientos" data-exportar="Movimientos del afiliado">
+        <thead><tr>
+          <th class="th-right">Fecha</th><th>Tipo</th><th>Campo</th>
+          <th>Antes</th><th>Después</th><th class="th-right">Vigencia</th>
+          <th>Origen</th><th>Usuario</th><th>Observaciones</th>
+        </tr></thead>
+        <tbody>
+          {% set origenes = {'MANUAL': 'Pantalla', 'IMPORTACION': 'Importación', 'SISTEMA': 'Sistema'} %}
+          {% set tipos = {'ALTA': ('Alta', 'ok'), 'BAJA': ('Baja', 'danger'), 'REACTIVACION': ('Reactivación', 'ok'),
+                          'MODIFICACION': ('Modificación', 'info'), 'CAMBIO_CUIL': ('Cambio de CUIL', 'warn')} %}
+          {% for m in movimientos %}
+          {% set t = tipos.get(m.tipo_movimiento, (m.tipo_movimiento, 'neutro')) %}
+          <tr>
+            <td class="td-right">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td>{{ ui.estado(t[0], t[1]) }}</td>
+            <td>{{ m.campo_label }}</td>
+            <td class="td-muted td-wrap">{{ m.valor_anterior or '—' }}</td>
+            <td class="td-wrap">{{ m.valor_actual or '—' }}</td>
+            <td class="td-right">{{ m.fecha_vigencia.strftime('%d/%m/%Y') if m.fecha_vigencia else '—' }}</td>
+            <td class="td-muted">{{ origenes.get(m.origen, m.origen|capitalize) }}</td>
+            <td class="td-muted">{{ m.usuario or '—' }}</td>
+            <td class="td-muted td-wrap">{{ m.observaciones or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">Sin movimientos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<!-- ── Baja ───────────────────────────────────────────────────────────────── -->
+{% if not consulta %}
+{% set familiares_activos = grupo|selectattr('activo')|rejectattr('id_afiliado', 'equalto', a.get('id_afiliado'))|list %}
+<div class="modal" id="modal-baja">
+  <form class="modal-caja" method="post" action="{{ url_for('afiliados.abm_afiliados') }}">
+    <input type="hidden" name="accion" value="baja">
+    <input type="hidden" name="id" value="{{ a.get('id_afiliado') }}">
+    <div class="modal-titulo">¿Dar de baja a {{ a.get('apellido_nombres') or '' }}?</div>
+    <div class="modal-texto">Queda registrada con fecha y motivo, y se puede reactivar después.</div>
+    <div class="campos">
+      <div class="campo" style="--span:5;">
+        <label for="fecha_baja">Fecha de baja</label>
+        <input type="date" name="fecha_baja" id="fecha_baja" value="{{ hoy.isoformat() }}" required>
+      </div>
+      <div class="campo" style="--span:7;">
+        <label for="id_motivo_baja">Motivo <span class="req">*</span></label>
+        <select name="id_motivo_baja" id="id_motivo_baja" required>
+          {{ ui.opciones(motivos_baja, none, clave='id', texto='nombre', vacio='— Elegir —') }}
+        </select>
+      </div>
+      {% if es_titular and familiares_activos %}
+      <div class="campo" style="--span:12;">
+        <label class="campo-check">
+          <input type="checkbox" name="con_grupo" value="1" checked>
+          Dar de baja también a {{ familiares_activos|length }} familiar(es) activo(s) del grupo
+        </label>
+      </div>
+      {% endif %}
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-baja')") }}
+      {{ ui.boton('Dar de baja', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endif %}{# not consulta #}
+{% endif %}{# editando #}
+
+<script>
+// ── CUIL, CUIT y CBU: el mismo cálculo que el servidor, para avisar antes ───
+function cuitValido(c) {
+  if (!/^\d{11}$/.test(c)) return false;
+  var pesos = [5,4,3,2,7,6,5,4,3,2], suma = 0;
+  for (var i = 0; i < 10; i++) suma += parseInt(c[i], 10) * pesos[i];
+  var r = suma % 11, ver = r === 0 ? 0 : (r === 1 ? 9 : 11 - r);
+  return ver === parseInt(c[10], 10);
+}
+
+// cbuValido() está en base.html.
+
+function ayuda(id, texto, clase) {
+  var el = document.getElementById(id);
+  el.textContent = texto;
+  el.classList.remove('ok', 'error');
+  if (clase) el.classList.add(clase);
+}
+
+function avisarCuil(input, idAyuda) {
+  var d = input.value.replace(/\D/g, '');
+  if (!d) return ayuda(idAyuda, '');
+  if (d.length < 11) return ayuda(idAyuda, d.length + ' de 11 dígitos');
+  if (cuitValido(d)) ayuda(idAyuda, 'CUIL válido', 'ok');
+  else ayuda(idAyuda, 'El dígito verificador no cierra', 'error');
+}
+
+function avisarCbu(input) {
+  var d = input.value.replace(/\D/g, '');
+  if (!d) return ayuda('cbu-ayuda', '');
+  if (d.length < 22) return ayuda('cbu-ayuda', d.length + ' de 22 dígitos');
+  if (cbuValido(d)) ayuda('cbu-ayuda', 'CBU válido', 'ok');
+  else ayuda('cbu-ayuda', 'No cierran los dígitos verificadores', 'error');
+}
+
+// La razón social del empleador, mientras se tipea el CUIT. `idAyuda`: dónde
+// mostrarla (la ficha o el formulario del historial).
+function buscarEmpleador(input, idAyuda) {
+  idAyuda = idAyuda || 'empleador-ayuda';
+  var d = input.value.replace(/\D/g, '');
+  if (!d) return ayuda(idAyuda, '');
+  if (d.length < 11) return ayuda(idAyuda, d.length + ' de 11 dígitos');
+  if (!cuitValido(d)) return ayuda(idAyuda, 'El dígito verificador no cierra', 'error');
+  fetch('{{ url_for("afiliados.buscar_empleador") }}?cuit=' + d)
+    .then(function (r) { return r.json(); })
+    .then(function (e) {
+      if (e.razon_social) ayuda(idAyuda, e.razon_social, 'ok');
+      else ayuda(idAyuda, 'No está en el padrón de empleadores', 'error');
+    });
+}
+
+// ── Historial de empleadores ────────────────────────────────────────────────
+// Editar carga la fila en el formulario de abajo, igual que los contactos.
+function editarRelacion(b) {
+  var d = b.dataset;
+  document.getElementById('rel-id').value = d.id;
+  var cuit = document.getElementById('rel-cuit');
+  cuit.value = d.cuit;
+  buscarEmpleador(cuit, 'rel-cuit-ayuda');
+  var desde = document.getElementById('rel-desde');
+  desde.value = d.desde;
+  // Las que vinieron de AEDA sin fecha de ingreso se pueden editar sin inventarla.
+  desde.required = !!d.desde;
+  document.getElementById('rel-hasta').value = d.hasta;
+  document.getElementById('rel-categoria').value = d.categoria;
+  document.getElementById('rel-observaciones').value = d.obs;
+  document.getElementById('rel-titulo').textContent = 'Editar relación laboral';
+  ['rel-cancelar', 'rel-submit-editar'].forEach(function (id) {
+    document.getElementById(id).classList.remove('oculto');
+  });
+  document.getElementById('rel-submit-nuevo').classList.add('oculto');
+  document.getElementById('form-relacion').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  cuit.focus();
+}
+
+function cancelarRelacion() {
+  document.getElementById('form-relacion').reset();
+  document.getElementById('rel-id').value = '';
+  document.getElementById('rel-desde').required = true;
+  ayuda('rel-cuit-ayuda', '');
+  document.getElementById('rel-titulo').textContent = 'Agregar empleador';
+  ['rel-cancelar', 'rel-submit-editar'].forEach(function (id) {
+    document.getElementById(id).classList.add('oculto');
+  });
+  document.getElementById('rel-submit-nuevo').classList.remove('oculto');
+}
+
+function validarRelacion() {
+  var desde = document.getElementById('rel-desde').value, hasta = document.getElementById('rel-hasta').value;
+  if (desde && hasta && hasta < desde) {
+    alert('La fecha hasta es anterior a la fecha desde.');
+    return false;
+  }
+  return true;
+}
+
+// Un titular es su propio titular: el campo se completa solo y no se edita.
+function sincronizarTitular() {
+  var par = document.getElementById('cod_parentesco');
+  var titular = document.getElementById('cuil_titular');
+  if (!par || !titular) return;
+  var esTitular = par.value === '0';
+  titular.readOnly = esTitular;
+  if (esTitular) titular.value = document.getElementById('cuil').value.replace(/\D/g, '');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var estado    = document.getElementById('f-estado');
+  var tipo      = document.getElementById('f-tipo');
+  var sexo      = document.getElementById('f-sexo');
+  var edadDesde = document.getElementById('f-edad-desde');
+  var edadHasta = document.getElementById('f-edad-hasta');
+  var atributo  = document.getElementById('f-atributo');
+  function entero(input) {
+    var v = parseInt(input.value, 10);
+    return isNaN(v) ? null : v;
+  }
+  // Filtro, orden, paginación y exportación los pone base.html. El padrón
+  // entero viene de una vez y se filtra en el navegador, sin volver a la base.
+  gestion_admTable('tbl-afiliados', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (estado.value && tr.dataset.estado !== estado.value) return false;
+      if (tipo.value && tr.dataset.tipo !== tipo.value) return false;
+      if (sexo.value && tr.dataset.sexo !== sexo.value) return false;
+
+      var desde = entero(edadDesde), hasta = entero(edadHasta);
+      if (desde !== null || hasta !== null) {
+        if (tr.dataset.edad === '') return false;     // sin fecha de nacimiento
+        var edad = parseInt(tr.dataset.edad, 10);
+        if (desde !== null && edad < desde) return false;
+        if (hasta !== null && edad > hasta) return false;
+      }
+
+      if (atributo.value) {
+        var tiene = tr.dataset.atributos ? tr.dataset.atributos.split(',') : [];
+        if (atributo.value === 'con') { if (!tiene.length) return false; }
+        else if (atributo.value === 'sin') { if (tiene.length) return false; }
+        else if (tiene.indexOf(atributo.value) < 0) return false;
+      }
+      return true;
+    }
+  });
+  if (document.getElementById('tbl-movimientos')) gestion_admTable('tbl-movimientos', { pageSize: 20 });
+
+  sincronizarTitular();
+  ['cuil', 'cuil_titular'].forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el && el.value) avisarCuil(el, id === 'cuil' ? 'cuil-ayuda' : 'titular-ayuda');
+  });
+  var cbu = document.getElementById('cbu_pago');
+  if (cbu && cbu.value) avisarCbu(cbu);
+});
+</script>
+{% endblock %}

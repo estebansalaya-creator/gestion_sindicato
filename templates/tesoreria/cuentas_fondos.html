@@ -1,0 +1,429 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuentas de fondos{% endblock %}
+
+{#
+  Caja, bancos, inversiones y cartera: de dónde sale y adónde entra la plata.
+  Un banco lleva número de cuenta y CBU (el banco sale del CBU); una
+  inversión puede llevarlos; caja, cartera, tarjeta y otra no. La de pago
+  «predeterminada» es la que viene elegida al cargar un instrumento de pago:
+  a lo sumo una. Las chequeras van dentro de la cuenta de banco.
+#}
+{% set c = cuenta or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuentas de fondos</h1>
+    <p>Caja, bancos, inversiones y cartera de valores, con su cuenta contable y sus chequeras.</p>
+  </div>
+  {% if cuenta %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva cuenta', href=url_for('tesoreria.cuentas_fondos', nuevo=1), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{% set lista = [('listado', 'Listado', cuentas|length), ('datos', 'Editar' if c.get('id') else 'Nueva', None)] %}
+{% if c.get('id') and c.get('tipo_de_cuenta') == 'B' %}{% set lista = lista + [('chequeras', 'Chequeras', chequeras|length)] %}{% endif %}
+{{ ui.solapas(lista, inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por nombre, banco, número, CBU o cuenta…') %}
+      {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
+        <option value="">Todos los tipos</option>
+        {% for k, t in tipos %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Habilitadas</option>
+        <option value="0">Deshabilitadas</option>
+        <option value="">Todas</option>
+      </select>{% endcall %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-pago"> Solo de pago</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuentas" data-exportar="Cuentas de fondos">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Tipo</th>
+            <th>Nombre</th>
+            <th>Banco</th>
+            <th>N° de cuenta</th>
+            <th>CBU</th>
+            <th>Cuenta contable</th>
+            <th>Moneda</th>
+            <th>De pago</th>
+            <th class="th-right">Chequeras</th>
+            <th class="th-right">Movimientos</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for x in cuentas %}
+          <tr class="{{ 'fila-baja' if not x.habilitada }}" data-tipo="{{ x.tipo_de_cuenta }}"
+              data-habilitada="{{ x.habilitada }}" data-pago="{{ x.esdepago }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('tesoreria.cuentas_fondos', edit=x.id)) }}
+              {% if not x.movimientos and not x.chequeras %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': x.id, 'nombre': x.nombre}) }}
+              {% elif x.habilitada %}
+                {{ ui.accion('baja', titulo='Deshabilitar: tiene movimientos o chequeras', onclick='enviar(this)',
+                             datos={'id': x.id, 'accion': 'baja'}) }}
+              {% endif %}
+              {% if not x.habilitada %}
+                {{ ui.accion('reactivar', titulo='Habilitar', onclick='enviar(this)', datos={'id': x.id, 'accion': 'reactivar'}) }}
+              {% endif %}
+            </div></td>
+            <td>{{ tipos_txt.get(x.tipo_de_cuenta, x.tipo_de_cuenta) }}</td>
+            <td class="td-fuerte">{{ x.nombre }}
+              {% if x.predeterminada %}<span class="chip" title="Viene elegida al cargar un instrumento de pago">predeterminada</span>{% endif %}
+            </td>
+            <td>{% if x.banco_codigo %}<span class="td-mono">{{ x.banco_codigo }}</span> {{ x.banco_nombre }}{% else %}<span class="td-muted">—</span>{% endif %}</td>
+            <td class="td-mono">{{ x.numero_de_cuenta or '—' }}</td>
+            <td class="td-mono nowrap">{{ x.cbu or '—' }}</td>
+            <td>{% if x.cuenta_codigo %}<span class="td-mono">{{ x.cuenta_codigo }}</span> {{ x.cuenta_nombre }}{% else %}<span class="chip chip-alerta">sin cuenta del plan</span>{% endif %}</td>
+            <td class="td-muted">{{ x.moneda or '—' }}</td>
+            <td data-valor="{{ 'Sí' if x.esdepago else 'No' }}">{{ ui.si_no(x.esdepago) }}</td>
+            <td class="td-right {{ 'td-muted' if not x.chequeras }}">{{ x.chequeras }}</td>
+            <td class="td-right {{ 'td-muted' if not x.movimientos }}" data-num="{{ x.movimientos }}">{{ x.movimientos }}</td>
+            <td>{{ ui.estado('Habilitada', 'ok') if x.habilitada else ui.estado('Deshabilitada', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="12" class="no-data">No hay cuentas de fondos: se cargan de AEDA con importar_aeda_tesoreria.py.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head('Editar cuenta' if c.get('id') else 'Nueva cuenta') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('tesoreria.cuentas_fondos'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('tesoreria.cuentas_fondos') }}" id="form-cuenta">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ c.get('id') or '' }}">
+      <div class="bloque">
+        <div class="bloque-titulo">Cuenta</div>
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label>Tipo <span class="req">*</span></label>
+            <select name="tipo_de_cuenta" id="tipo" required onchange="verBanco()">
+              <option value="">—</option>
+              {% for k, t in tipos %}<option value="{{ k }}" {{ 'selected' if c.get('tipo_de_cuenta') == k }}>{{ t }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="100" value="{{ c.get('nombre') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Moneda <span class="req">*</span></label>
+            <select name="c_especiesId" required>{{ ui.opciones(especies, c.get('c_especiesId'), clave='id', texto='nombre') }}</select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Alias</label>
+            <input type="text" name="alias" maxlength="100" value="{{ c.get('alias') or '' }}">
+          </div>
+          <div class="campo" style="--span:7;">
+            <label>Cuenta contable <span class="req">*</span></label>
+            <select name="c_plan_de_cuentasId" required>
+              {{ ui.opciones_grupo(plan, c.get('c_plan_de_cuentasId'), vacio='— Una cuenta del activo —') }}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="bloque" id="bloque-banco">
+      <div class="bloque-titulo">Banco</div>
+      {# fieldset: deshabilitado no viaja en el POST (caja, cartera…). #}
+      <fieldset class="grupo-campos" id="campos-banco">
+        <div class="campos">
+          <div class="campo" style="--span:5;">
+            <label>Banco</label>
+            <select name="c_codigo_de_bancoId" id="banco" onchange="verFormatos()">
+              <option value="">— El del CBU —</option>
+              {% for b in bancos %}<option value="{{ b.id }}" data-codigo="{{ b.codigo }}" {{ 'selected' if c.get('c_codigo_de_bancoId') == b.id }}>{{ b.codigo }} · {{ b.nombre }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>N° de cuenta <span class="req req-banco">*</span></label>
+            <input type="text" name="numero_de_cuenta" id="numero" maxlength="20" class="mono" value="{{ c.get('numero_de_cuenta') or '' }}">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label>CBU <span class="req req-banco">*</span></label>
+            <input type="text" name="cbu" id="cbu" maxlength="26" class="mono" inputmode="numeric"
+                   placeholder="22 dígitos" value="{{ c.get('cbu') or '' }}" oninput="avisarCbu()">
+            <small class="campo-ayuda" id="cbu-ayuda"></small>
+          </div>
+          <div class="campo" style="--span:5;" id="campo-formato">
+            <label>Formato de transferencias</label>
+            <select name="formato_transferencia" id="formato">
+              <option value="">— El primero de su banco —</option>
+              {% for k, fmt in formatos.items() %}<option value="{{ k }}" data-banco="{{ fmt.banco }}" {{ 'selected' if c.get('formato_transferencia') == k }}>{{ fmt.nombre }}</option>{% endfor %}
+            </select>
+            <small class="campo-ayuda">El archivo que arma Transferencias Masivas cuando esta cuenta ordena.</small>
+          </div>
+        </div>
+      </fieldset>
+      </div>
+
+      <div class="bloque">
+        <div class="bloque-titulo">Uso</div>
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label class="campo-check"><input type="checkbox" name="habilitada" value="1" {{ 'checked' if c.get('habilitada') }}> Habilitada</label>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check"><input type="checkbox" name="esdepago" id="esdepago" value="1" {{ 'checked' if c.get('esdepago') }} onchange="verPredeterminada()"> Se usa para pagar</label>
+          </div>
+          <div class="campo" style="--span:4;" id="campo-predeterminada">
+            <label class="campo-check"><input type="checkbox" name="predeterminada" value="1" {{ 'checked' if c.get('predeterminada') }}> Predeterminada para pagar</label>
+          </div>
+          <div class="campo" style="--span:12;">
+            <label>Comentario</label>
+            <input type="text" name="comentario" maxlength="250" value="{{ c.get('comentario') or '' }}">
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if c.get('id') else 'Crear cuenta', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+{% if c.get('id') and c.get('tipo_de_cuenta') == 'B' %}
+<div class="abm-panel oculto" data-panel="chequeras" id="chequeras">
+  <div class="card">
+    {% call ui.card_head('Chequeras de ' ~ c.get('nombre'), nota='El último usado es el último cheque emitido; el próximo sale de ahí.') %}
+      {{ ui.boton('Agregar chequera', chico=True, icono_='agregar', onclick='editarChequera()') }}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-chequeras">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Descripción</th>
+            <th>Tipo</th>
+            <th>Impresión</th>
+            <th class="th-right">Desde</th>
+            <th class="th-right">Hasta</th>
+            <th class="th-right">Último usado</th>
+            <th class="th-right">Emitidos acá</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for q in chequeras %}
+          {% set terminada = q.proximo_numero > q.numero_hasta %}
+          <tr class="{{ 'fila-baja' if not q.habilitada }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', onclick='editarChequera(this)',
+                           datos={'id': q.id, 'descripcion': q.descripcion or '', 'tipo': q.tipo_cheque,
+                                  'impresion': q.impresion, 'desde': q.numero_desde, 'hasta': q.numero_hasta,
+                                  'ultimo': (q.proximo_numero - 1) if q.proximo_numero > q.numero_desde else '',
+                                  'habilitada': q.habilitada}) }}
+              {{ ui.accion('borrar', onclick='borrarChequera(this)',
+                           titulo='Deshabilitar' if q.emitidos else 'Eliminar',
+                           datos={'id': q.id, 'rango': q.numero_desde ~ '–' ~ q.numero_hasta, 'emitidos': q.emitidos}) }}
+            </div></td>
+            <td>{{ q.descripcion or '—' }}</td>
+            <td>{{ 'Diferido' if q.tipo_cheque == 'diferido' else 'Al día' }}</td>
+            <td>{{ 'Automática' if q.impresion == 'automatica' else 'Manual' }}</td>
+            <td class="td-right td-mono">{{ q.numero_desde }}</td>
+            <td class="td-right td-mono">{{ q.numero_hasta }}</td>
+            <td class="td-right td-mono">{{ (q.proximo_numero - 1) if q.proximo_numero > q.numero_desde else '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not q.emitidos }}">{{ q.emitidos }}</td>
+            <td>{% if terminada %}{{ ui.estado('Terminada', 'neutro') }}{% elif q.habilitada %}{{ ui.estado('Habilitada', 'ok') }}{% else %}{{ ui.estado('Deshabilitada', 'neutro') }}{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">La cuenta no tiene chequeras.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-chequera">
+  <div class="modal-caja">
+    <div class="modal-titulo" id="q-titulo">Chequera</div>
+    <form method="post" action="{{ url_for('tesoreria.chequeras', id_cuenta=c.get('id')) }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" id="q-id">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <label>Descripción</label>
+          <input type="text" name="descripcion" id="q-descripcion" maxlength="100">
+        </div>
+        <div class="campo" style="--span:6;">
+          <label>Tipo</label>
+          <select name="tipo_cheque" id="q-tipo"><option value="al_dia">Al día</option><option value="diferido">Diferido</option></select>
+        </div>
+        <div class="campo" style="--span:6;">
+          <label>Impresión</label>
+          <select name="impresion" id="q-impresion"><option value="manual">Manual</option><option value="automatica">Automática</option></select>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Desde <span class="req">*</span></label>
+          <input type="number" name="numero_desde" id="q-desde" required min="1" class="mono">
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Hasta <span class="req">*</span></label>
+          <input type="number" name="numero_hasta" id="q-hasta" required min="1" class="mono">
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Último usado</label>
+          <input type="number" name="ultimo_utilizado" id="q-ultimo" min="0" class="mono" placeholder="ninguno">
+        </div>
+        <div class="campo" style="--span:12;">
+          <label class="campo-check"><input type="checkbox" name="habilitada" id="q-habilitada" value="1" checked> Habilitada</label>
+        </div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-chequera')") }}
+        {{ ui.boton('Guardar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('tesoreria.chequeras', id_cuenta=c.get('id')) }}" id="form-borrar-chequera" class="oculto">
+  <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" id="bq-id">
+</form>
+{% endif %}
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la cuenta de fondos?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('tesoreria.cuentas_fondos') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('tesoreria.cuentas_fondos') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+var CON_BANCO = {{ con_banco|list|tojson }};
+
+/* Banco, número y CBU: obligatorios en un banco, opcionales en una inversión,
+   y no van en caja, cartera, tarjeta u otra (el servidor los limpia igual). */
+function verBanco() {
+  var tipo = document.getElementById('tipo').value;
+  var usa = CON_BANCO.indexOf(tipo) >= 0;
+  document.getElementById('campos-banco').disabled = !usa;
+  document.getElementById('bloque-banco').classList.toggle('oculto', !usa);
+  document.querySelectorAll('.req-banco').forEach(function (s) { s.classList.toggle('oculto', tipo !== 'B'); });
+  document.getElementById('numero').required = tipo === 'B';
+  document.getElementById('cbu').required = tipo === 'B';
+  document.getElementById('campo-formato').classList.toggle('oculto', tipo !== 'B');
+  verFormatos();
+}
+
+/* Solo los formatos del banco de la cuenta: un archivo con el diseño de otro
+   banco no rebota por el formato sino por la cuenta, y se descubre tarde. */
+function verFormatos() {
+  var sel = document.getElementById('banco'), op = sel.options[sel.selectedIndex];
+  var c = (document.getElementById('cbu').value || '').replace(/\D/g, '');
+  var banco = (op && op.dataset.codigo) || (c.length >= 3 ? c.slice(0, 3) : '');
+  var f = document.getElementById('formato');
+  Array.from(f.options).forEach(function (o) {
+    if (!o.value) return;
+    o.hidden = !!banco && o.dataset.banco !== banco;
+    if (o.hidden && o.selected) f.value = '';
+  });
+}
+
+/* El CBU dice el banco: sus tres primeros dígitos. Se elige solo. */
+function avisarCbu() {
+  var c = (document.getElementById('cbu').value || '').replace(/\D/g, ''), a = document.getElementById('cbu-ayuda');
+  a.className = 'campo-ayuda'; a.textContent = '';
+  if (!c) return;
+  if (!cbuValido(c)) {
+    a.classList.add('error');
+    a.textContent = c.length !== 22 ? 'Tiene ' + c.length + ' de 22 dígitos.' : 'No cierran los dígitos verificadores.';
+    return;
+  }
+  var sel = document.getElementById('banco'), op = sel.querySelector('option[data-codigo="' + c.slice(0, 3) + '"]');
+  if (op) { sel.value = op.value; a.classList.add('ok'); a.textContent = 'CBU válido · ' + op.textContent.trim(); verFormatos(); }
+  else { a.classList.add('error'); a.textContent = 'El banco ' + c.slice(0, 3) + ' no está en la tabla de bancos.'; }
+}
+
+function verPredeterminada() {
+  var pago = document.getElementById('esdepago'), campo = document.getElementById('campo-predeterminada');
+  campo.classList.toggle('oculto', !pago.checked);
+  if (!pago.checked) campo.querySelector('input').checked = false;
+}
+
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+
+/* La chequera se edita en un diálogo, como un contacto: es un renglón de la
+   cuenta y no tiene pantalla propia. */
+function editarChequera(b) {
+  var d = b ? b.dataset : {};
+  document.getElementById('q-titulo').textContent = b ? 'Editar chequera' : 'Nueva chequera';
+  document.getElementById('q-id').value = d.id || '';
+  document.getElementById('q-descripcion').value = d.descripcion || '';
+  document.getElementById('q-tipo').value = d.tipo || 'al_dia';
+  document.getElementById('q-impresion').value = d.impresion || 'manual';
+  document.getElementById('q-desde').value = d.desde || '';
+  document.getElementById('q-hasta').value = d.hasta || '';
+  document.getElementById('q-ultimo').value = d.ultimo || '';
+  document.getElementById('q-habilitada').checked = b ? d.habilitada === '1' : true;
+  abrirModal('modal-chequera');
+}
+function borrarChequera(b) {
+  var msg = parseInt(b.dataset.emitidos || '0', 10)
+    ? '¿Deshabilitar la chequera ' + b.dataset.rango + '? Tiene cheques emitidos: no se puede eliminar.'
+    : '¿Eliminar la chequera ' + b.dataset.rango + '?';
+  if (!confirm(msg)) return;
+  document.getElementById('bq-id').value = b.dataset.id;
+  document.getElementById('form-borrar-chequera').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var ft = document.getElementById('f-tipo'), fe = document.getElementById('f-estado'), fp = document.getElementById('f-pago');
+  gestion_admTable('tbl-cuentas', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      if (fe.value && tr.dataset.habilitada !== fe.value) return false;
+      if (fp.checked && tr.dataset.pago !== '1') return false;
+      return true;
+    }
+  });
+  verBanco();
+  verPredeterminada();
+  avisarCbu();
+  verChequeras();
+});
+/* Volver de guardar una chequera trae #chequeras: abre esa solapa. */
+function verChequeras() {
+  if (location.hash === '#chequeras' && document.querySelector('.abm-panel[data-panel="chequeras"]')) abmSolapa('chequeras');
+}
+window.addEventListener('hashchange', verChequeras);
+</script>
+{% endblock %}

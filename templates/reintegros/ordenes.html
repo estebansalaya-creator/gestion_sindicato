@@ -1,0 +1,255 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Órdenes de pago de reintegros{% endblock %}
+
+{#
+  Arriba, lo que queda por pagar: aprobados sin orden y pagos parciales con
+  saldo. Se eligen, se ajusta cuánto pagar de cada uno (un reintegro se puede
+  pagar en partes) y se genera UNA orden por titular. Abajo, las órdenes ya
+  generadas.
+
+  Las órdenes quedan en borrador en `pago_ordenes`: se aprueban y se pagan
+  desde su ficha (Tesorería → Pagos), a la que lleva el número.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Órdenes de pago de reintegros</h1>
+    <p>Generación de las órdenes de pago de los reintegros aprobados: una orden por titular.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{{ ui.solapas([('pendientes', 'Por pagar', reintegros|length), ('ordenes', 'Órdenes generadas', ordenes|length)],
+              solapa) }}
+
+<!-- ── Por pagar ──────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if solapa != 'pendientes' }}" data-panel="pendientes">
+<form method="post" id="form-ordenes" action="{{ url_for('reintegros.ordenes_generar') }}"
+      data-proceso="Generando las órdenes de pago…">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por titular, CUIL o N° de solicitud…', tam_pagina=50) %}
+      {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+        <option value="">Subsidios y reintegros</option>
+        {% for k, t in clases.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-pendientes" data-exportar="Reintegros por pagar">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>
+              <input type="checkbox" id="chk-todos" title="Elegir todos los filtrados" onclick="marcarTodos(this)">
+            </th>
+            <th>Titular</th>
+            <th>CUIL</th>
+            <th>N° solicitud</th>
+            <th>Clase</th>
+            <th>Fecha</th>
+            <th>Auditada</th>
+            <th class="th-right">Autorizado</th>
+            <th class="th-right">Ya en órdenes</th>
+            <th class="th-right">Saldo</th>
+            <th class="th-right" data-no-sort data-no-export>A pagar</th>
+            <th>CBU / alias</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reintegros %}
+          <tr data-clase="{{ r.clase }}">
+            <td><div class="acciones">
+              <input type="checkbox" class="chk-item" name="seleccion" value="{{ r.id }}"
+                     data-af="{{ r.id_afiliado }}" data-saldo="{{ '%.2f'|format(r.saldo|float) }}"
+                     aria-label="Elegir {{ r.nro_solicitud }}" onchange="recalcularSel()">
+              {{ ui.accion('ver', href=url_for('reintegros.ficha', id_reintegro=r.id)) }}
+            </div></td>
+            <td class="td-fuerte">{{ r.titular }}</td>
+            <td class="td-mono">{{ r.cuil_titular or '—' }}</td>
+            <td class="td-mono">{{ r.nro_solicitud }}</td>
+            <td>{{ r.clase_txt }}</td>
+            <td>{{ r.fecha_solicitud.strftime('%d/%m/%Y') if r.fecha_solicitud else '—' }}</td>
+            <td class="td-muted">{{ r.fecha_auditoria.strftime('%d/%m/%Y') if r.fecha_auditoria else '—' }}</td>
+            <td class="td-right" data-num="{{ r.aprobado }}">{{ r.aprobado|miles }}</td>
+            <td class="td-right" data-num="{{ r.en_ordenes }}">{{ r.en_ordenes|miles if r.en_ordenes|float > 0 else '—' }}</td>
+            <td class="td-right td-ok" data-num="{{ r.saldo }}">{{ r.saldo|miles }}</td>
+            {# Editable: es lo que permite pagar una parte ahora y el resto
+               después. Viene con el saldo, que es el caso de siempre. #}
+            <td class="td-right">
+              <input type="hidden" name="importe_{{ r.id }}" id="pagar-{{ r.id }}" value="{{ '%.2f'|format(r.saldo|float) }}">
+              <input type="text" inputmode="decimal" class="importe" value="{{ r.saldo|miles }}"
+                     data-id="{{ r.id }}" data-max="{{ '%.2f'|format(r.saldo|float) }}"
+                     aria-label="Importe a pagar de {{ r.nro_solicitud }}" oninput="onImporte(this)">
+            </td>
+            <td class="td-mono">{{ r.cbu_destino or r.alias_destino or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="12" class="no-data">No queda ningún reintegro con saldo por pagar.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if reintegros %}
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Elegidos</div><div class="res-card-val" id="res-cant">0</div></div>
+      <div><div class="res-card-lbl">Órdenes a generar</div><div class="res-card-val" id="res-ordenes">0</div></div>
+      <div><div class="res-card-lbl">Total</div><div class="res-card-val ok mono" id="res-total">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Generar órdenes de pago', 'primary', submit=True, icono_='dinero', id='btn-generar',
+                onclick='return confirmarGeneracion();') }}
+  </div>
+  {% endif %}
+</form>
+</div>
+
+<!-- ── Órdenes generadas ──────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if solapa != 'ordenes' }}" data-panel="ordenes">
+  {# Los totales son de lo filtrado entero, no de la página: se recalculan con cada filtro. #}
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('planilla', 20) }}</div>
+      <div><div class="kpi-lbl">Órdenes</div><div class="kpi-val" id="kpi-cant">0</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('dinero', 20) }}</div>
+      <div><div class="kpi-lbl">Importe</div><div class="kpi-val monto" id="kpi-importe">$ 0,00</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+      <div><div class="kpi-lbl">Pagado</div><div class="kpi-val monto" id="kpi-pagado">$ 0,00</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+      <div><div class="kpi-lbl">Pendiente de pago</div><div class="kpi-val monto" id="kpi-pendiente">$ 0,00</div></div></div>
+  </div>
+
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por N° de orden, beneficiario, CUIL o solicitud…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado-orden">
+        <option value="">Todos los estados</option>
+        {% for clave, etiqueta in estados_orden %}<option value="{{ clave }}">{{ etiqueta }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Fecha desde') %}<input type="date" class="filtro" id="f-o-desde">{% endcall %}
+      {% call ui.filtro('Fecha hasta') %}<input type="date" class="filtro" id="f-o-hasta">{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-ordenes" data-exportar="Ordenes de pago de reintegros">
+        <thead>
+          <tr>
+            <th>N° de orden</th>
+            <th>Fecha</th>
+            <th>Estado</th>
+            <th>Beneficiario</th>
+            <th>CUIL</th>
+            <th>Solicitudes</th>
+            <th class="th-right">Importe</th>
+            <th class="th-right">Pagado</th>
+            <th>Aprobación</th>
+            <th>CBU</th>
+            <th>Generó</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for o in ordenes %}
+          <tr data-estado="{{ o.estado }}" data-fecha="{{ o.fecha.isoformat() }}"
+              data-importe="{{ o.importe_total }}" data-pagado="{{ o.pagado }}">
+            <td class="td-mono"><a href="{{ url_for('pagos.orden', id_orden=o.id) }}">{{ o.nro_orden }}</a></td>
+            <td>{{ o.fecha.strftime('%d/%m/%Y') }}</td>
+            <td data-valor="{{ orden_label.get(o.estado, o.estado) }}">{{ ui.estado(orden_label.get(o.estado, o.estado), orden_tipo.get(o.estado, 'neutro')) }}</td>
+            <td class="td-fuerte">{{ o.beneficiario or '—' }}</td>
+            <td class="td-mono">{{ o.cuil or '—' }}</td>
+            <td class="td-mono" data-valor="{{ o.solicitudes|map(attribute='nro')|join(', ') }}">
+              {% for s in o.solicitudes %}<a href="{{ url_for('reintegros.ficha', id_reintegro=s.id) }}">{{ s.nro }}</a>{{ ', ' if not loop.last }}{% endfor %}
+            </td>
+            <td class="td-right" data-num="{{ o.importe_total }}">{{ o.importe_total|miles }}</td>
+            <td class="td-right" data-num="{{ o.pagado }}">{{ o.pagado|miles if o.pagado|float > 0 else '—' }}</td>
+            <td>{{ o.niveles_aprobados }}/{{ o.niveles_requeridos }}</td>
+            <td class="td-mono">{{ o.cbu or '—' }}</td>
+            <td class="td-muted">{{ o.nombre_usuario or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="11" class="no-data">Todavía no se generó ninguna orden de pago de reintegros.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<script>
+function items() { return Array.from(document.querySelectorAll('.chk-item')); }
+function importeDe(chk) {
+  var v = parseFloat(document.getElementById('pagar-' + chk.value).value);
+  return isNaN(v) ? 0 : v;
+}
+// Elige o suelta lo que pasó el filtro, no las filas escondidas: con el
+// filtro «PEREZ», «todos» son los de Pérez.
+function marcarTodos(chk) {
+  var tbl = document.getElementById('tbl-pendientes');
+  var filas = tbl._grilla ? tbl._grilla.filas() : Array.from(tbl.tBodies[0].rows);
+  filas.forEach(function (tr) { var c = tr.querySelector('.chk-item'); if (c) c.checked = chk.checked; });
+  recalcularSel();
+}
+// Lo que se va a pagar es lo que dice cada campo, no el saldo: el total de
+// la barra tiene que ser el de las órdenes que se van a generar.
+function onImporte(inp) {
+  mascaraImporte(inp, 'pagar-' + inp.dataset.id);
+  var v = parseFloat(document.getElementById('pagar-' + inp.dataset.id).value);
+  var mal = !isNaN(v) && v > parseFloat(inp.dataset.max) + 0.001;
+  inp.classList.toggle('excedido', mal);
+  inp.title = mal ? 'No puede superar el saldo de ' + pesos(inp.dataset.max) : '';
+  recalcularSel();
+}
+function recalcularSel() {
+  var sel = items().filter(function (i) { return i.checked; });
+  var total = sel.reduce(function (a, i) { return a + importeDe(i); }, 0);
+  var titulares = new Set(sel.map(function (i) { return i.dataset.af; }));
+  if (!document.getElementById('res-cant')) return;
+  document.getElementById('res-cant').textContent = sel.length;
+  document.getElementById('res-ordenes').textContent = titulares.size;
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('btn-generar').disabled = sel.length === 0;
+}
+function confirmarGeneracion() {
+  var sel = items().filter(function (i) { return i.checked; });
+  if (!sel.length) { alert('Elegí al menos un reintegro.'); return false; }
+  var excedidos = sel.filter(function (i) { return importeDe(i) > parseFloat(i.dataset.saldo) + 0.001; });
+  if (excedidos.length) { alert('Hay ' + excedidos.length + ' importe(s) mayores al saldo. Corregilos antes de generar.'); return false; }
+  var enCero = sel.filter(function (i) { return importeDe(i) <= 0; });
+  if (enCero.length) { alert('Hay ' + enCero.length + ' importe(s) en cero: sacalos de la selección o poneles un monto.'); return false; }
+  var parciales = sel.filter(function (i) { return importeDe(i) < parseFloat(i.dataset.saldo) - 0.001; }).length;
+  var titulares = new Set(sel.map(function (i) { return i.dataset.af; })).size;
+  return confirm('Se van a generar ' + titulares + ' orden' + (titulares === 1 ? '' : 'es') + ' de pago con '
+    + sel.length + ' reintegro' + (sel.length === 1 ? '' : 's') + ' por ' + document.getElementById('res-total').textContent + '.'
+    + (parciales ? '\n\n' + parciales + ' se paga' + (parciales === 1 ? '' : 'n') + ' en parte y queda'
+                   + (parciales === 1 ? '' : 'n') + ' con saldo.' : '')
+    + '\n\nQuedan en borrador, para aprobarlas en el circuito de pagos. ¿Seguir?');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var fClase = document.getElementById('f-clase');
+  gestion_admTable('tbl-pendientes', { pageSize: 50, filtroExtra: function (tr) {
+    return !fClase.value || tr.dataset.clase === fClase.value; } });
+
+  var fEstado = document.getElementById('f-estado-orden'),
+      fDesde = document.getElementById('f-o-desde'), fHasta = document.getElementById('f-o-hasta');
+  gestion_admTable('tbl-ordenes', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (fEstado.value && tr.dataset.estado !== fEstado.value) return false;
+      if (fDesde.value && tr.dataset.fecha < fDesde.value) return false;
+      if (fHasta.value && tr.dataset.fecha > fHasta.value) return false;
+      return true;
+    },
+    onRender: function (filas) {
+      var imp = 0, pag = 0;
+      filas.forEach(function (tr) { imp += parseFloat(tr.dataset.importe) || 0; pag += parseFloat(tr.dataset.pagado) || 0; });
+      document.getElementById('kpi-cant').textContent = filas.length;
+      document.getElementById('kpi-importe').textContent = pesos(imp);
+      document.getElementById('kpi-pagado').textContent = pesos(pag);
+      document.getElementById('kpi-pendiente').textContent = pesos(imp - pag);
+    }
+  });
+  recalcularSel();
+});
+</script>
+{% endblock %}

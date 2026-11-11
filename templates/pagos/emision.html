@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Emisión de pagos{% endblock %}
+
+{#
+  Emisión de pagos (pagos.emision): las órdenes de TODAS las clases, empezando
+  por las aprobadas, que son las que hay que pagar. «Pagado» es lo que salió de
+  la cuenta: el bruto pagado menos lo retenido (que se deposita a ARCA).
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Emisión de pagos</h1>
+    <p>Órdenes de pago de todas las clases. Las aprobadas se pagan desde su ficha.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Orden por concepto', 'secondary', href=url_for('pagos.concepto_nueva'), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por número o beneficiario…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      {% for k, t in estados %}<option value="{{ k }}" {{ 'selected' if k == 'aprobada' }}>{{ t }}</option>{% endfor %}
+      <option value="">Todos los estados</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+      <option value="">Todas las clases</option>
+      {% for k, t in clases %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Fecha desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Fecha hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-emision" data-exportar="Emisión de pagos">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>N° orden</th>
+          <th class="th-right">Fecha</th>
+          <th>Clase</th>
+          <th>Beneficiario</th>
+          <th class="th-right">Importe</th>
+          <th class="th-right">Retenido</th>
+          <th class="th-right">Pagado</th>
+          <th>Estado</th>
+          <th>Cargó</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in ordenes %}
+        <tr class="{{ 'fila-baja' if o.estado == 'anulada' }}" data-estado="{{ o.estado }}" data-clase="{{ o.clase }}"
+            data-fecha="{{ o.fecha.isoformat() if o.fecha }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', titulo='Ver' if o.estado != 'aprobada' else 'Pagar', href=url_for('pagos.orden', id_orden=o.id)) }}
+            {{ ui.accion('pdf', href=url_for('pagos.orden_pdf', id_orden=o.id), blank=True) }}
+          </div></td>
+          <td class="td-mono td-fuerte">{{ o.nro_vis }}</td>
+          <td class="td-right" data-valor="{{ o.fecha.strftime('%d/%m/%Y') if o.fecha }}">{{ o.fecha.strftime('%d/%m/%Y') if o.fecha }}</td>
+          <td>{{ clases_txt.get(o.clase, o.clase) }}</td>
+          <td class="td-recorte" title="{{ o.beneficiario or '' }}">{{ o.beneficiario or '—' }}</td>
+          <td class="td-right td-mono" data-num="{{ o.importe_total }}">{{ (o.importe_total or 0) | miles }}</td>
+          <td class="td-right td-mono {{ 'td-muted' if not o.retenido }}" data-num="{{ o.retenido }}">{{ (o.retenido or 0) | miles }}</td>
+          <td class="td-right td-mono {{ 'td-muted' if not o.pagado }}" data-num="{{ o.pagado }}">{{ (o.pagado or 0) | miles }}</td>
+          <td>{{ ui.estado(estados_txt.get(o.estado, o.estado), estado_tipo.get(o.estado, 'neutro')) }}</td>
+          <td class="td-muted">{{ o.usuario or '' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">Todavía no hay órdenes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fc = document.getElementById('f-clase'),
+      fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+  gestion_admTable('tbl-emision', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.estado !== fe.value) return false;
+      if (fc.value && tr.dataset.clase !== fc.value) return false;
+      if (fd.value && tr.dataset.fecha < fd.value) return false;
+      if (fh.value && tr.dataset.fecha > fh.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

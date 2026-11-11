@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Pagos emitidos{% endblock %}
+
+{#
+  Pagos emitidos (pagos.emitidos): lo que ya se pagó, de todas las clases.
+  Neto = bruto − retenido: lo que salió de la cuenta. Los anulados se ven con
+  el filtro de estado. El envío del comprobante por mail —que en gestion_adm
+  está en esta pantalla— llega cuando el sindicato tenga servidor de correo.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Pagos emitidos</h1>
+    <p>Lo que ya se pagó: número de pago, orden, beneficiario, bruto, retenido y neto.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por número de pago u orden, o beneficiario…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="emitido" selected>Emitidos</option>
+      <option value="anulado">Anulados</option>
+      <option value="">Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+      <option value="">Todas las clases</option>
+      {% for k, t in clases %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Fecha desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Fecha hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-emitidos" data-exportar="Pagos emitidos">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>N° pago</th>
+          <th class="th-right">Fecha</th>
+          <th>Orden</th>
+          <th>Clase</th>
+          <th>Beneficiario</th>
+          <th>Instrumentos</th>
+          <th class="th-right">Bruto</th>
+          <th class="th-right">Retenido</th>
+          <th class="th-right">Neto</th>
+          <th>Estado</th>
+          <th>Emitió</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pagos %}
+        <tr class="{{ 'fila-baja' if p.estado == 'anulado' }}" data-estado="{{ 'anulado' if p.estado == 'anulado' else 'emitido' }}"
+            data-clase="{{ p.clase }}" data-fecha="{{ p.fecha_pago.isoformat() if p.fecha_pago }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', titulo='Ver la orden', href=url_for('pagos.orden', id_orden=p.id_orden)) }}
+            {{ ui.accion('pdf', href=url_for('pagos.orden_pdf', id_orden=p.id_orden), blank=True) }}
+          </div></td>
+          <td class="td-mono td-fuerte">{{ p.nro_vis }}</td>
+          <td class="td-right" data-valor="{{ p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago }}">{{ p.fecha_pago.strftime('%d/%m/%Y') if p.fecha_pago }}</td>
+          <td class="td-mono">{{ p.nro_orden_vis }}</td>
+          <td>{{ clases_txt.get(p.clase, p.clase) }}</td>
+          <td class="td-recorte" title="{{ p.beneficiario or '' }}">{{ p.beneficiario or '—' }}</td>
+          <td class="td-muted">{{ p.instrumentos or '—' }}</td>
+          <td class="td-right td-mono" data-num="{{ p.bruto }}">{{ (p.bruto or 0) | miles }}</td>
+          <td class="td-right td-mono {{ 'td-muted' if not p.retenido }}" data-num="{{ p.retenido }}">{{ (p.retenido or 0) | miles }}</td>
+          <td class="td-right td-mono td-fuerte" data-num="{{ p.neto }}">{{ (p.neto or 0) | miles }}</td>
+          <td>{{ ui.estado('Anulado', 'neutro') if p.estado == 'anulado' else ui.estado('Emitido', 'ok') }}</td>
+          <td class="td-muted">{{ p.usuario or '' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="12" class="no-data">Todavía no hay pagos.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fc = document.getElementById('f-clase'),
+      fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+  gestion_admTable('tbl-emitidos', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.estado !== fe.value) return false;
+      if (fc.value && tr.dataset.clase !== fc.value) return false;
+      if (fd.value && tr.dataset.fecha < fd.value) return false;
+      if (fh.value && tr.dataset.fecha > fh.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

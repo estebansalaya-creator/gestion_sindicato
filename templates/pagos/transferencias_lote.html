@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Archivo de transferencias{% endblock %}
+
+{#
+  Ficha de un archivo de transferencias (transferencias.lote_ver). Con
+  ?descargar=1 (al venir de Generar) baja el archivo solo. Sacar un pago o
+  anular el archivo es para el que no se subió al banco: libera los pagos para
+  anularlos o mandarlos en otro. Lo conciliado no se libera.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Archivo de transferencias</h1>
+    <p class="mono">{{ lote.nombre_archivo }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('transferencias.index'), icono_='volver') }}
+    {% if not lote.fecha_anulacion %}
+      {{ ui.boton('Anular el archivo', 'danger', icono_='baja', onclick="abrirAnular()") }}
+      {{ ui.boton('Bajar el archivo', 'primary', href=url_for('transferencias.lote_descargar', id_lote=lote.id), icono_='descargar', id='btn-bajar') }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if lote.fecha_anulacion %}
+  {{ ui.aviso('Anulado el ' ~ lote.fecha_anulacion.strftime('%d/%m/%Y %H:%M') ~ ': ' ~ (lote.motivo_anulacion or '') ~ '. Sus pagos no figuran transferidos.', 'warning') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Datos del archivo') }}
+  <div class="card-body">
+    <div class="datos">
+      <div class="dato"><div class="dato-lbl">Generado</div><div class="dato-val">{{ lote.creado.strftime('%d/%m/%Y %H:%M') }}</div></div>
+      <div class="dato"><div class="dato-lbl">Por</div><div class="dato-val">{{ lote.usuario or '—' }}</div></div>
+      <div class="dato"><div class="dato-lbl">Cuenta ordenante</div><div class="dato-val">{{ lote.cuenta or '—' }}</div>
+        <div class="dato-val mono">{{ lote.cbu_ordenante or '' }}</div></div>
+      <div class="dato"><div class="dato-lbl">Formato</div><div class="dato-val">{{ formato_txt }}</div></div>
+      {% if lote.concepto %}<div class="dato"><div class="dato-lbl">Concepto</div><div class="dato-val mono">{{ lote.concepto }}</div></div>{% endif %}
+      <div class="dato"><div class="dato-lbl">Estado</div><div class="dato-val">{% if lote.fecha_anulacion %}{{ ui.estado('Anulado', 'danger') }}{% else %}{{ ui.estado('Generado', 'ok') }}{% endif %}</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por beneficiario, pago o CBU…', tam_pagina=50) %}
+    {% call ui.filtro('Renglones') %}<select class="filtro" id="f-incluida">
+      <option value="">Todos</option><option value="1">En el archivo</option><option value="0">Excluidos</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-det" data-exportar="Archivo {{ lote.nombre_archivo }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Pago</th><th>Fecha</th><th>Clase</th><th>Beneficiario</th><th>CUIT / CUIL</th><th>CBU / alias</th>
+        <th class="th-right">Importe</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for d in detalle %}
+        <tr class="{{ 'fila-apagada' if not d.incluida }}" data-incluida="{{ d.incluida }}">
+          <td><div class="acciones">
+            {% if puede_ordenes and d.id_orden %}{{ ui.accion('ver', href=url_for('pagos.orden', id_orden=d.id_orden), titulo='Ver la orden de pago') }}{% endif %}
+            {% if d.incluida and not lote.fecha_anulacion %}
+              {{ ui.accion('baja', titulo='Sacar del archivo', onclick='abrirExcluir(this)', datos={'id': d.id, 'nombre': (d.numero or '') ~ ' · ' ~ (d.beneficiario or '')}) }}
+            {% endif %}
+          </div></td>
+          <td class="td-mono">{{ d.numero or '—' }}</td>
+          <td data-valor="{{ d.fecha_pago.isoformat() if d.fecha_pago else '' }}">{{ d.fecha_pago.strftime('%d/%m/%Y') if d.fecha_pago else '—' }}</td>
+          <td class="td-muted">{{ d.clase_txt }}</td>
+          <td class="td-wrap td-fuerte">{{ d.beneficiario or '—' }}
+            {% if d.motivo_exclusion %}<span class="td-motivo">{{ d.motivo_exclusion }}</span>{% endif %}</td>
+          <td class="td-mono">{{ d.cuit_destino or '—' }}</td>
+          <td class="td-mono">{{ d.cbu_destino or '—' }}</td>
+          <td class="td-right td-fuerte" data-num="{{ d.importe }}">{{ (d.importe or 0) | miles }}</td>
+          <td>{% if d.incluida %}{{ ui.estado('En el archivo', 'ok') }}{% else %}{{ ui.estado('Excluido', 'neutro') }}{% endif %}
+            {% if d.estado_pago == 'anulado' %}{{ ui.estado('Pago anulado', 'danger') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">El archivo no tiene renglones.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card resumen">
+  {{ ui.card_head('Resumen') }}
+  <div class="card-body">
+    <div class="resumen-fila"><span>Transferencias</span><strong>{{ lote.cantidad }}</strong></div>
+    <div class="resumen-fila"><span>Excluidas</span><strong>{{ lote.excluidas }}</strong></div>
+    <div class="resumen-fila resumen-total"><span>Total del archivo</span><strong class="mono">$ {{ (lote.importe_total or 0) | miles }}</strong></div>
+  </div>
+</div>
+
+{% if not lote.fecha_anulacion %}
+<div class="modal" id="modal-excluir">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Sacar el pago del archivo?</div>
+    <div class="modal-texto" id="excluir-nombre"></div>
+    <form method="post" action="{{ url_for('transferencias.lote_excluir', id_lote=lote.id) }}">
+      <input type="hidden" name="id_detalle" id="excluir-id">
+      <div class="campo">
+        <label for="excluir-motivo">Motivo <span class="req">*</span></label>
+        <textarea name="motivo" id="excluir-motivo" rows="3" maxlength="100" required></textarea>
+        <small class="campo-ayuda">Solo si esa transferencia no se hizo. Si el archivo ya se bajó, hay que volver a bajarlo: el anterior todavía la trae.</small>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-excluir')") }}
+        {{ ui.boton('Sacar del archivo', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-anular">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Anular el archivo?</div>
+    <div class="modal-texto">Es para el archivo que no se subió al banco: sus {{ lote.cantidad }} pagos quedan como no transferidos.</div>
+    <form method="post" action="{{ url_for('transferencias.lote_anular', id_lote=lote.id) }}">
+      <div class="campo">
+        <label for="anular-motivo">Motivo <span class="req">*</span></label>
+        <textarea name="motivo" id="anular-motivo" rows="3" maxlength="200" required></textarea>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+        {{ ui.boton('Anular el archivo', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function abrirExcluir(b) {
+  document.getElementById('excluir-id').value = b.dataset.id;
+  document.getElementById('excluir-nombre').textContent = b.dataset.nombre;
+  document.getElementById('excluir-motivo').value = '';
+  abrirModal('modal-excluir');
+  document.getElementById('excluir-motivo').focus();
+}
+function abrirAnular() {
+  document.getElementById('anular-motivo').value = '';
+  abrirModal('modal-anular');
+  document.getElementById('anular-motivo').focus();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fi = document.getElementById('f-incluida');
+  gestion_admTable('tbl-det', { pageSize: 50, filtroExtra: function (tr) {
+    return !fi.value || tr.dataset.incluida === fi.value; } });
+  {% if descargar %}
+  // Recién generado: el archivo baja solo, armado con lo que quedó registrado.
+  window.location.href = document.getElementById('btn-bajar').href;
+  {% endif %}
+});
+</script>
+{% endblock %}

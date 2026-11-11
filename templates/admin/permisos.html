@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "admin/_arbol_menu.html" as am %}
+{% block title %}Permisos por usuario{% endblock %}
+
+{#
+  Permisos por usuario (admin.permisos): opciones sueltas para una persona,
+  además de las de sus roles (s_menu_usuario). Las de los roles se ven
+  tildadas y no se tocan: un permiso suelto suma, no quita. Para sacarle algo
+  que le da un rol, se cambia el rol o se le asigna otro.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Permisos por usuario</h1>
+    <p>Opciones del menú para una persona, además de las que le dan sus roles.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card" data-sin-solapas>
+  <form method="get" action="{{ url_for('admin.permisos') }}" class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label>Usuario</label>
+        <select name="usuario" onchange="this.form.submit()">
+          <option value="">— Elegí a quién —</option>
+          {% for u in usuarios %}
+          <option value="{{ u.id }}" {{ 'selected' if usuario and u.id == usuario.id }}>
+            {{ u.nombre }} · {{ u.email }}{% if not u.activo %} (de baja){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if usuario %}
+      <div class="campo" style="--span:6;">
+        <label>Roles</label>
+        <input type="text" value="{{ usuario.roles or 'sin rol' }}" readonly>
+        <small class="campo-ayuda">
+          {% if puede(url_for('admin.usuarios')) %}<a href="{{ url_for('admin.usuarios', edit=usuario.id) }}">Cambiar sus roles</a> ·{% endif %}
+          {{ por_rol|length }} opciones por rol, {{ extras|length }} sueltas.
+        </small>
+      </div>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if usuario %}
+  {% if not usuario.activo %}{{ ui.aviso('Está dado de baja: no puede entrar, tenga los permisos que tenga.', 'warning') }}{% endif %}
+  <form method="post" action="{{ url_for('admin.permisos') }}">
+    <input type="hidden" name="usuario" value="{{ usuario.id }}">
+    {% set fijas = {} %}
+    {% for k, v in por_rol.items() %}{% set _ = fijas.update({k: v|join(', ')}) %}{% endfor %}
+    {{ am.tabla(arbol, extras, fijas=fijas, id='tbl-menu', exportar='Permisos de ' ~ usuario.nombre, col_fijas='Por rol') }}
+    <div class="form-acciones">
+      {{ ui.boton('Guardar permisos', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+  {{ am.script('tbl-menu') }}
+{% else %}
+  {{ ui.aviso('Elegí un usuario para ver qué tiene por sus roles y darle opciones sueltas.', 'info') }}
+{% endif %}
+{% endblock %}

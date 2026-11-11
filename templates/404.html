@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{% if opcion %}Pantalla pendiente{% else %}No encontrada{% endif %}{% endblock %}
+
+{% block content %}
+<div class="pantalla-aviso">
+  {% if opcion %}
+  {# La URL está en el menú: la opción existe, lo que falta es el código.
+     Se distingue del 404 común a propósito — que una pantalla no esté hecha
+     todavía no es lo mismo que un link roto, y confundirlos manda a buscar el
+     problema al lugar equivocado. #}
+  <div class="pantalla-aviso-icono">{{ ui.icono('info', 44) }}</div>
+  <h1>{{ opcion.nombre }}</h1>
+  <p>Esta pantalla está prevista pero todavía no está desarrollada.</p>
+  {% else %}
+  <div class="pantalla-aviso-icono muted">{{ ui.icono('alerta', 44) }}</div>
+  <h1>No encontramos esa página</h1>
+  {% endif %}
+  <p class="mono chico">{{ destino }}</p>
+  {{ ui.boton('Volver al inicio', href=url_for('menu'), icono_='inicio') }}
+</div>
+{% endblock %}

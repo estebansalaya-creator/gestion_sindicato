@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Historial de Importaciones{% endblock %}
+
+{% block content %}
+{# Pendiente de integrar a sindicato.css: cuando esté, se borra esta línea. #}
+
+{% macro fmt_periodo(p) %}
+  {%- set s = p | string -%}
+  {%- set meses = ['','Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'] -%}
+  {{ meses[s[4:6] | int] }} {{ s[:4] }}
+{%- endmacro %}
+
+<div class="page-header">
+  <div>
+    <h1>Historial de Importaciones — Cuotas Sindicales</h1>
+    <p>Registro de todos los archivos Excel procesados por el importador.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva importación', href=url_for('sindicato.fisca_importar_cuotas'), icono_='subir') }}
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.barra_filtros('Filtrar por archivo, CUIT, empresa…') }}
+
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-log" data-exportar="Historial de importaciones">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th class="th-right">N°</th>
+          <th>Archivo</th>
+          <th>Empresa</th>
+          <th>CUIT</th>
+          <th class="th-center">Período</th>
+          <th class="th-right">Filas</th>
+          <th class="th-right">Insert.</th>
+          <th class="th-right">Actual.</th>
+          <th class="th-right">Ignor.</th>
+          <th class="th-right">Errores</th>
+          <th>Modo dup.</th>
+          <th>Usuario</th>
+          <th class="th-right">Fecha</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in registros %}
+        <tr>
+          <td><div class="acciones">
+            {% if r.detalle_errores %}
+            {# El detalle viaja en data-detalle y no serializado en el onclick:
+               un mensaje de error con comillas rompía el atributo. #}
+            {{ ui.accion('ver', titulo='Ver errores', onclick='verDetalle(this)',
+                         datos={'id': r.id, 'detalle': r.detalle_errores}) }}
+            {% endif %}
+          </div></td>
+          <td class="td-right td-muted">{{ r.id }}</td>
+          <td class="td-mono td-recorte" title="{{ r.nombre_archivo }}">{{ r.nombre_archivo }}</td>
+          <td class="td-recorte" title="{{ r.empresa or '' }}">{{ r.empresa or '—' }}</td>
+          <td class="td-mono">{{ r.cuit[:2] }}-{{ r.cuit[2:10] }}-{{ r.cuit[10:] }}</td>
+          <td class="td-center">{{ fmt_periodo(r.periodo) }}</td>
+          <td class="td-right">{{ r.total_filas }}</td>
+          <td class="td-right {{ 'td-ok' if r.insertados > 0 else 'td-muted' }}">{{ r.insertados }}</td>
+          <td class="td-right {{ 'td-fuerte' if r.actualizados > 0 else 'td-muted' }}">{{ r.actualizados }}</td>
+          <td class="td-right td-muted">{{ r.ignorados }}</td>
+          <td class="td-right {{ 'td-danger' if r.errores > 0 else 'td-muted' }}">{{ r.errores }}</td>
+          <td>
+            {% if r.modo_dup == 'skip' %}Ignorar
+            {% elif r.modo_dup == 'update' %}Actualizar
+            {% else %}Detener{% endif %}
+          </td>
+          <td>{{ r.usuario_nombre or '—' }}</td>
+          <td class="td-right">
+            {{ r.fecha_importacion.strftime('%d/%m/%Y %H:%M') if r.fecha_importacion else '—' }}
+          </td>
+          <td>
+            {% if r.estado == 'ok' %}{{ ui.estado('OK', 'ok') }}
+            {% elif r.estado == 'parcial' %}{{ ui.estado('Parcial', 'warn') }}
+            {% else %}{{ ui.estado('Error', 'danger') }}{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="15" class="no-data">No hay importaciones registradas aún.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {{ ui.paginacion() }}
+</div>
+
+{# ── Diálogo: detalle de errores ─────────────────────────────────────────── #}
+<div class="modal" id="modal-errores">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Detalle de errores — importación #<span id="modal-id"></span></div>
+    <div class="modal-cuerpo" id="modal-body"></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cerrar', 'secondary', onclick="cerrarModal('modal-errores')") }}
+    </div>
+  </div>
+</div>
+
+<script>
+function verDetalle(boton) {
+  document.getElementById('modal-id').textContent = boton.dataset.id;
+  var errores = [];
+  try { errores = JSON.parse(boton.dataset.detalle || '[]'); } catch(e) { errores = [boton.dataset.detalle]; }
+
+  var esc = function (s) {
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  };
+  document.getElementById('modal-body').innerHTML = (errores && errores.length)
+    ? '<div class="alert alert-warning"><ol>' +
+        errores.map(function (e) { return '<li>' + esc(e) + '</li>'; }).join('') + '</ol></div>'
+    : '<p class="muted">Sin detalle disponible.</p>';
+  abrirModal('modal-errores');
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  gestion_admTable('tbl-log', { pageSize: 20 });
+});
+</script>
+{% endblock %}

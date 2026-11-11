@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Talonarios{% endblock %}
+
+{#
+  Talonarios (talonarios.index): tres solapas, de lo particular a lo general.
+    Talonarios        punto de venta, letra, rango y por dónde va la numeración.
+    Clasificaciones   agrupan talonarios de un tipo de comprobante.
+    Tipos             Recibo, Factura…: si suman a la deuda (debe) o la cancelan (haber).
+  Formularios satélite: si falta la clasificación (o su tipo), se crea en un
+  diálogo desde el mismo formulario y queda elegida (talonarios.api_*).
+#}
+{% set f = form or {} %}
+{% set ed_tal = solapa == 'talonarios' and form %}
+{% set ed_cla = solapa == 'clasificaciones' and form %}
+{% set ed_tip = solapa == 'tipos' and form %}
+{% set usado = f.get('usado') %}
+
+{% macro lado(dc) -%}{{ ui.estado('Debe', 'info') if dc == 'D' else ui.estado('Haber', 'neutro') }}{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Talonarios</h1>
+    <p>La numeración de los comprobantes que emite el sindicato: recibos, liquidaciones, notas de crédito.</p>
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{{ ui.solapas([('talonarios', 'Talonarios', talonarios|length), ('clasificaciones', 'Clasificaciones', clasificaciones|length),
+               ('tipos', 'Tipos de comprobante', tipos|length)], solapa) }}
+
+{# ═══ Talonarios ═══ #}
+<div class="abm-panel {{ 'oculto' if solapa != 'talonarios' }}" data-panel="talonarios">
+  {% if ed_tal %}
+  <div class="card" data-sin-solapas>
+    {% call ui.card_head('Editar talonario' if f.get('id') else 'Nuevo talonario',
+                         nota='Ya emitió comprobantes: el punto de venta, la letra, el número desde y la clasificación quedan fijos.' if usado else None) %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('talonarios.index'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('talonarios.index') }}">
+      <input type="hidden" name="accion" value="guardar_talonario">
+      <input type="hidden" name="id" value="{{ f.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:4;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="50" value="{{ f.get('nombre') or '' }}" placeholder="Recibos 0001">
+          </div>
+          <div class="campo" style="--span:6;">
+            <label>Clasificación <span class="req">*</span></label>
+            <select name="clasificacion" id="sel-clasif" required {{ 'disabled' if usado }}>
+              <option value="">— Elegí la clasificación —</option>
+              {% for c in clasificaciones %}
+              <option value="{{ c.id }}" {{ 'selected' if f.get('c_talonario_clasificacionId') == c.id }}>{{ c.descripcion }} · {{ c.tipo }} ({{ 'debe' if c.debito_credito == 'D' else 'haber' }})</option>
+              {% endfor %}
+            </select>
+            {% if usado %}<input type="hidden" name="clasificacion" value="{{ f.c_talonario_clasificacionId }}">{% endif %}
+          </div>
+          <div class="campo campo-boton" style="--span:2;">
+            {% if not usado %}{{ ui.boton('Nueva', 'secondary', icono_='agregar', onclick="abrirClasif('sel-clasif')") }}{% endif %}
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Letra <span class="req">*</span></label>
+            <select name="letra" {{ 'disabled' if usado }}>
+              {% for l in letras %}<option value="{{ l }}" {{ 'selected' if f.get('letra') == l }}>{{ l }}</option>{% endfor %}
+            </select>
+            {% if usado %}<input type="hidden" name="letra" value="{{ f.letra }}">{% endif %}
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Punto de venta <span class="req">*</span></label>
+            <input type="number" name="punto_de_venta" min="1" max="99998" required value="{{ f.get('punto_de_venta') or '' }}" {{ 'readonly' if usado }}>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Número desde <span class="req">*</span></label>
+            <input type="number" name="numero_desde" min="1" required value="{{ f.get('numero_desde') or '' }}" {{ 'readonly' if usado }}>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Número hasta <span class="req">*</span></label>
+            <input type="number" name="numero_hasta" min="1" required value="{{ f.get('numero_hasta') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Último emitido</label>
+            <input type="number" name="ultimo_emitido" min="0" value="{{ f.ultimo_emitido if f.get('ultimo_emitido') is not none else '' }}">
+            <small class="campo-ayuda">Vacío: ninguno todavía. No retrocede.</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label class="campo-check"><input type="checkbox" name="habilitado" value="1" {{ 'checked' if f.get('habilitado') }}> Habilitado</label>
+          </div>
+          <div class="campo" style="--span:12;">
+            <label>Comentario</label>
+            <input type="text" name="comentario" maxlength="250" value="{{ f.get('comentario') or '' }}">
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Guardar cambios' if f.get('id') else 'Crear el talonario', icono_='guardar', submit=True) }}</div>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    {% call ui.card_head('Talonarios', nota='El próximo número de cada uno y cuánto le queda.') %}
+      {{ ui.boton('Nuevo talonario', chico=True, icono_='agregar', href=url_for('talonarios.index', solapa='talonarios', nuevo=1)) }}
+    {% endcall %}
+    {% call ui.barra_filtros('Filtrar por nombre o clasificación…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-hab">
+        <option value="1" selected>Habilitados</option><option value="0">Deshabilitados</option><option value="">Todos</option>
+      </select>{% endcall %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-agotar"> Por agotarse o agotados</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-talonarios" data-exportar="Talonarios">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th><th>Nombre</th><th>Clasificación</th><th>Tipo</th>
+          <th>Letra</th><th class="th-right">Punto de venta</th><th class="th-right">Desde</th><th class="th-right">Hasta</th>
+          <th class="th-right">Próximo</th><th class="th-right">Quedan</th><th class="th-right">Uso</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for t in talonarios %}
+          <tr class="{{ 'fila-baja' if not t.habilitado }}" data-hab="{{ t.habilitado }}" data-agotar="{{ 1 if t.agotado or t.por_agotar else 0 }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('talonarios.index', edit=t.id)) }}
+              {% if t.habilitado %}
+                {{ ui.accion('baja', titulo='Deshabilitar: deja de ofrecerse para emitir', onclick='enviar(this)', datos={'id': t.id, 'accion': 'habilitar'}) }}
+              {% else %}
+                {{ ui.accion('reactivar', titulo='Habilitar', onclick='enviar(this)', datos={'id': t.id, 'accion': 'habilitar'}) }}
+              {% endif %}
+              {% if not t.usado %}{{ ui.accion('borrar', onclick="confirmarBorrar(this)", datos={'id': t.id, 'accion': 'borrar', 'nombre': 'el talonario ' ~ t.nombre}) }}{% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ t.nombre }}</td>
+            <td>{{ t.clasificacion }}</td>
+            <td>{{ t.tipo }} {{ lado(t.debito_credito) }}</td>
+            <td class="td-mono">{{ t.letra }}</td>
+            <td class="td-right td-mono" data-num="{{ t.punto_de_venta }}">{{ '%05d' | format(t.punto_de_venta) }}</td>
+            <td class="td-right td-mono" data-num="{{ t.numero_desde }}">{{ t.numero_desde }}</td>
+            <td class="td-right td-mono" data-num="{{ t.numero_hasta }}">{{ t.numero_hasta }}</td>
+            <td class="td-right td-mono td-fuerte" data-num="{{ t.proximo }}">{{ '—' if t.agotado else t.proximo }}</td>
+            <td class="td-right" data-num="{{ t.restantes }}">{{ '{:,}'.format(t.restantes) | replace(',', '.') }}</td>
+            <td class="td-right td-muted" data-num="{{ t.pct_uso }}">{{ t.pct_uso | string | replace('.', ',') }}%</td>
+            <td>{% if t.agotado %}{{ ui.estado('Agotado', 'danger') }}{% elif t.por_agotar %}{{ ui.estado('Por agotarse', 'warn') }}
+                {% elif t.habilitado %}{{ ui.estado('Habilitado', 'ok') }}{% else %}{{ ui.estado('Deshabilitado', 'neutro') }}{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="12" class="no-data">Todavía no hay talonarios.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+{# ═══ Clasificaciones ═══ #}
+<div class="abm-panel {{ 'oculto' if solapa != 'clasificaciones' }}" data-panel="clasificaciones">
+  {% if ed_cla %}
+  <div class="card" data-sin-solapas>
+    {% call ui.card_head('Editar clasificación' if f.get('id') else 'Nueva clasificación') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('talonarios.index', solapa='clasificaciones'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('talonarios.index', solapa='clasificaciones') }}">
+      <input type="hidden" name="accion" value="guardar_clasif">
+      <input type="hidden" name="id" value="{{ f.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:6;">
+            <label>Descripción <span class="req">*</span></label>
+            <input type="text" name="descripcion" required maxlength="150" value="{{ f.get('descripcion') or '' }}" placeholder="Recibos de cuota sindical">
+          </div>
+          <div class="campo" style="--span:4;">
+            <label>Tipo de comprobante <span class="req">*</span></label>
+            <select name="id_comprobante_tipo" id="sel-tipo-cla" required>
+              <option value="">— Elegí el tipo —</option>
+              {% for tp in tipos %}<option value="{{ tp.id }}" {{ 'selected' if f.get('id_comprobante_tipo') == tp.id }}>{{ tp.nombre }} ({{ 'debe' if tp.debito_credito == 'D' else 'haber' }})</option>{% endfor %}
+            </select>
+          </div>
+          <div class="campo campo-boton" style="--span:2;">{{ ui.boton('Nuevo tipo', 'secondary', icono_='agregar', onclick="abrirTipo('sel-tipo-cla')") }}</div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+    </form>
+  </div>
+  {% endif %}
+  <div class="card">
+    {% call ui.card_head('Clasificaciones', nota='Agrupan talonarios de un mismo tipo de comprobante.') %}
+      {{ ui.boton('Nueva clasificación', chico=True, icono_='agregar', href=url_for('talonarios.index', solapa='clasificaciones', nuevo=1)) }}
+    {% endcall %}
+    {% call ui.barra_filtros('Filtrar por descripción o tipo…') %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-clasif" data-exportar="Clasificaciones de talonarios">
+        <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Descripción</th><th>Tipo de comprobante</th><th>Lado</th><th class="th-right">Talonarios</th></tr></thead>
+        <tbody>
+          {% for c in clasificaciones %}
+          <tr>
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('talonarios.index', edit_clasif=c.id)) }}
+              {% if not c.talonarios %}{{ ui.accion('borrar', onclick="confirmarBorrar(this)", datos={'id': c.id, 'accion': 'borrar_clasif', 'nombre': 'la clasificación ' ~ c.descripcion}) }}{% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ c.descripcion }}</td><td>{{ c.tipo }}</td><td>{{ lado(c.debito_credito) }}</td>
+            <td class="td-right {{ 'td-muted' if not c.talonarios }}" data-num="{{ c.talonarios }}">{{ c.talonarios }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="5" class="no-data">Todavía no hay clasificaciones.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+{# ═══ Tipos de comprobante ═══ #}
+<div class="abm-panel {{ 'oculto' if solapa != 'tipos' }}" data-panel="tipos">
+  {% if ed_tip %}
+  <div class="card" data-sin-solapas>
+    {% call ui.card_head('Editar tipo' if f.get('id') else 'Nuevo tipo de comprobante') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('talonarios.index', solapa='tipos'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('talonarios.index', solapa='tipos') }}">
+      <input type="hidden" name="accion" value="guardar_tipo">
+      <input type="hidden" name="id" value="{{ f.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:4;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="50" value="{{ f.get('nombre') or '' }}" placeholder="Recibo">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Lado de la cuenta <span class="req">*</span></label>
+            <select name="debito_credito" required>
+              <option value="">— Elegí —</option>
+              {% for k, t in lados %}<option value="{{ k }}" {{ 'selected' if f.get('debito_credito') == k }}>{{ t }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check"><input type="checkbox" name="propio" value="1" {{ 'checked' if f.get('propio') }}> Lo emite el sindicato</label>
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+    </form>
+  </div>
+  {% endif %}
+  <div class="card">
+    {% call ui.card_head('Tipos de comprobante', nota='Debe: suma a lo que deben (factura, liquidación). Haber: lo cancela (recibo, nota de crédito).') %}
+      {{ ui.boton('Nuevo tipo', chico=True, icono_='agregar', href=url_for('talonarios.index', solapa='tipos', nuevo=1)) }}
+    {% endcall %}
+    {% call ui.barra_filtros('Filtrar por nombre…') %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-tipos" data-exportar="Tipos de comprobante">
+        <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Nombre</th><th>Lado</th><th>Propio</th><th class="th-right">Clasificaciones</th></tr></thead>
+        <tbody>
+          {% for tp in tipos %}
+          <tr>
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('talonarios.index', edit_tipo=tp.id)) }}
+              {% if not tp.clasificaciones %}{{ ui.accion('borrar', onclick="confirmarBorrar(this)", datos={'id': tp.id, 'accion': 'borrar_tipo', 'nombre': 'el tipo ' ~ tp.nombre}) }}{% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ tp.nombre }}</td><td>{{ lado(tp.debito_credito) }}</td>
+            <td data-valor="{{ 'Sí' if tp.propio else 'No' }}">{{ ui.si_no(tp.propio) }}</td>
+            <td class="td-right {{ 'td-muted' if not tp.clasificaciones }}" data-num="{{ tp.clasificaciones }}">{{ tp.clasificaciones }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="5" class="no-data">Todavía no hay tipos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+{# ═══ Formularios satélite ═══ #}
+<div class="modal" id="modal-clasif">
+  <div class="modal-caja">
+    <div class="modal-titulo">Nueva clasificación</div>
+    <form id="frm-clasif" onsubmit="return crearClasif(event)">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <label>Descripción <span class="req">*</span></label>
+          <input type="text" name="descripcion" required maxlength="150">
+        </div>
+        <div class="campo" style="--span:8;">
+          <label>Tipo de comprobante <span class="req">*</span></label>
+          <select name="id_comprobante_tipo" id="sel-tipo-modal" required>
+            <option value="">— Elegí el tipo —</option>
+            {% for tp in tipos %}<option value="{{ tp.id }}">{{ tp.nombre }} ({{ 'debe' if tp.debito_credito == 'D' else 'haber' }})</option>{% endfor %}
+          </select>
+        </div>
+        <div class="campo campo-boton" style="--span:4;">{{ ui.boton('Nuevo tipo', 'secondary', icono_='agregar', onclick="abrirTipo('sel-tipo-modal')") }}</div>
+      </div>
+      <div class="campo-ayuda error" id="err-clasif"></div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-clasif')") }}
+        {{ ui.boton('Crear y elegir', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-tipo">
+  <div class="modal-caja">
+    <div class="modal-titulo">Nuevo tipo de comprobante</div>
+    <form id="frm-tipo" onsubmit="return crearTipo(event)">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <label>Nombre <span class="req">*</span></label>
+          <input type="text" name="nombre" required maxlength="50">
+        </div>
+        <div class="campo" style="--span:12;">
+          <label>Lado de la cuenta <span class="req">*</span></label>
+          <select name="debito_credito" required>
+            <option value="">— Elegí —</option>
+            {% for k, t in lados %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="campo" style="--span:12;">
+          <label class="campo-check"><input type="checkbox" name="propio" value="1" checked> Lo emite el sindicato</label>
+        </div>
+      </div>
+      <div class="campo-ayuda error" id="err-tipo"></div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-tipo')") }}
+        {{ ui.boton('Crear y elegir', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('talonarios.index') }}" class="modal-acciones">
+      <input type="hidden" name="accion" id="mb-accion"><input type="hidden" name="id" id="mb-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('talonarios.index') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+function confirmarBorrar(b) {
+  document.getElementById('mb-accion').value = b.dataset.accion;
+  document.getElementById('mb-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = 'Se elimina ' + b.dataset.nombre + '.';
+  abrirModal('modal-borrar');
+}
+/* ── Formularios satélite ─────────────────────────────────────────────
+   Crean por JSON y agregan la opción nueva, elegida, al select que los
+   abrió. Lo tipeado en el formulario de atrás no se pierde. */
+var destinoClasif = null, destinoTipo = null;
+function abrirClasif(idSelect) {
+  destinoClasif = idSelect;
+  var f = document.getElementById('frm-clasif'); f.reset();
+  document.getElementById('err-clasif').textContent = '';
+  abrirModal('modal-clasif'); f.descripcion.focus();
+}
+function abrirTipo(idSelect) {
+  destinoTipo = idSelect;
+  var f = document.getElementById('frm-tipo'); f.reset();
+  document.getElementById('err-tipo').textContent = '';
+  abrirModal('modal-tipo'); f.nombre.focus();
+}
+function agregarOpcion(idSelect, valor, texto) {
+  var s = document.getElementById(idSelect);
+  if (!s) return;
+  var o = document.createElement('option'); o.value = valor; o.textContent = texto;
+  s.appendChild(o); s.value = valor;
+  s.dispatchEvent(new Event('change'));
+}
+function postear(form, url, errId, alListo) {
+  var err = document.getElementById(errId); err.textContent = '';
+  fetch(url, { method: 'POST', credentials: 'same-origin', body: new URLSearchParams(new FormData(form)) })
+    .then(function (r) { return r.json().then(function (j) { return [r.ok, j]; }); })
+    .then(function (par) { if (!par[0]) { err.textContent = par[1].error || 'No se pudo crear.'; return; } alListo(par[1]); })
+    .catch(function (e) { err.textContent = 'No se pudo crear: ' + e.message; });
+  return false;
+}
+function lado(dc) { return dc === 'D' ? 'debe' : 'haber'; }
+function crearTipo(ev) {
+  ev.preventDefault();
+  return postear(ev.target, '{{ url_for("talonarios.api_tipo") }}', 'err-tipo', function (j) {
+    var texto = j.nombre + ' (' + lado(j.debito_credito) + ')';
+    // El tipo nuevo sirve en los dos selects de tipo de la pantalla.
+    ['sel-tipo-cla', 'sel-tipo-modal'].forEach(function (id) {
+      if (id !== destinoTipo && document.getElementById(id)) {
+        var o = document.createElement('option'); o.value = j.id; o.textContent = texto;
+        document.getElementById(id).appendChild(o);
+      }
+    });
+    agregarOpcion(destinoTipo, j.id, texto);
+    cerrarModal('modal-tipo');
+  });
+}
+function crearClasif(ev) {
+  ev.preventDefault();
+  return postear(ev.target, '{{ url_for("talonarios.api_clasificacion") }}', 'err-clasif', function (j) {
+    agregarOpcion(destinoClasif, j.id, j.descripcion + ' · ' + j.tipo + ' (' + lado(j.debito_credito) + ')');
+    cerrarModal('modal-clasif');
+  });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fh = document.getElementById('f-hab'), fa = document.getElementById('f-agotar');
+  gestion_admTable('tbl-talonarios', {
+    filtroExtra: function (tr) {
+      if (fh.value && tr.dataset.hab !== fh.value) return false;
+      if (fa.checked && tr.dataset.agotar !== '1') return false;
+      return true;
+    }
+  });
+  gestion_admTable('tbl-clasif', {});
+  gestion_admTable('tbl-tipos', {});
+});
+</script>
+{% endblock %}

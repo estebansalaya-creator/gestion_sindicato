@@ -1,0 +1,491 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Carga de comprobantes{% endblock %}
+
+{#
+  Carga de comprobantes de proveedores. Dos pasos:
+
+    subir      el PDF (se lee y se constata), o «a mano», o desde Comprobantes ARCA
+    confirmar  el mismo formulario para las tres entradas; al guardar el
+               servidor vuelve a validar todo y graba comprobante, expediente
+               y liquidación abierta en una transacción
+
+  modo: pdf | manual | mis. Con la constatación en 'A' los datos que
+  identifican el comprobante van de solo lectura (el servidor igual los
+  vuelve a constatar: la pantalla no es el control).
+#}
+{% set d = datos or {} %}
+{% set bloqueado = cst and cst.resultado == 'A' %}
+{% set elegido_rubro = elegido_rubro if elegido_rubro is defined else none %}
+{% set elegido_concepto = elegido_concepto if elegido_concepto is defined else none %}
+
+{% macro imp(campo, rotulo, span=2, fuerte=False) -%}
+<div class="campo" style="--span:{{ span }};">
+  <label for="v-{{ campo }}">{{ rotulo }}{% if fuerte %} <span class="req">*</span>{% endif %}</label>
+  <input type="hidden" name="{{ campo }}" id="{{ campo }}" value="{{ d.get(campo) or '' }}">
+  <input type="text" inputmode="decimal" class="importe{{ ' total' if fuerte }}" id="v-{{ campo }}"
+         value="{{ (d.get(campo)|float)|miles if d.get(campo) not in (none, '') else '' }}"
+         oninput="mascaraImporte(this, '{{ campo }}'); cuadrar();"
+         {{ 'readonly' if (fuerte and bloqueado) }}>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Carga de comprobantes</h1>
+    <p>Facturas, notas de débito y de crédito de proveedores. Cada comprobante abre su expediente en la mesa de entradas.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_mis %}
+    {{ ui.boton('Comprobantes ARCA' ~ (' (' ~ pendientes_arca ~ ' pendientes)' if pendientes_arca else ''),
+                'secondary', href=url_for('mis_comp.listado'), icono_='planilla') }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% if not inst.cuit %}
+{{ ui.aviso('Falta el CUIT del sindicato en Administración del Sistema → Datos del Sindicato: sin él no se puede controlar que el comprobante esté emitido al sindicato.', 'warning') }}
+{% endif %}
+
+{# ═════════════════════════════════ Paso 1 ═════════════════════════════════ #}
+{% if paso == 'subir' %}
+<div class="columnas-2-1">
+  <div class="card">
+    {{ ui.card_head('Subir el PDF del comprobante', nota='se lee solo y se valida contra ARCA') }}
+    <form method="post" enctype="multipart/form-data" class="card-body" id="form-leer"
+          data-proceso="Leyendo el comprobante…" data-proceso-detalle="Un PDF escaneado puede tardar unos segundos más.">
+      <input type="hidden" name="accion" value="leer">
+      <label class="drop-zone" id="zona-pdf">
+        {{ ui.icono('subir', 30) }}
+        <strong>Soltá el PDF acá o hacé clic para elegirlo</strong>
+        <span class="chico">El que mandó el proveedor, tal cual. Hasta 15 MB.</span>
+        <input type="file" name="pdf" id="pdf" accept=".pdf,application/pdf" class="oculto" required>
+      </label>
+    </form>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Otras formas de cargar') }}
+    <div class="card-body pila">
+      <div>
+        {{ ui.boton('Cargar a mano', 'secondary', href=url_for('comprobantes.carga', manual=1), icono_='editar') }}
+        <p class="campo-ayuda">Sin PDF, o con uno que no se puede leer. El PDF se adjunta en el mismo formulario o después, desde el expediente.</p>
+      </div>
+      {% if puede_mis %}
+      <div>
+        {{ ui.boton('Desde Comprobantes ARCA', 'secondary', href=url_for('mis_comp.listado'), icono_='planilla') }}
+        <p class="campo-ayuda">
+          {% if pendientes_arca %}{{ pendientes_arca }} comprobante{{ 's' if pendientes_arca != 1 }} que ARCA informa y todavía no se cargaron.
+          {% else %}Lo que ARCA informa como recibido, importado de Mis Comprobantes.{% endif %}
+          Los datos los da ARCA: no hay nada que leer ni que constatar.
+        </p>
+      </div>
+      {% endif %}
+      <div>
+        <span class="campo-label">Constatación con ARCA</span>
+        <p class="campo-ayuda">
+          {% if wscdc_ok %}{{ ui.estado('Activa', 'ok') }} Cada comprobante se verifica contra ARCA (WSCDC) al leerlo y al guardarlo.
+          {% else %}{{ ui.estado('Apagada', 'neutro') }} {{ (wscdc_motivo[:1]|upper ~ wscdc_motivo[1:]) }}. Los comprobantes se cargan «sin constatar».{% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if texto %}
+<details class="card texto-leido">
+  <summary>Texto leído del PDF</summary>
+  <pre>{{ texto }}</pre>
+</details>
+{% endif %}
+
+{# ═══════════════════════════════ Paso 2 ═══════════════════════════════ #}
+{% else %}
+<form method="post" enctype="multipart/form-data" id="form-carga" action="{{ url_for('comprobantes.carga') }}"
+      data-proceso="Guardando el comprobante…">
+  <input type="hidden" name="accion" value="guardar">
+  <input type="hidden" name="modo" value="{{ modo }}">
+  <input type="hidden" name="id_mis" value="{{ id_mis or '' }}">
+  <input type="hidden" name="pdf_ficha" value="{{ pdf_ficha or '' }}">
+  <input type="hidden" name="pdf_nombre" value="{{ pdf_nombre or '' }}">
+  <input type="hidden" name="_razon_arca" value="{{ d.get('_razon_arca') or '' }}">
+  <input type="hidden" name="condicion_iva_emisor" value="{{ d.get('condicion_iva_emisor') or '' }}">
+  <input type="hidden" name="condicion_iva_receptor" value="{{ d.get('condicion_iva_receptor') or '' }}">
+  <input type="hidden" name="cuit_emisor" id="cuit_emisor" value="{{ d.get('cuit_emisor') or '' }}">
+
+  <div class="con-resumen">
+    <div>
+      {# ── Emisor ── #}
+      <div class="card">
+        {{ ui.card_head('Proveedor', nota='quién emitió el comprobante') }}
+        <div class="bloque">
+          <div id="box-buscador" class="{{ 'oculto' if prov }}">
+            <div class="campos">
+              <div class="campo autocompletar" style="--span:12;">
+                <label for="q-prov">Buscar proveedor <span class="req">*</span></label>
+                <input type="search" id="q-prov" autocomplete="off"
+                       placeholder="Razón social, nombre de fantasía o CUIT"
+                       value="{{ d.get('cuit_emisor') if d.get('cuit_emisor') and not prov else '' }}">
+                <div id="ac-lista" class="ac-lista oculto" role="listbox"></div>
+              </div>
+            </div>
+            {% if d.get('cuit_emisor') and not prov %}
+            <div class="alert alert-warning">{{ ui.icono('alerta', 16) }}<div>
+              El CUIT <span class="mono">{{ d.get('cuit_emisor') }}</span>
+              {% if d.get('_razon_arca') or d.get('razon_social_emisor') %}({{ d.get('_razon_arca') or d.get('razon_social_emisor') }}){% endif %}
+              no es un proveedor dado de alta. Hay que darlo de alta, con su rubro de pasivo y su concepto de gasto, antes de cargarle comprobantes.
+              {% if puede_alta_prov %}
+              <div class="fila">{{ ui.boton('Dar de alta el proveedor', 'secondary', chico=True, icono_='agregar', blank=True,
+                   href=url_for('proveedores.abm', nuevo=1, cuit=d.get('cuit_emisor'), razon=(d.get('_razon_arca') or d.get('razon_social_emisor') or ''))) }}
+                <span class="chico muted">Se abre en otra pestaña; después volvé y guardá.</span></div>
+              {% endif %}
+            </div></div>
+            {% endif %}
+          </div>
+
+          <div id="box-prov" class="persona-elegida {{ 'oculto' if not prov }}">
+            <div class="avatar" id="prov-inicial">{{ (prov.razon_social[0] if prov else '?') }}</div>
+            <div class="persona-texto">
+              <div class="persona-nombre" id="prov-nombre">{{ prov.razon_social if prov else '' }}</div>
+              <div class="persona-datos" id="prov-datos">{% if prov %}CUIT {{ prov.cuit }}{% if prov.condicion_iva_txt %} · {{ prov.condicion_iva_txt }}{% endif %}{% if not prov.activo %} · DADO DE BAJA{% endif %}{% endif %}</div>
+            </div>
+            {% if not bloqueado %}{{ ui.boton('Cambiar', 'secondary', chico=True, onclick='cambiarProveedor()') }}{% endif %}
+          </div>
+
+          <div id="pend-arca" class="oculto">
+            <p class="campo-label separado">Comprobantes de este proveedor que ARCA informa y no están cargados</p>
+            <div id="pend-lista" class="adjuntos"></div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Comprobante ── #}
+      <div class="card">
+        {{ ui.card_head('Comprobante') }}
+        <div class="bloque">
+          <div class="campos">
+            <div class="campo" style="--span:4;">
+              <label for="tipo_comprobante">Tipo <span class="req">*</span></label>
+              {% if bloqueado %}
+              <input type="hidden" name="tipo_comprobante" value="{{ d.get('tipo_comprobante') }}">
+              <input type="text" readonly value="{{ d.get('tipo_comprobante') }} · {{ (tipos|selectattr('codigo', 'equalto', d.get('tipo_comprobante'))|map(attribute='descripcion')|first) or '' }}">
+              {% else %}
+              <select name="tipo_comprobante" id="tipo_comprobante" required>
+                {% for t in tipos %}<option value="{{ t.codigo }}"{{ ' selected' if t.codigo == d.get('tipo_comprobante') }}>{{ t.codigo }} · {{ t.descripcion }}</option>{% endfor %}
+                {% if not d.get('tipo_comprobante') %}<option value="" selected>— Elegí —</option>{% endif %}
+              </select>
+              {% endif %}
+            </div>
+            <div class="campo" style="--span:2;">
+              <label for="punto_de_venta">Punto de venta <span class="req">*</span></label>
+              <input type="text" inputmode="numeric" name="punto_de_venta" id="punto_de_venta" class="mono" maxlength="5"
+                     value="{{ d.get('punto_de_venta') or '' }}" {{ 'readonly' if bloqueado }} required>
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="numero">Número <span class="req">*</span></label>
+              <input type="text" inputmode="numeric" name="numero" id="numero" class="mono" maxlength="8"
+                     value="{{ d.get('numero') or '' }}" {{ 'readonly' if bloqueado }} required>
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="fecha_emision">Fecha de emisión <span class="req">*</span></label>
+              <input type="date" name="fecha_emision" id="fecha_emision" value="{{ d.get('fecha_emision') or '' }}"
+                     {{ 'readonly' if bloqueado }} required onchange="periodoPorDefecto()">
+            </div>
+            <div class="campo" style="--span:4;">
+              <label for="cae">CAE</label>
+              <input type="text" inputmode="numeric" name="cae" id="cae" class="mono" maxlength="14"
+                     value="{{ d.get('cae') or '' }}" {{ 'readonly' if bloqueado }}>
+              <small class="campo-ayuda">14 dígitos. Con él se constata contra ARCA.</small>
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="fecha_vto_cae">Vencimiento del CAE</label>
+              <input type="date" name="fecha_vto_cae" id="fecha_vto_cae" value="{{ d.get('fecha_vto_cae') or '' }}">
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="fecha_vto_pago">Vencimiento del pago</label>
+              <input type="date" name="fecha_vto_pago" id="fecha_vto_pago" value="{{ d.get('fecha_vto_pago') or '' }}">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Importes ── #}
+      <div class="card">
+        {{ ui.card_head('Importes', nota='una nota de crédito va en positivo: el tipo dice que resta') }}
+        <div class="bloque">
+          <div class="campos">
+            {{ imp('importe_neto_gravado', 'Neto gravado') }}
+            {{ imp('importe_neto_no_grav', 'No gravado') }}
+            {{ imp('importe_exento', 'Exento') }}
+            {{ imp('importe_iva', 'IVA') }}
+            {{ imp('importe_otros', 'Otros tributos') }}
+            {{ imp('importe_total', 'Total', fuerte=True) }}
+            <div class="campo" style="--span:2;">
+              <label for="moneda">Moneda</label>
+              <select name="moneda" id="moneda">
+                {% for k, t in [('PES', 'Pesos'), ('DOL', 'Dólares'), ('060', 'Euros')] %}
+                <option value="{{ k }}"{{ ' selected' if (d.get('moneda') or 'PES') == k }}>{{ t }}</option>{% endfor %}
+                {% if d.get('moneda') and d.get('moneda') not in ('PES', 'DOL', '060') %}<option selected>{{ d.get('moneda') }}</option>{% endif %}
+              </select>
+            </div>
+            <div class="campo" style="--span:2;">
+              <label for="tipo_de_cambio">Tipo de cambio</label>
+              <input type="text" inputmode="decimal" name="tipo_de_cambio" id="tipo_de_cambio" class="mono"
+                     value="{{ d.get('tipo_de_cambio') or '1' }}">
+            </div>
+            <div class="campo" style="--span:8;">
+              <small class="campo-ayuda" id="aviso-cuadre"></small>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── Período e imputación ── #}
+      <div class="card">
+        {{ ui.card_head('Período e imputación', nota='a qué mes va el gasto y contra qué cuentas') }}
+        <div class="bloque">
+          <div class="campos">
+            <div class="campo" style="--span:3;">
+              <label for="periodo_desde">Período desde <span class="req">*</span></label>
+              <input type="date" name="periodo_desde" id="periodo_desde" value="{{ d.get('periodo_desde') or '' }}" required>
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="periodo_hasta">Período hasta</label>
+              <input type="date" name="periodo_hasta" id="periodo_hasta" value="{{ d.get('periodo_hasta') or '' }}">
+            </div>
+            <div class="campo" style="--span:6;">
+              <span class="campo-label">&nbsp;</span>
+              <small class="campo-ayuda {{ 'ok' if d.get('_periodo_sugerido') }}" id="periodo-ayuda">
+                {% if d.get('_periodo_sugerido') %}El comprobante no declara período: se propone el mes de emisión. Confirmalo.
+                {% else %}El que declara el comprobante (los servicios lo traen). Si no lo declara, el mes de emisión.{% endif %}
+              </small>
+            </div>
+            <div class="campo" style="--span:6;">
+              <label for="id_rubro_pasivo">Rubro de pasivo <span class="req">*</span></label>
+              <select name="id_rubro_pasivo" id="id_rubro_pasivo">
+                {% set rubros = imputacion.rubros if imputacion else [] %}
+                {% if rubros|length != 1 %}<option value="">{{ '— Elegí —' if rubros else '— Elegí el proveedor —' }}</option>{% endif %}
+                {% for r in rubros %}<option value="{{ r.id }}"{{ ' selected' if (elegido_rubro == r.id or (rubros|length == 1)) }}>{{ r.nombre }}{{ ' (predeterminado)' if r.predeterminada and rubros|length > 1 }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="campo" style="--span:6;">
+              <label for="id_concepto_gasto">Concepto de gasto <span class="req">*</span></label>
+              <select name="id_concepto_gasto" id="id_concepto_gasto">
+                {% set conceptos = imputacion.conceptos if imputacion else [] %}
+                {% if conceptos|length != 1 %}<option value="">{{ '— Elegí —' if conceptos else '— Elegí el proveedor —' }}</option>{% endif %}
+                {% for c in conceptos %}<option value="{{ c.id }}"{{ ' selected' if (elegido_concepto == c.id or (conceptos|length == 1)) }}>{{ c.descripcion }}{{ ' (predeterminado)' if c.predeterminada and conceptos|length > 1 }}</option>{% endfor %}
+              </select>
+            </div>
+            <div class="campo" style="--span:12;">
+              <small class="campo-ayuda">Las cuentas de la ficha del proveedor. Con una sola, va esa; con varias, la que corresponda a esta factura. La auditoría la puede corregir.</small>
+            </div>
+            <div class="campo" style="--span:12;">
+              <label for="nota">Nota para la mesa de entradas</label>
+              <textarea name="nota" id="nota" rows="2" maxlength="400" placeholder="Opcional: queda en el expediente.">{{ nota or '' }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# ── PDF ── #}
+      <div class="card">
+        {% call ui.card_head('PDF del comprobante', nota=(pdf_nombre or 'opcional: se puede adjuntar después desde el expediente')) %}
+          {% if pdf_ficha %}{{ ui.boton('Abrir en otra pestaña', 'secondary', chico=True, href=url_for('comprobantes.pdf_tmp', ficha=pdf_ficha), icono_='ver', blank=True) }}{% endif %}
+        {% endcall %}
+        <div class="card-body">
+          {% if pdf_ficha %}
+          <iframe class="visor-pdf" src="{{ url_for('comprobantes.pdf_tmp', ficha=pdf_ficha) }}" title="PDF del comprobante"></iframe>
+          {% else %}
+          <label class="drop-zone chica">
+            {{ ui.icono('subir', 22) }}<span id="adjunto-nombre">Elegí el PDF para adjuntarlo (opcional)</span>
+            <input type="file" name="pdf_adjunto" id="pdf_adjunto" accept=".pdf,application/pdf" class="oculto">
+          </label>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    {# ── Resumen ── #}
+    <aside class="card resumen {{ 'warn' if not cst or cst.resultado != 'A' }}">
+      {{ ui.card_head('Resumen') }}
+      <div class="card-body">
+        <div class="resumen-fila"><span>Entrada</span><strong>{{ {'pdf': 'PDF leído', 'manual': 'A mano', 'mis': 'Mis Comprobantes'}[modo] }}</strong></div>
+        <div class="resumen-fila"><span>Constatación</span>
+          {% if cst and cst.resultado == 'A' %}{{ ui.estado('Mis Comprobantes' if cst.origen == 'mis' else 'Autorizado', 'ok') }}
+          {% elif cst and cst.resultado == 'R' %}{{ ui.estado('Rechazado', 'danger') }}
+          {% elif cst %}{{ ui.estado('No respondió', 'warn') }}
+          {% elif en_mis and en_mis.coincide %}{{ ui.estado('En Mis Comprobantes', 'ok') }}
+          {% elif en_mis %}{{ ui.estado('ARCA informa otro importe', 'danger') }}
+          {% elif wscdc_ok %}{{ ui.estado('Al guardar', 'info') }}
+          {% else %}{{ ui.estado('Sin constatar', 'neutro') }}{% endif %}
+        </div>
+        <div class="resumen-fila resumen-total"><span>Total</span><strong id="res-total">$ {{ (d.get('importe_total')|float)|miles if d.get('importe_total') else '0,00' }}</strong></div>
+        {% if cst and cst.texto %}<p class="chico muted separado">{{ cst.texto }}</p>{% endif %}
+        {% if not cst and en_mis and en_mis.coincide %}<p class="chico muted separado">ARCA lo informa como recibido en Mis Comprobantes con el mismo importe: queda verificado al guardar.</p>
+        {% elif not cst and en_mis %}<p class="campo-ayuda error separado">ARCA lo informa en Mis Comprobantes por $ {{ en_mis.importe_total|miles }}. Revisá el total.</p>
+        {% elif not cst and not wscdc_ok %}<p class="chico muted separado">{{ (wscdc_motivo[:1]|upper ~ wscdc_motivo[1:]) }}.</p>{% endif %}
+        <div class="resumen-botones">
+          {{ ui.boton('Guardar comprobante', 'primary', submit=True, icono_='guardar') }}
+          {{ ui.boton('Cancelar', 'secondary', href=url_for('comprobantes.carga')) }}
+        </div>
+        <p class="chico muted separado">
+          Se crea el expediente en la mesa de entradas con la liquidación pendiente de auditoría: todavía no es deuda.
+        </p>
+      </div>
+    </aside>
+  </div>
+</form>
+
+{% if texto %}
+<details class="card texto-leido">
+  <summary>Texto leído del PDF</summary>
+  <pre>{{ texto }}</pre>
+</details>
+{% endif %}
+{% endif %}
+
+<script>
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
+{% if paso == 'subir' %}
+/* Elegir o soltar el PDF lo lee: no hay un segundo botón que apretar. */
+(function () {
+  var zona = document.getElementById('zona-pdf'), inp = document.getElementById('pdf'),
+      form = document.getElementById('form-leer');
+  function enviar() { if (inp.files.length) { form.dispatchEvent(new Event('submit', {cancelable: true})); form.submit(); } }
+  inp.addEventListener('change', enviar);
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('encima'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('encima'); });
+  });
+  zona.addEventListener('drop', function (e) { inp.files = e.dataTransfer.files; enviar(); });
+})();
+{% else %}
+var URL_BUSCAR = "{{ url_for('proveedores.api_buscar') }}";
+var URL_PROV = "{{ url_for('comprobantes.api_proveedor', cuit='00000000000') }}".replace('00000000000', '');
+var URL_MIS = "{{ url_for('comprobantes.carga') }}?mis=";
+var PROVS = [];
+
+/* Los importes: si los componentes están cargados tienen que sumar el total. */
+function valor(id) { var v = parseFloat(document.getElementById(id).value); return isNaN(v) ? 0 : v; }
+function cuadrar() {
+  var partes = ['importe_neto_gravado', 'importe_neto_no_grav', 'importe_exento', 'importe_iva', 'importe_otros']
+    .reduce(function (s, id) { return s + valor(id); }, 0);
+  var total = valor('importe_total'), av = document.getElementById('aviso-cuadre');
+  document.getElementById('res-total').textContent = pesos(total);
+  av.className = 'campo-ayuda';
+  if (!partes) { av.textContent = ''; return; }
+  if (Math.abs(partes - total) > 0.05) {
+    av.classList.add('error');
+    av.textContent = 'Los componentes suman ' + pesos(partes) + ' y el total es ' + pesos(total) + '.';
+  } else { av.classList.add('ok'); av.textContent = 'Los importes cierran.'; }
+}
+
+/* Sin período declarado, el mes de la fecha de emisión. */
+function periodoPorDefecto() {
+  var fe = document.getElementById('fecha_emision').value, pd = document.getElementById('periodo_desde'),
+      ph = document.getElementById('periodo_hasta');
+  if (!fe || pd.value) return;
+  var a = +fe.substr(0, 4), m = +fe.substr(5, 2), ult = new Date(a, m, 0).getDate();
+  pd.value = fe.substr(0, 8) + '01';
+  if (!ph.value) ph.value = fe.substr(0, 8) + String(ult).padStart(2, '0');
+  var ay = document.getElementById('periodo-ayuda');
+  ay.className = 'campo-ayuda ok';
+  ay.textContent = 'Se propone el mes de emisión. Si el comprobante declara otro período, cambialo.';
+}
+
+/* ── Proveedor ── */
+var tmr = null, q = document.getElementById('q-prov');
+q.addEventListener('input', function () {
+  clearTimeout(tmr);
+  var t = this.value.trim(), caja = document.getElementById('ac-lista');
+  if (t.length < 2) { caja.classList.add('oculto'); caja.innerHTML = ''; return; }
+  tmr = setTimeout(function () {
+    fetch(URL_BUSCAR + '?q=' + encodeURIComponent(t), {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        PROVS = rows;
+        caja.innerHTML = rows.length ? rows.map(function (p, i) {
+          return '<button type="button" class="ac-item" onclick="elegirProveedor(' + i + ')">' + esc(p.razon_social)
+            + (p.nombre_fantasia && p.nombre_fantasia !== p.razon_social ? ' · ' + esc(p.nombre_fantasia) : '')
+            + '<small>CUIT ' + esc(p.cuit) + '</small></button>';
+        }).join('') : '<div class="ac-vacio">Ningún proveedor activo coincide.</div>';
+        caja.classList.remove('oculto');
+      });
+  }, 250);
+});
+document.addEventListener('click', function (e) {
+  var caja = document.getElementById('ac-lista');
+  if (caja && !caja.contains(e.target) && e.target.id !== 'q-prov') caja.classList.add('oculto');
+});
+
+function opciones(sel, items, vacio) {
+  sel.innerHTML = (items.length === 1 ? '' : '<option value="">' + vacio + '</option>')
+    + items.map(function (o) {
+      return '<option value="' + o.id + '"' + (items.length === 1 ? ' selected' : '') + '>' + esc(o.nombre)
+        + (o.pred && items.length > 1 ? ' (predeterminado)' : '') + '</option>';
+    }).join('');
+}
+function elegirProveedor(i) {
+  var p = PROVS[i];
+  document.getElementById('ac-lista').classList.add('oculto');
+  fetch(URL_PROV + p.cuit, {credentials: 'same-origin'})
+    .then(function (r) { return r.json(); })
+    .then(function (x) {
+      if (!x.existe) return;
+      document.getElementById('cuit_emisor').value = p.cuit;
+      document.getElementById('prov-nombre').textContent = x.razon_social;
+      document.getElementById('prov-inicial').textContent = (x.razon_social || '?').charAt(0);
+      document.getElementById('prov-datos').textContent = 'CUIT ' + p.cuit + (x.condicion_iva ? ' · ' + x.condicion_iva : '');
+      document.getElementById('box-buscador').classList.add('oculto');
+      document.getElementById('box-prov').classList.remove('oculto');
+      opciones(document.getElementById('id_rubro_pasivo'), x.rubros,
+               x.rubros.length ? '— Elegí —' : '— El proveedor no tiene rubro de pasivo —');
+      opciones(document.getElementById('id_concepto_gasto'), x.conceptos,
+               x.conceptos.length ? '— Elegí —' : '— El proveedor no tiene concepto de gasto —');
+      var box = document.getElementById('pend-arca');
+      document.getElementById('pend-lista').innerHTML = x.pendientes.map(function (m) {
+        return '<a class="adjunto ancho" href="' + URL_MIS + m.id + '" title="Cargar con los datos de ARCA">'
+          + '<span class="adjunto-nombre">' + esc(m.tipo) + ' ' + esc(m.numero) + ' · ' + esc(m.fecha)
+          + ' · ' + pesos(m.total) + '</span></a>';
+      }).join('');
+      box.classList.toggle('oculto', !x.pendientes.length);
+    });
+}
+function cambiarProveedor() {
+  document.getElementById('cuit_emisor').value = '';
+  document.getElementById('box-prov').classList.add('oculto');
+  document.getElementById('box-buscador').classList.remove('oculto');
+  document.getElementById('pend-arca').classList.add('oculto');
+  q.value = ''; q.focus();
+}
+
+var adj = document.getElementById('pdf_adjunto');
+if (adj) adj.addEventListener('change', function () {
+  document.getElementById('adjunto-nombre').textContent = this.files.length ? this.files[0].name : 'Elegí el PDF para adjuntarlo (opcional)';
+});
+
+/* Sin proveedor elegido no se puede guardar: avisarlo acá y no después de ir al servidor. */
+document.getElementById('form-carga').addEventListener('submit', function (e) {
+  if (!document.getElementById('cuit_emisor').value) {
+    e.preventDefault(); e.stopImmediatePropagation();
+    alert('Elegí el proveedor que emitió el comprobante.');
+    q.focus();
+  }
+}, true);
+document.getElementById('form-carga').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && e.target.tagName === 'INPUT') e.preventDefault();
+});
+document.addEventListener('DOMContentLoaded', function () { cuadrar(); periodoPorDefecto(); });
+{% endif %}
+</script>
+{% endblock %}

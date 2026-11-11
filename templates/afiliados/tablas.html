@@ -1,0 +1,236 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Tablas auxiliares{% endblock %}
+
+{#
+  Tablas auxiliares del padrón (afiliados_tablas.py). Una solapa por tabla y,
+  para todas, la misma grilla y el mismo diálogo, armados desde TABLAS: una
+  tabla nueva se declara allá y aparece acá sin tocar esta plantilla.
+
+  El diálogo de cada solapa sirve para el alta y la edición. El código de las
+  tablas de la SSS se escribe solo en el alta: es el que guarda el padrón, y
+  cambiarlo dejaría a los afiliados apuntando a otra cosa.
+
+  Con un error de validación el servidor vuelve a dibujar la pantalla con lo
+  tipeado y el diálogo abierto (`reabrir`).
+#}
+
+{% macro valor_celda(c, v) -%}
+  {%- if c.tipo == 'check' -%}{{ ui.si_no(v) }}
+  {%- elif c.tipo == 'opcion' -%}{% for val, txt in c.opciones if val == v|string %}{{ txt }}{% else %}—{% endfor %}
+  {%- else -%}{{ v if v is not none and v != '' else '—' }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Tablas auxiliares del padrón</h1>
+    <p>Los catálogos de la ficha del afiliado. Lo que se usa no se elimina: se desactiva o queda como está.</p>
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set ns = namespace(lista=[]) %}
+{% for d in datos %}{% set ns.lista = ns.lista + [(d.t.clave, d.t.titulo, d.filas|length)] %}{% endfor %}
+{{ ui.solapas(ns.lista, actual) }}
+
+{% for d in datos %}
+{% set t = d.t %}
+{% set primero = (t.campos|selectattr('tipo', 'equalto', 'texto')|first).col %}
+<div class="abm-panel {{ 'oculto' if actual != t.clave }}" data-panel="{{ t.clave }}">
+  <div class="card">
+    {% call ui.card_head(t.titulo, nota=t.ayuda) %}
+      {{ ui.boton('Agregar', icono_='agregar', chico=True, onclick="nuevoRegistro('" ~ t.clave ~ "')") }}
+    {% endcall %}
+    {% call ui.barra_filtros('Filtrar por código o descripción…') %}
+      {% if t.tiene_activo %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-activo-{{ t.clave }}">
+        <option value="1" selected>Activos</option>
+        <option value="0">Inactivos</option>
+        <option value="">Activos e inactivos</option>
+      </select>{% endcall %}
+      {% endif %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-{{ t.clave }}" data-exportar="{{ t.titulo }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          {% if t.pk_manual %}<th>Código</th>{% endif %}
+          {% for c in t.campos if c.col != 'activo' %}
+          <th class="{{ 'th-center' if c.tipo == 'check' else ('th-right' if c.tipo == 'entero' else '') }}">{{ c.etiqueta }}</th>
+          {% endfor %}
+          <th class="th-right">Usos</th>
+          {% if t.tiene_activo %}<th>Estado</th>{% endif %}
+        </tr></thead>
+        <tbody>
+          {% for f in d.filas %}
+          <tr class="{{ 'fila-baja' if t.tiene_activo and not f.activo }}"
+              data-activo="{{ f.activo if t.tiene_activo else 1 }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', onclick='editarRegistro(this)', datos=f._datos) }}
+              {% if not f._usos and not f._fijo %}
+                {{ ui.accion('borrar', onclick="cambiarRegistro(this, 'borrar')",
+                             datos={'t': t.clave, 'pk': f._pk, 'nombre': f[t.nombre]}) }}
+              {% elif t.tiene_activo and f.activo and not f._fijo %}
+                {{ ui.accion('baja', titulo='Desactivar: se usa, así que no se elimina',
+                             onclick="cambiarRegistro(this, 'baja')", datos={'t': t.clave, 'pk': f._pk}) }}
+              {% endif %}
+              {% if t.tiene_activo and not f.activo %}
+                {{ ui.accion('reactivar', onclick="cambiarRegistro(this, 'reactivar')",
+                             datos={'t': t.clave, 'pk': f._pk}) }}
+              {% endif %}
+            </div></td>
+            {% if t.pk_manual %}<td class="td-mono">{{ f._pk }}</td>{% endif %}
+            {% for c in t.campos if c.col != 'activo' %}
+            {% if c.tipo == 'check' %}
+            <td class="td-center" data-valor="{{ 'Sí' if f[c.col] else 'No' }}">{{ valor_celda(c, f[c.col]) }}</td>
+            {% elif c.tipo == 'entero' %}
+            <td class="td-right">{{ valor_celda(c, f[c.col]) }}</td>
+            {% elif c.col == primero %}
+            <td class="td-fuerte" data-valor="{{ f[c.col] or '' }}">{{ f[c.col] }}
+              {%- if f._fijo %} <span class="chip" title="{{ f._fijo }}">del sistema</span>{% endif %}</td>
+            {% else %}
+            <td class="{{ 'td-muted' if c.tipo == 'texto' }}">{{ valor_celda(c, f[c.col]) }}</td>
+            {% endif %}
+            {% endfor %}
+            <td class="td-right {{ 'td-muted' if not f._usos }}" data-num="{{ f._usos }}">{{ f._usos }}</td>
+            {% if t.tiene_activo %}<td>{{ ui.estado('Activo', 'ok') if f.activo else ui.estado('Inactivo', 'neutro') }}</td>{% endif %}
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="{{ t.campos|length + 3 }}" class="no-data">Todavía no hay ninguno.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+{# ── Alta y edición ── #}
+{% set r = reabrir if reabrir.get('clave') == t.clave else {} %}
+{% set rv = r.get('valores') or {} %}
+<div class="modal {{ 'abierto' if r }}" id="modal-{{ t.clave }}">
+  <form class="modal-caja ancha" method="post" action="{{ url_for('afiliados_tablas.tablas') }}">
+    <input type="hidden" name="t" value="{{ t.clave }}">
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="pk_original" value="{{ r.get('pk_original') or '' }}">
+    <div class="modal-titulo" data-nuevo="Nuevo {{ t.singular }}" data-editar="Editar {{ t.singular }}">
+      {{ ('Editar ' if r.get('pk_original') else 'Nuevo ') ~ t.singular }}</div>
+    {# El error también acá: el cartel de arriba queda detrás del diálogo. #}
+    {% if r and errores %}<div class="modal-texto">{{ ui.aviso(errores|join(' '), 'danger') }}</div>{% endif %}
+    <div class="campos">
+      {% if t.pk_manual %}
+      <div class="campo" style="--span:3;">
+        <label for="{{ t.clave }}-pk">Código <span class="req">*</span></label>
+        <input type="text" name="pk" id="{{ t.clave }}-pk" class="mono" required
+               maxlength="{{ t.pk_largo or 5 }}" {{ 'inputmode=numeric' if t.pk_modo == 'manual_entero' }}
+               {{ 'readonly' if r.get('pk_original') }}
+               value="{{ r.get('pk') if r else d.siguiente }}" data-siguiente="{{ d.siguiente }}">
+        <small class="campo-ayuda">No se cambia después: es el que guarda el padrón.</small>
+      </div>
+      {% endif %}
+      {% for c in t.campos %}
+      {% set v = rv.get(c.col) %}
+      <div class="campo" style="--span:{{ c.span }};">
+        {% if c.tipo == 'check' %}
+        <label class="campo-check">
+          <input type="checkbox" name="{{ c.col }}" value="1"
+                 {{ 'checked' if (v if r else c.col == 'activo') }}> {{ c.etiqueta }}
+        </label>
+        {% else %}
+        <label for="{{ t.clave }}-{{ c.col }}">{{ c.etiqueta }}{% if c.obligatorio %} <span class="req">*</span>{% endif %}</label>
+        {% if c.tipo == 'opcion' %}
+        <select name="{{ c.col }}" id="{{ t.clave }}-{{ c.col }}" {{ 'required' if c.obligatorio }}>
+          {% for val, txt in c.opciones %}<option value="{{ val }}"{{ ' selected' if v is not none and v|string == val }}>{{ txt }}</option>{% endfor %}
+        </select>
+        {% elif c.tipo == 'entero' %}
+        <input type="number" name="{{ c.col }}" id="{{ t.clave }}-{{ c.col }}" min="{{ c.minimo }}" max="{{ c.maximo }}"
+               step="1" inputmode="numeric" value="{{ v if v is not none else '' }}" {{ 'required' if c.obligatorio }}>
+        {% else %}
+        <input type="text" name="{{ c.col }}" id="{{ t.clave }}-{{ c.col }}" maxlength="{{ c.largo }}"
+               value="{{ v or '' }}" {{ 'required' if c.obligatorio }}>
+        {% endif %}
+        {% endif %}
+        {% if c.ayuda %}<small class="campo-ayuda">{{ c.ayuda }}</small>{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-" ~ t.clave ~ "')") }}
+      {{ ui.boton('Guardar', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endfor %}
+
+{# Borrar, desactivar y reactivar: un solo formulario oculto para todas las solapas. #}
+<form method="post" action="{{ url_for('afiliados_tablas.tablas') }}" id="form-cambio" class="oculto">
+  <input type="hidden" name="t" id="cambio-t">
+  <input type="hidden" name="accion" id="cambio-accion">
+  <input type="hidden" name="pk_original" id="cambio-pk">
+</form>
+
+<script>
+// El diálogo de una solapa, sin el error de un intento anterior.
+function modalDe(clave) {
+  var m = document.getElementById('modal-' + clave), err = m.querySelector('.modal-texto');
+  if (err) err.remove();
+  return m;
+}
+
+function nuevoRegistro(clave) {
+  var m = modalDe(clave), f = m.querySelector('form');
+  f.querySelector('[name=pk_original]').value = '';
+  f.querySelectorAll('.campos input, .campos select').forEach(function (c) {
+    if (c.type === 'checkbox') c.checked = c.name === 'activo';
+    else if (c.tagName === 'SELECT') c.selectedIndex = 0;
+    else c.value = '';
+  });
+  var pk = f.querySelector('[name=pk]');
+  if (pk) { pk.readOnly = false; pk.value = pk.dataset.siguiente || ''; }
+  var tit = m.querySelector('.modal-titulo');
+  tit.textContent = tit.dataset.nuevo;
+  abrirModal('modal-' + clave);
+}
+
+// Los valores viajan en data-c_<columna> del botón: nunca un objeto dentro del
+// onclick, que se rompe con una comilla en la descripción.
+function editarRegistro(b) {
+  var d = b.dataset, m = modalDe(d.t), f = m.querySelector('form');
+  f.querySelector('[name=pk_original]').value = d.pk;
+  var pk = f.querySelector('[name=pk]');
+  if (pk) { pk.value = d.pk; pk.readOnly = true; }
+  f.querySelectorAll('.campos input, .campos select').forEach(function (c) {
+    if (c.name === 'pk') return;
+    var v = d['c_' + c.name];
+    if (c.type === 'checkbox') c.checked = v === '1' || v === 'True';
+    else c.value = v === undefined || v === 'None' ? '' : v;
+  });
+  var tit = m.querySelector('.modal-titulo');
+  tit.textContent = tit.dataset.editar;
+  abrirModal('modal-' + d.t);
+}
+
+function cambiarRegistro(b, accion) {
+  var d = b.dataset;
+  if (accion === 'borrar' && !confirm('¿Eliminar «' + d.nombre + '»?')) return;
+  document.getElementById('cambio-t').value = d.t;
+  document.getElementById('cambio-accion').value = accion;
+  document.getElementById('cambio-pk').value = d.pk;
+  document.getElementById('form-cambio').submit();
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  // Las grillas con «activo» arrancan mostrando solo los activos.
+  document.querySelectorAll('.data-table[id^="tbl-"]').forEach(function (tbl) {
+    var clave = tbl.id.slice(4), sel = document.getElementById('f-activo-' + clave);
+    gestion_admTable(tbl.id, {
+      pageSize: 20,
+      filtroExtra: sel ? function (tr) { return !sel.value || tr.dataset.activo === sel.value; } : null
+    });
+  });
+});
+</script>
+{% endblock %}

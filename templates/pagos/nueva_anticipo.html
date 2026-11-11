@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Orden de pago de anticipo{% endblock %}
+
+{#
+  Anticipo a un proveedor (pagos.anticipo_nueva): plata que se le adelanta
+  antes de la factura. Se imputa a una cuenta de activo (Imputaciones
+  Contables, clase anticipo) y a una cuenta de pasivo del proveedor: si tiene
+  más de una, hay que decir cuál, porque después contra esas facturas se
+  aplica. Al elegir el proveedor se avisa si ya tiene órdenes sin pagar.
+#}
+{% set d = datos or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Orden de pago de anticipo</h1>
+    <p>Un adelanto a un proveedor, antes de su factura. Queda como crédito en su cuenta corriente.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Órdenes de pago', 'secondary', href=url_for('pagos.ordenes'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if not imputaciones %}
+  {{ ui.aviso('No hay ninguna imputación contable de anticipos. Cargala en Tesorería → Pagos → Imputaciones Contables (clase «Anticipo a proveedor», cuenta del activo) antes de armar la orden.', 'warning') }}
+  {% if puede_imputaciones %}{{ ui.boton('Ir a Imputaciones Contables', href=url_for('pagos.imputaciones', nuevo=1), icono_='agregar') }}{% endif %}
+{% else %}
+<form method="post" class="card" id="form-anticipo">
+  {{ ui.card_head('Datos del anticipo') }}
+  <div class="bloque">
+    <div class="bloque-titulo">Proveedor</div>
+    <div id="box-buscador" class="{{ 'oculto' if proveedor }}">
+      <div class="campos">
+        <div class="campo autocompletar" style="--span:12;">
+          <label for="q-prov">Buscar proveedor <span class="req">*</span></label>
+          <input type="search" id="q-prov" autocomplete="off" placeholder="Razón social, nombre de fantasía o CUIT (mínimo 2 caracteres)">
+          <div id="ac-lista" class="ac-lista oculto" role="listbox"></div>
+        </div>
+      </div>
+    </div>
+    <div id="box-prov" class="persona-elegida {{ 'oculto' if not proveedor }}">
+      <div class="avatar" id="prov-inicial">{{ proveedor.razon_social[0] if proveedor else '?' }}</div>
+      <div class="persona-texto">
+        <div class="persona-nombre" id="prov-nombre">{{ proveedor.razon_social if proveedor }}</div>
+        <div class="persona-datos" id="prov-datos">{% if proveedor %}CUIT {{ proveedor.cuit }}{% if proveedor.cbu %} · CBU {{ proveedor.cbu }}{% endif %}{% endif %}</div>
+      </div>
+      {{ ui.boton('Cambiar', 'secondary', chico=True, onclick='cambiarProveedor()') }}
+    </div>
+    <input type="hidden" name="id_proveedor" id="id_proveedor" value="{{ proveedor.id if proveedor else '' }}">
+    <div id="ops-aviso" class="separado"></div>
+  </div>
+  <div class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:6;" id="campo-rubro">
+        <label for="id_rubro_pasivo">Cuenta de pasivo del proveedor</label>
+        <select name="id_rubro_pasivo" id="id_rubro_pasivo">
+          {% if proveedor %}{{ ui.opciones(proveedor.rubros, d.get('id_rubro_pasivo'), clave='id', texto='nombre', vacio='— Elegí la cuenta —') }}{% endif %}
+        </select>
+        <small class="campo-ayuda" id="rubro-ayuda"></small>
+      </div>
+      <div class="campo" style="--span:6;">
+        <label for="id_imputacion">Imputación contable <span class="req">*</span></label>
+        <select name="id_imputacion" id="id_imputacion" required>
+          {% for i in imputaciones %}
+          <option value="{{ i.id }}" {{ 'selected' if d.get('id_imputacion') == i.id }}>{{ i.nombre }}{% if i.codigo_debe %} — {{ i.codigo_debe }} {{ i.cuenta_debe }}{% endif %}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="campo" style="--span:4;">
+        <label for="importe">Importe <span class="req">*</span></label>
+        <input type="text" name="importe" id="importe" class="inp-importe importe" inputmode="decimal" required value="{{ d.get('importe') or '' }}">
+      </div>
+      <div class="campo" style="--span:8;">
+        <label for="descripcion">Descripción</label>
+        <input type="text" name="descripcion" id="descripcion" maxlength="200" value="{{ d.get('descripcion') or '' }}"
+               placeholder="A cuenta de qué: obra, servicio, factura que va a llegar…">
+      </div>
+      <div class="campo" style="--span:12;">
+        <label for="observaciones">Observaciones</label>
+        <textarea name="observaciones" id="observaciones" rows="2">{{ d.get('observaciones') or '' }}</textarea>
+      </div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    {{ ui.boton('Crear la orden', submit=True, icono_='guardar') }}
+  </div>
+</form>
+{% endif %}
+
+<script>
+var URL_PROV = '{{ url_for("pagos.api_proveedores") }}', PROVS = [], tmr = null;
+function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
+function pesos(n) { return Number(n || 0).toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+var q = document.getElementById('q-prov');
+if (q) q.addEventListener('input', function () {
+  clearTimeout(tmr);
+  var t = this.value.trim(), caja = document.getElementById('ac-lista');
+  if (t.length < 2) { caja.classList.add('oculto'); caja.innerHTML = ''; return; }
+  tmr = setTimeout(function () {
+    fetch(URL_PROV + '?q=' + encodeURIComponent(t), {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        PROVS = rows;
+        caja.innerHTML = rows.length ? rows.map(function (p, i) {
+          return '<button type="button" class="ac-item" onclick="elegirProveedor(' + i + ')">' + esc(p.razon_social)
+               + '<small>CUIT ' + esc(p.cuit || '—') + (p.ops_sin_pago.length ? ' · ' + p.ops_sin_pago.length + ' orden(es) sin pagar' : '') + '</small></button>';
+        }).join('') : '<div class="ac-vacio">Ningún proveedor activo coincide.</div>';
+        caja.classList.remove('oculto');
+      });
+  }, 280);
+});
+document.addEventListener('click', function (e) {
+  var caja = document.getElementById('ac-lista');
+  if (caja && !caja.contains(e.target) && e.target.id !== 'q-prov') caja.classList.add('oculto');
+});
+function elegirProveedor(i) {
+  var p = PROVS[i];
+  document.getElementById('id_proveedor').value = p.id;
+  document.getElementById('prov-nombre').textContent = p.razon_social;
+  document.getElementById('prov-inicial').textContent = (p.razon_social || '?').charAt(0).toUpperCase();
+  document.getElementById('prov-datos').textContent = 'CUIT ' + (p.cuit || '—') + (p.cbu ? ' · CBU ' + p.cbu : ' · sin CBU en la ficha');
+  document.getElementById('ac-lista').classList.add('oculto');
+  document.getElementById('box-buscador').classList.add('oculto');
+  document.getElementById('box-prov').classList.remove('oculto');
+  var sel = document.getElementById('id_rubro_pasivo'), ayuda = document.getElementById('rubro-ayuda');
+  sel.innerHTML = '';
+  if (p.rubros.length !== 1) sel.innerHTML = '<option value="">— Elegí la cuenta —</option>';
+  p.rubros.forEach(function (r) {
+    var o = document.createElement('option'); o.value = r.id; o.textContent = r.nombre;
+    if (r.predeterminada && p.rubros.length > 1) o.textContent += ' (predeterminada)';
+    sel.appendChild(o);
+  });
+  ayuda.className = 'campo-ayuda';
+  ayuda.textContent = !p.rubros.length ? 'El proveedor no tiene cuentas de pasivo en su ficha: el anticipo queda sin cuenta.'
+                    : p.rubros.length > 1 ? 'Tiene más de una: elegí contra cuáles facturas se va a aplicar.' : '';
+  var aviso = document.getElementById('ops-aviso');
+  aviso.innerHTML = '';
+  if (p.ops_sin_pago.length) {
+    var a = document.createElement('div');
+    a.className = 'alert alert-warning';
+    a.innerHTML = {{ ui.icono('alerta', 16)|tojson }} + '<div>Este proveedor ya tiene órdenes sin pagar: '
+      + p.ops_sin_pago.map(function (o) { return '<a href="' + o.url + '">' + esc(o.clase + ' ' + o.nro) + '</a> (' + esc(o.estado) + ', $ ' + pesos(o.importe) + ')'; }).join(', ')
+      + '. Revisá que no se esté adelantando lo mismo dos veces.</div>';
+    aviso.appendChild(a);
+  }
+}
+function cambiarProveedor() {
+  document.getElementById('id_proveedor').value = '';
+  document.getElementById('box-prov').classList.add('oculto');
+  document.getElementById('box-buscador').classList.remove('oculto');
+  document.getElementById('ops-aviso').innerHTML = '';
+  document.getElementById('q-prov').value = '';
+  document.getElementById('q-prov').focus();
+}
+</script>
+{% endblock %}

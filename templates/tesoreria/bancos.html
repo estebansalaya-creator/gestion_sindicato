@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Bancos (código BCRA){% endblock %}
+
+{#
+  Los bancos de la nómina del BCRA con el código que encabeza el CBU: de acá
+  sale el banco de una cuenta de fondos y el de un cheque de terceros. La
+  nómina vigente se carga con sql/tesoreria_20261108.sql.
+#}
+{% set b = banco or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Bancos (código BCRA)</h1>
+    <p>Los bancos con su código del BCRA: son los tres primeros dígitos del CBU.</p>
+  </div>
+  {% if banco %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Nuevo banco', href=url_for('tesoreria.bancos', nuevo=1), icono_='agregar') }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', bancos|length), ('datos', 'Editar' if b.get('id') else 'Nuevo', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {{ ui.barra_filtros('Filtrar por código o nombre…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-bancos" data-exportar="Bancos BCRA">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Código</th>
+            <th>Banco</th>
+            <th class="th-right">Cuentas de fondos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for x in bancos %}
+          <tr>
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('tesoreria.bancos', edit=x.id)) }}
+              {{ ui.accion('borrar', onclick='confirmarBorrar(this)', deshabilitado=x.cuentas > 0,
+                           titulo='Lo usan cuentas de fondos: no se puede eliminar' if x.cuentas else 'Eliminar',
+                           datos={'id': x.id, 'nombre': x.codigo ~ ' · ' ~ x.nombre}) }}
+            </div></td>
+            <td class="td-mono td-fuerte">{{ x.codigo }}</td>
+            <td>{{ x.nombre }}</td>
+            <td class="td-right {{ 'td-muted' if not x.cuentas }}">{{ x.cuentas }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="4" class="no-data">No hay bancos: correr sql/tesoreria_20261108.sql.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head('Editar banco' if b.get('id') else 'Nuevo banco') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('tesoreria.bancos'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('tesoreria.bancos') }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ b.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label>Código BCRA <span class="req">*</span></label>
+            <input type="text" name="codigo" required maxlength="5" class="mono" inputmode="numeric"
+                   placeholder="011" value="{{ b.get('codigo') or '' }}">
+            <small class="campo-ayuda">Los tres primeros dígitos del CBU.</small>
+          </div>
+          <div class="campo" style="--span:8;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="100" value="{{ b.get('nombre') or '' }}">
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if b.get('id') else 'Agregar banco', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar el banco?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('tesoreria.bancos') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-bancos', { pageSize: 20 });
+});
+</script>
+{% endblock %}

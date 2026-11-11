@@ -1,0 +1,555 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Solicitudes de reintegro{% endblock %}
+
+{#
+  Solicitudes de reintegro: el listado y la carga, en solapas.
+
+  La carga es la de gestion_adm —titular, renglones por afiliado del grupo con
+  sus comprobantes, resumen debajo— con los componentes del sistema
+  (.con-resumen, .renglon, .resumen). El renglón se dibuja con una sola
+  macro, para los que vienen guardados y para el <template> que clona
+  «Agregar renglón»: con dos copias del marcado, la que arma el JS terminaba
+  sin algún campo.
+#}
+
+{% macro renglon(uid, d, n, familia, conceptos) -%}
+{% set imp = d.get('importe_solicitado') %}
+<div class="renglon" data-uid="{{ uid }}">
+  <span class="renglon-num">{{ n }}</span>
+  <span class="renglon-quitar">{{ ui.accion('borrar', onclick='quitarRenglon(this)', titulo='Quitar renglón') }}</span>
+  <input type="hidden" name="det_uid" value="{{ uid }}">
+  <input type="hidden" name="det_id_{{ uid }}" value="{{ d.get('id') or '' }}">
+  <div class="campos">
+    <div class="campo" style="--span:5;">
+      <label>Afiliado del grupo familiar <span class="req">*</span></label>
+      <select name="det_afiliado_{{ uid }}" class="sel-afiliado" required>
+        {% for f in familia %}
+        <option value="{{ f.id_afiliado }}"{{ ' selected' if f.id_afiliado == d.get('id_afiliado') }}>
+          {{ f.nombre_completo }} — {{ f.parentesco }}{% if f.baja_mes %} — BAJA {{ f.fecha_baja_txt }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="campo" style="--span:4;">
+      <label>Concepto <span class="req">*</span></label>
+      <select name="det_concepto_{{ uid }}" required>
+        {{ ui.opciones(conceptos, d.get('id_concepto_gasto'), clave='id', vacio='— Elegí el concepto —') }}
+      </select>
+    </div>
+    <div class="campo" style="--span:3;">
+      <label>Importe <span class="req">*</span></label>
+      <input type="hidden" name="det_importe_{{ uid }}" class="imp-real" id="imp-{{ uid }}"
+             value="{{ '%.2f'|format(imp|float) if imp is not none else '' }}">
+      <input type="text" inputmode="decimal" class="importe" required placeholder="0,00"
+             value="{{ (imp|miles) if imp is not none else '' }}"
+             oninput="mascaraImporte(this, 'imp-{{ uid }}'); recalcular();">
+    </div>
+    <div class="campo" style="--span:3;">
+      <label>Fecha del gasto</label>
+      <input type="date" name="det_fecha_{{ uid }}" value="{{ d.get('fecha_gasto').isoformat() if d.get('fecha_gasto') else '' }}">
+    </div>
+    <div class="campo" style="--span:3;">
+      <label>N° de comprobante</label>
+      <input type="text" name="det_comprobante_{{ uid }}" maxlength="30" value="{{ d.get('nro_comprobante') or '' }}">
+    </div>
+    <div class="campo" style="--span:6;">
+      <label>Comentario</label>
+      <input type="text" name="det_comentario_{{ uid }}" maxlength="250" value="{{ d.get('comentario_solicitud') or '' }}">
+    </div>
+    <div class="campo" style="--span:12;">
+      <label>Adjuntar comprobantes</label>
+      <input type="file" name="det_archivos_{{ uid }}" multiple accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff,.webp">
+    </div>
+  </div>
+  {% if d.get('adjuntos') %}
+  <div class="adjuntos">
+    {% for a in d.get('adjuntos') %}
+    <span class="adjunto">
+      <span class="adjunto-nombre" title="{{ a.nombre_archivo }}">{{ a.nombre_archivo }}</span>
+      {{ ui.accion('ver', href=url_for('reintegros.ver_adjunto', id_adjunto=a.id), titulo='Ver comprobante', blank=True) }}
+      {{ ui.accion('borrar', onclick='borrarAdjunto(this)', titulo='Eliminar comprobante',
+                   datos={'url': url_for('reintegros.borrar_adjunto', id_adjunto=a.id), 'nombre': a.nombre_archivo}) }}
+    </span>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{%- endmacro %}
+
+{% block content %}
+{% set editando = reintegro is not none %}
+{% set en_borrador = not editando or reintegro.estado == 'borrador' %}
+
+<div class="page-header">
+  <div>
+    <h1>Solicitudes de reintegro</h1>
+    <p>Carga de solicitudes con sus comprobantes y seguimiento de todo el circuito: auditoría, orden de pago y pago.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva solicitud', href=url_for('reintegros.solicitud', nuevo=1), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% set inicial = 'datos' if (editando or nuevo) else 'listado' %}
+{{ ui.solapas([('listado', 'Solicitudes', solicitudes|length),
+               ('datos', ('Editar ' ~ reintegro.nro_solicitud) if editando else 'Nueva solicitud', None)], inicial) }}
+
+
+<!-- ── Listado ────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por N°, titular, CUIL o afiliado de un renglón…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Todos los estados</option>
+        {% for clave, etiqueta in estados %}<option value="{{ clave }}">{{ etiqueta }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+        <option value="">Subsidios y reintegros</option>
+        {% for k, t in clases.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Concepto') %}<select class="filtro" id="f-concepto">
+        <option value="">Todos los conceptos</option>
+        {% for c in conceptos %}<option value="{{ c.id }}">{{ c.descripcion }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% if atributos %}
+      {% call ui.filtro('Atributo') %}<select class="filtro" id="f-atributo">
+        <option value="">Todos los atributos</option>
+        {% for a in atributos %}<option value="{{ a.id }}">{{ a.rotulo }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% endif %}
+      {% call ui.filtro('Fecha desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+      {% call ui.filtro('Fecha hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-solicitudes" data-exportar="Solicitudes de reintegro">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>N° solicitud</th>
+            <th>Fecha</th>
+            <th>Estado</th>
+            <th>Titular</th>
+            <th>CUIL</th>
+            <th>Clase</th>
+            <th>Concepto</th>
+            <th class="th-right">Renglones</th>
+            <th class="th-right">Adjuntos</th>
+            <th class="th-right">Solicitado</th>
+            <th class="th-right">Aprobado</th>
+            <th>Orden de pago</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in solicitudes %}
+          {% set editable = not s.nro_orden_pago and s.estado not in ('rechazada', 'anulada', 'pagada')
+                            and (s.estado == 'borrador' or puede_auditar) %}
+          <tr class="{{ 'fila-actual' if editando and s.id == reintegro.id }}"
+              data-estado="{{ s.estado }}" data-clase="{{ s.clase }}" data-conceptos=" {{ s.conceptos }} "
+              data-atributos=" {{ s.atributos }} "
+              data-fecha="{{ s.fecha_solicitud.isoformat() if s.fecha_solicitud else '' }}">
+            <td><div class="acciones">
+              {{ ui.accion('ver', href=url_for('reintegros.ficha', id_reintegro=s.id)) }}
+              {% if editable %}
+              {{ ui.accion('editar', href=url_for('reintegros.solicitud', edit=s.id),
+                           titulo='Editar' if s.estado == 'borrador' else 'Corregir: vuelve a auditoría') }}
+              {% endif %}
+              {{ ui.accion('pdf', href=url_for('reintegros.constancia', id_reintegro=s.id),
+                           titulo='Constancia para imprimir', blank=True) }}
+              {% if s.estado == 'borrador' %}
+              <form method="post" class="form-en-linea"
+                    action="{{ url_for('reintegros.eliminar_solicitud', id_reintegro=s.id) }}"
+                    data-nro="{{ s.nro_solicitud }}"
+                    onsubmit="return confirm('¿Eliminar la solicitud ' + this.dataset.nro + '?');">
+                {{ ui.accion('borrar', submit=True, titulo='Eliminar borrador') }}
+              </form>
+              {% endif %}
+            </div></td>
+            <td class="td-mono">{{ s.nro_solicitud }}</td>
+            <td>{{ s.fecha_solicitud.strftime('%d/%m/%Y') if s.fecha_solicitud else '—' }}</td>
+            {# El texto oculto es para el buscador: los afiliados de los
+               renglones. Un reintegro del hijo se carga a nombre del padre. #}
+            <td data-valor="{{ estados_label.get(s.estado, s.estado) }}">{{ ui.estado(estados_label.get(s.estado, s.estado), estados_tipo.get(s.estado, 'neutro')) }}</td>
+            <td class="td-fuerte" data-valor="{{ s.titular }}">{{ s.titular }}<span class="oculto"> {{ s.busqueda }}</span></td>
+            <td class="td-mono">{{ s.cuil_titular or '—' }}</td>
+            <td>{{ s.clase_txt }}</td>
+            <td class="td-muted td-recorte" title="{{ s.conceptos_txt }}">{{ s.conceptos_txt or '—' }}</td>
+            <td class="td-right">{{ s.renglones }}</td>
+            <td class="td-right {{ 'td-danger' if not s.adjuntos }}">{{ s.adjuntos }}</td>
+            <td class="td-right" data-num="{{ s.importe_solicitado }}">{{ s.importe_solicitado|miles }}</td>
+            <td class="td-right" {% if s.importe_aprobado is not none %}data-num="{{ s.importe_aprobado }}"{% endif %}>
+              {{ s.importe_aprobado|miles if s.importe_aprobado is not none else '—' }}</td>
+            <td class="td-mono">{{ s.nro_orden_pago or '—' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="12" class="no-data">
+            Todavía no hay solicitudes. El historial de AEDA se trae con importar_aeda_reintegros.py.
+          </td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+
+<!-- ── Carga ──────────────────────────────────────────────────────────────── -->
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+<form method="post" id="form-reintegro" enctype="multipart/form-data"
+      action="{{ url_for('reintegros.solicitud') }}" data-proceso="Guardando la solicitud…">
+  <input type="hidden" name="id_reintegro" value="{{ reintegro.id if editando else '' }}">
+  <input type="hidden" name="accion" id="accion" value="guardar">
+
+  <div class="con-resumen">
+    <div>
+      <!-- 1 · Titular -->
+      <div class="card">
+        {{ ui.card_head('1 · Afiliado titular') }}
+        <div class="bloque">
+          <div id="box-buscador" class="{{ 'oculto' if editando }}">
+            <div class="campos">
+              <div class="campo autocompletar" style="--span:12;">
+                <label for="q-titular">Buscar titular</label>
+                <input type="search" id="q-titular" autocomplete="off"
+                       placeholder="Apellido, CUIL o documento (mínimo 3 caracteres)">
+                <div id="ac-lista" class="ac-lista oculto" role="listbox"></div>
+              </div>
+            </div>
+            <p class="campo-ayuda" style="margin-top:6px;">
+              Titulares vigentes del padrón, o dados de baja en el mes en curso: a esos solo se les
+              reintegran gastos del mes anterior.
+            </p>
+          </div>
+
+          <div id="box-titular" class="persona-elegida {{ 'oculto' if not editando }}">
+            <div class="avatar" id="tit-inicial">{{ reintegro.titular[0] if editando and reintegro.titular else '?' }}</div>
+            <div class="persona-texto">
+              <div class="persona-nombre" id="tit-nombre">{{ reintegro.titular if editando else '' }}</div>
+              <div class="persona-datos" id="tit-datos">{% if editando %}CUIL {{ reintegro.cuil_titular or '—' }} · Doc {{ reintegro.doc_titular or '—' }}{% endif %}</div>
+            </div>
+            {{ ui.boton('Cambiar', 'secondary', chico=True, onclick='cambiarTitular()') }}
+          </div>
+          <input type="hidden" name="id_afiliado" id="id_afiliado" value="{{ reintegro.id_afiliado if editando else '' }}">
+
+          <div class="campos" style="margin-top:14px;">
+            <div class="campo" style="--span:3;">
+              <label for="fecha_solicitud">Fecha de solicitud <span class="req">*</span></label>
+              <input type="date" name="fecha_solicitud" id="fecha_solicitud" required
+                     value="{{ reintegro.fecha_solicitud.isoformat() if editando else hoy }}">
+            </div>
+            {# Ancho propio para el CBU: son 22 dígitos que se comparan contra
+               el comprobante, y cortados no se leen de una vez. #}
+            <div class="campo" style="--span:6;">
+              <label for="cbu_destino">CBU destino</label>
+              <input type="text" name="cbu_destino" id="cbu_destino" class="mono" maxlength="22"
+                     inputmode="numeric" placeholder="22 dígitos"
+                     value="{{ reintegro.cbu_destino or '' if editando else '' }}">
+              <small class="campo-ayuda" id="cbu-origen"></small>
+            </div>
+            <div class="campo" style="--span:3;">
+              <label for="alias_destino">Alias</label>
+              <input type="text" name="alias_destino" id="alias_destino" maxlength="50"
+                     value="{{ reintegro.alias_destino or '' if editando else '' }}">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2 · Detalle -->
+      <div class="card">
+        {% call ui.card_head('2 · Detalle del reintegro', nota='un renglón por gasto, con su comprobante') %}
+          {{ ui.boton('Agregar renglón', 'secondary', chico=True, icono_='agregar', id='btn-agregar',
+                      onclick='agregarRenglon()') }}
+        {% endcall %}
+        <div class="card-body">
+          <div id="aviso-bajas" class="alert alert-warning oculto">{{ ui.icono('alerta', 16) }}<div></div></div>
+          <div id="aviso-sin-titular" class="renglon-vacio {{ 'oculto' if editando }}">
+            Elegí primero el afiliado titular para cargar el detalle.
+          </div>
+          <div id="renglones">
+            {% if editando %}{% for d in reintegro.detalle %}
+            {{ renglon('d' ~ d.id, d, loop.index, familia, conceptos) }}
+            {% endfor %}{% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Observaciones -->
+      <div class="card">
+        <div class="bloque">
+          <div class="campos">
+            <div class="campo" style="--span:12;">
+              <label for="observaciones">Observaciones de la solicitud</label>
+              <textarea name="observaciones" id="observaciones" rows="2" maxlength="500"
+                        placeholder="Notas internas…">{{ reintegro.observaciones or '' if editando else '' }}</textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Resumen -->
+    <aside class="card resumen">
+      {{ ui.card_head('Resumen') }}
+      <div class="card-body">
+        <div class="resumen-fila"><span>Estado</span>
+          {% if editando %}{{ ui.estado(estados_label.get(reintegro.estado, reintegro.estado), estados_tipo.get(reintegro.estado, 'neutro')) }}
+          {% else %}{{ ui.estado('Nueva', 'neutro') }}{% endif %}
+        </div>
+        {% if editando %}
+        <div class="resumen-fila"><span>N° de solicitud</span><strong class="mono">{{ reintegro.nro_solicitud }}</strong></div>
+        {% endif %}
+        <div class="resumen-fila"><span>Renglones</span><strong id="res-renglones">0</strong></div>
+        <div class="resumen-fila resumen-total"><span>Total</span><strong id="res-total">$ 0,00</strong></div>
+
+        {% if editando and reintegro.estado not in ('borrador', 'en_auditoria') %}
+        <div style="margin-top:12px;">
+          {{ ui.aviso('Ya fue auditada. Si la guardás con cambios vuelve a auditoría y pierde el importe aprobado: lo autorizado se resolvió sobre otros renglones.', 'warning') }}
+        </div>
+        {% endif %}
+
+        <div class="resumen-botones">
+          {{ ui.boton('Guardar borrador' if en_borrador else 'Guardar cambios', submit=True, icono_='guardar',
+                      onclick="document.getElementById('accion').value='guardar';") }}
+          {% if en_borrador %}
+          {{ ui.boton('Enviar a auditoría', 'secondary', submit=True, onclick='return enviarAuditoria();') }}
+          {% endif %}
+          {# Para quien además audita: en la ventanilla recibe los comprobantes,
+             los mira y resuelve. Aprueba por lo solicitado; reconocer menos se
+             hace en la pantalla de auditoría. #}
+          {% if puede_auditar %}
+          {{ ui.boton('Guardar y auditar', 'ok', submit=True, icono_='ok', onclick='return auditarAhora();') }}
+          {% endif %}
+          {% if editando %}
+          {# El PDF sale de lo guardado, no de lo que hay en pantalla. #}
+          {{ ui.boton('Imprimir constancia', 'pdf', href=url_for('reintegros.constancia', id_reintegro=reintegro.id),
+                      icono_='imprimir', blank=True) }}
+          {% endif %}
+          {{ ui.boton('Cancelar', 'ghost', href=url_for('reintegros.solicitud')) }}
+        </div>
+        <p class="chico muted" style="margin-top:12px;line-height:1.45;">
+          Comprobantes en PDF o imagen, hasta {{ max_mb }} MB cada uno. No frenan el envío a
+          auditoría, pero si se aprueba sin documentación queda constancia en la observación.
+        </p>
+      </div>
+    </aside>
+  </div>
+</form>
+</div>
+
+{# Para borrar un comprobante ya subido: fuera del formulario principal, que
+   no se puede anidar. borrarAdjunto() le pone la dirección y lo envía. #}
+<form method="post" id="form-borrar-adjunto" class="oculto">
+  <input type="hidden" name="volver" value="{{ url_for('reintegros.solicitud', edit=reintegro.id) if editando else '' }}">
+</form>
+
+<template id="tpl-renglon">{{ renglon('__UID__', {}, '', [], conceptos) }}</template>
+
+<script>
+var FAMILIA   = {{ familia|tojson }};
+var TITULARES = [];
+var uidSeq    = 0;
+var URL_TITULARES = "{{ url_for('reintegros.api_titulares') }}";
+var URL_GRUPO     = "{{ url_for('reintegros.api_grupo_familiar', id_titular=0) }}".replace(/0$/, '');
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c];
+  });
+}
+
+/* ── Totales ─────────────────────────────────────────────────────────── */
+function recalcular() {
+  var total = 0, filas = document.querySelectorAll('#renglones .renglon');
+  document.querySelectorAll('#renglones .imp-real').forEach(function (i) {
+    var n = parseFloat(i.value); if (!isNaN(n)) total += n;
+  });
+  filas.forEach(function (f, k) { f.querySelector('.renglon-num').textContent = k + 1; });
+  document.getElementById('res-renglones').textContent = filas.length;
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('aviso-sin-titular').classList.toggle(
+    'oculto', filas.length > 0 || !!document.getElementById('id_afiliado').value);
+  document.getElementById('btn-agregar').disabled = !document.getElementById('id_afiliado').value;
+}
+
+/* ── Buscador de titular ─────────────────────────────────────────────── */
+var tmr = null;
+document.getElementById('q-titular').addEventListener('input', function () {
+  clearTimeout(tmr);
+  var q = this.value.trim(), caja = document.getElementById('ac-lista');
+  if (q.length < 3) { caja.classList.add('oculto'); caja.innerHTML = ''; return; }
+  tmr = setTimeout(function () {
+    fetch(URL_TITULARES + '?q=' + encodeURIComponent(q), {credentials: 'same-origin'})
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        TITULARES = rows;
+        caja.innerHTML = rows.length ? rows.map(function (a, i) {
+          return '<button type="button" class="ac-item" onclick="elegirTitular(' + i + ')">'
+               + esc(a.nombre_completo)
+               + (a.baja_mes ? ' <b class="td-danger">· BAJA ' + esc(a.fecha_baja_txt) + '</b>' : '')
+               + '<small>CUIL ' + esc(a.cuil || '—') + ' · Doc ' + esc(a.nro_documento || '—') + '</small></button>';
+        }).join('') : '<div class="ac-vacio">Ningún titular vigente coincide.</div>';
+        caja.classList.remove('oculto');
+      });
+  }, 280);
+});
+document.addEventListener('click', function (e) {
+  var caja = document.getElementById('ac-lista');
+  if (!caja.contains(e.target) && e.target.id !== 'q-titular') caja.classList.add('oculto');
+});
+
+function elegirTitular(i) {
+  var a = TITULARES[i];
+  document.getElementById('id_afiliado').value = a.id_afiliado;
+  document.getElementById('tit-nombre').textContent = a.nombre_completo;
+  document.getElementById('tit-inicial').textContent = (a.nombre_completo || '?').charAt(0).toUpperCase();
+  document.getElementById('tit-datos').textContent = 'CUIL ' + (a.cuil || '—') + ' · Doc ' + (a.nro_documento || '—')
+    + (a.baja_mes ? ' · BAJA ' + (a.fecha_baja_txt || '') : '');
+  document.getElementById('ac-lista').classList.add('oculto');
+  document.getElementById('box-buscador').classList.add('oculto');
+  document.getElementById('box-titular').classList.remove('oculto');
+
+  // El CBU de la ficha se propone, pero se puede cambiar para este reintegro
+  // sin tocar la ficha. Se repite debajo, entero, porque es contra lo que se
+  // compara el del comprobante.
+  var inp = document.getElementById('cbu_destino'), msg = document.getElementById('cbu-origen');
+  if (!inp.value.trim()) {
+    var cbu = String(a.cbu_pago || '').replace(/\D/g, '');
+    msg.className = 'campo-ayuda';
+    if (!cbu) { msg.classList.add('error'); msg.textContent = 'El afiliado no tiene CBU de pago en su ficha.'; }
+    else {
+      inp.value = cbu;
+      msg.classList.add(cbu.length === 22 ? 'ok' : 'error');
+      msg.textContent = cbu.length === 22 ? 'Tomado de la ficha del afiliado: ' + cbu
+        : 'El CBU de la ficha tiene ' + cbu.length + ' de 22 dígitos. Revisalo antes de enviar.';
+    }
+  }
+
+  fetch(URL_GRUPO + a.id_afiliado, {credentials: 'same-origin'})
+    .then(function (r) { return r.json(); })
+    .then(function (rows) {
+      FAMILIA = rows;
+      document.querySelectorAll('#renglones .sel-afiliado').forEach(function (sel) {
+        sel.innerHTML = opcionesFamilia(sel.value);
+      });
+      if (!document.querySelectorAll('#renglones .renglon').length) agregarRenglon();
+      avisoBajas();
+      recalcular();
+    });
+}
+
+function cambiarTitular() {
+  if (document.querySelectorAll('#renglones .renglon').length &&
+      !confirm('Al cambiar el titular se quitan los renglones cargados. ¿Seguir?')) return;
+  document.getElementById('renglones').innerHTML = '';
+  ['id_afiliado', 'q-titular', 'cbu_destino'].forEach(function (id) { document.getElementById(id).value = ''; });
+  document.getElementById('cbu-origen').textContent = '';
+  document.getElementById('box-titular').classList.add('oculto');
+  document.getElementById('box-buscador').classList.remove('oculto');
+  FAMILIA = [];
+  avisoBajas();
+  recalcular();
+  document.getElementById('q-titular').focus();
+}
+
+/* ── Dados de baja en el mes ─────────────────────────────────────────────
+   Se los deja cargar, pero el gasto tiene que ser del mes anterior. El
+   servidor lo controla igual; esto es para que se sepa antes de guardar. */
+function avisoBajas() {
+  var caja = document.getElementById('aviso-bajas');
+  var bajas = (FAMILIA || []).filter(function (f) { return f.baja_mes; });
+  if (!bajas.length) { caja.classList.add('oculto'); return; }
+  var h = new Date(), m = new Date(h.getFullYear(), h.getMonth() - 1, 1)
+        .toLocaleDateString('es-AR', {month: 'long', year: 'numeric'});
+  caja.querySelector('div').innerHTML = bajas.map(function (f) {
+      return '<b>' + esc(f.nombre_completo) + '</b> tiene baja del ' + esc(f.fecha_baja_txt || 'mes en curso');
+    }).join('; ') + '. Solo se le pueden reintegrar gastos del <b>mes anterior (' + esc(m) + ')</b>.';
+  caja.classList.remove('oculto');
+}
+
+/* ── Renglones ───────────────────────────────────────────────────────── */
+function opcionesFamilia(sel) {
+  return FAMILIA.map(function (f) {
+    return '<option value="' + f.id_afiliado + '"' + (String(f.id_afiliado) === String(sel) ? ' selected' : '') + '>'
+         + esc(f.nombre_completo) + ' — ' + esc(f.parentesco)
+         + (f.baja_mes ? ' — BAJA ' + esc(f.fecha_baja_txt || '') + ' (solo gastos del mes anterior)' : '')
+         + '</option>';
+  }).join('');
+}
+
+function agregarRenglon() {
+  if (!document.getElementById('id_afiliado').value) { alert('Elegí primero el afiliado titular.'); return; }
+  var uid = 'n' + (++uidSeq);
+  var tpl = document.getElementById('tpl-renglon').innerHTML.replace(/__UID__/g, uid);
+  var caja = document.createElement('div');
+  caja.innerHTML = tpl.trim();
+  var div = caja.firstElementChild;
+  div.querySelector('.sel-afiliado').innerHTML = opcionesFamilia('');
+  document.getElementById('renglones').appendChild(div);
+  recalcular();
+  div.querySelector('.sel-afiliado').focus();
+}
+
+function quitarRenglon(btn) {
+  var fila = btn.closest('.renglon');
+  if (fila.querySelector('.adjunto') &&
+      !confirm('El renglón tiene comprobantes adjuntos: al guardar se eliminan. ¿Quitarlo?')) return;
+  fila.remove();
+  recalcular();
+}
+
+function borrarAdjunto(btn) {
+  if (!confirm('¿Eliminar el comprobante ' + btn.dataset.nombre + '?')) return;
+  var f = document.getElementById('form-borrar-adjunto');
+  f.action = btn.dataset.url;
+  f.submit();
+}
+
+/* ── Envío ───────────────────────────────────────────────────────────── */
+function validar() {
+  if (!document.getElementById('id_afiliado').value) { alert('Elegí el afiliado titular.'); return false; }
+  if (!document.querySelectorAll('#renglones .renglon').length) { alert('Agregá al menos un renglón.'); return false; }
+  return true;
+}
+function enviarAuditoria() {
+  if (!validar() || !confirm('¿Enviar la solicitud a auditoría?')) return false;
+  document.getElementById('accion').value = 'enviar';
+  return true;
+}
+function auditarAhora() {
+  if (!validar()) return false;
+  if (!confirm('¿Aprobar la solicitud por ' + document.getElementById('res-total').textContent + '?\n\n'
+             + 'Queda auditada por lo solicitado y lista para la orden de pago. '
+             + 'Para reconocer menos, usá la pantalla de auditoría.')) return false;
+  document.getElementById('accion').value = 'enviar_y_auditar';
+  return true;
+}
+document.getElementById('form-reintegro').addEventListener('submit', function (e) {
+  if (!validar()) e.preventDefault();
+});
+
+document.addEventListener('DOMContentLoaded', function () {
+  var fEstado = document.getElementById('f-estado'), fConcepto = document.getElementById('f-concepto'),
+      fClase = document.getElementById('f-clase'),
+      fAtributo = document.getElementById('f-atributo'),
+      fDesde = document.getElementById('f-desde'), fHasta = document.getElementById('f-hasta');
+  gestion_admTable('tbl-solicitudes', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (fEstado.value && tr.dataset.estado !== fEstado.value) return false;
+      if (fClase.value && tr.dataset.clase !== fClase.value) return false;
+      if (fConcepto.value && tr.dataset.conceptos.indexOf(' ' + fConcepto.value + ' ') < 0) return false;
+      if (fAtributo && fAtributo.value && tr.dataset.atributos.indexOf(' ' + fAtributo.value + ' ') < 0) return false;
+      if (fDesde.value && tr.dataset.fecha < fDesde.value) return false;
+      if (fHasta.value && tr.dataset.fecha > fHasta.value) return false;
+      return true;
+    }
+  });
+  avisoBajas();
+  recalcular();
+});
+</script>
+{% endblock %}

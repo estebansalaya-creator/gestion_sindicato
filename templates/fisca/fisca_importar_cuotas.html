@@ -1,0 +1,553 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Importar Cuotas Sindicales{% endblock %}
+
+{% block content %}
+{# Pendiente de integrar a sindicato.css: cuando esté, se borra esta línea. #}
+
+<script>
+  var URL_IMPORTAR_POST = "{{ url_for('sindicato.fisca_importar_cuotas_post') }}";
+  var URL_LOG           = "{{ url_for('sindicato.fisca_importaciones_log') }}";
+</script>
+
+<div class="page-header">
+  <div>
+    <h1>Importar Cuotas Sindicales — Carpeta</h1>
+    <p>Seleccioná una carpeta con planillas Excel de aportes (Ley 23.551 art. 38). Se procesarán
+       todos los archivos <code>.xlsx</code> encontrados.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Historial de importaciones', 'secondary', href=url_for('sindicato.fisca_importaciones_log'), icono_='historial') }}
+  </div>
+</div>
+
+{# Las dos tablas de esta pantalla (archivos detectados y progreso) muestran el
+   estado de un proceso en curso, no datos para consultar: no llevan barra de
+   filtros ni exportación. El historial, que sí es para consultar, las tiene. #}
+
+<!-- ── PASO 1: Selección de carpeta ─────────────────────────────────────── -->
+<div class="card" id="card-upload">
+  <div class="card-head">
+    <div class="fila"><span class="paso-badge">1</span>
+      <span class="card-head-titulo">Seleccioná la carpeta</span></div>
+  </div>
+  <div class="card-body">
+    <div id="parse-error" class="alert alert-danger" style="display:none;"></div>
+
+    <div id="drop-zone" class="drop-zone"
+         onclick="document.getElementById('folder-input').click()">
+      {{ ui.icono('subir', 32) }}
+      <strong>Hacé clic para seleccionar una carpeta</strong>
+      <span class="chico">Se detectarán automáticamente todos los <strong>.xlsx</strong> dentro de la carpeta seleccionada</span>
+    </div>
+
+    <!-- Input carpeta — webkitdirectory permite seleccionar toda la carpeta -->
+    <input type="file" id="folder-input"
+           webkitdirectory mozdirectory directory multiple class="oculto"
+           onchange="onCarpetaSeleccionada(this.files)">
+  </div>
+</div>
+
+
+<!-- ── PASO 2: Lista de archivos detectados ──────────────────────────────── -->
+<div class="card" id="card-archivos" style="display:none;">
+  <div class="card-head">
+    <div class="fila"><span class="paso-badge">2</span>
+      <span class="card-head-titulo">Archivos detectados en la carpeta</span></div>
+    <div class="card-head-acciones"><span id="badge-total-archivos" class="chip"></span></div>
+  </div>
+
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-archivos" data-sin-orden>
+      <thead>
+        <tr>
+          <th data-no-sort>N°</th>
+          <th data-no-sort>Archivo</th>
+          <th data-no-sort>Empresa / CUIT</th>
+          <th class="th-center" data-no-sort>Período</th>
+          <th class="th-right" data-no-sort>Empleados</th>
+          <th class="th-right" data-no-sort>Remu. total</th>
+          <th class="th-right" data-no-sort>Cuota total</th>
+          <th data-no-sort>Estado</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-archivos"></tbody>
+    </table>
+  </div>
+
+  <div class="card-body">
+    <div id="warn-parse-global" class="alert alert-warning" style="display:none;"></div>
+  </div>
+</div>
+
+
+<!-- ── PASO 3: Opciones ──────────────────────────────────────────────────── -->
+<div class="card" id="card-opciones" style="display:none;">
+  <div class="card-head">
+    <div class="fila"><span class="paso-badge">3</span>
+      <span class="card-head-titulo">Opciones de importación</span></div>
+  </div>
+  <div class="card-body">
+    <div class="campos">
+      <div class="campo" style="--span:12;">
+        <span class="campo-label">¿Qué hacer si ya existe el mismo CUIT / CUIL / Período?</span>
+        <div class="opciones-tarjeta">
+          <label class="radio-card" id="lbl-skip">
+            <input type="radio" name="modo_dup" value="skip" checked onchange="actualizarModo()">
+            <div><strong>Ignorar</strong><span>No modifica el existente</span></div>
+          </label>
+          <label class="radio-card" id="lbl-update">
+            <input type="radio" name="modo_dup" value="update" onchange="actualizarModo()">
+            <div><strong>Actualizar</strong><span>Sobreescribe remuneración y cuota</span></div>
+          </label>
+          <label class="radio-card" id="lbl-error">
+            <input type="radio" name="modo_dup" value="error" onchange="actualizarModo()">
+            <div><strong>Detener</strong><span>Frena ese archivo con error</span></div>
+          </label>
+        </div>
+      </div>
+      <div class="campo" style="--span:12;">
+        <label for="obs-global">Observaciones (opcional — se aplica a todos los registros)</label>
+        <input type="text" id="obs-global" maxlength="250"
+               placeholder="Ej: Importación mensual validada por administración…">
+      </div>
+    </div>
+  </div>
+
+  <div class="form-acciones">
+    <span id="import-spinner" class="estado estado-proceso" style="display:none;"><span id="spinner-texto">Procesando…</span></span>
+    {{ ui.boton('Cancelar / Nueva carpeta', 'secondary', onclick='limpiarTodo()') }}
+    {{ ui.boton('Importar todos los archivos', 'primary', icono_='subir', onclick='ejecutarImportacionLote()', id='btn-importar') }}
+  </div>
+</div>
+
+
+<!-- ── PASO 4: Progreso en tiempo real ──────────────────────────────────── -->
+<div class="card" id="card-progreso" style="display:none;">
+  <div class="card-head">
+    <div class="fila"><span class="paso-badge">4</span>
+      <span class="card-head-titulo">Progreso de importación</span></div>
+    <div class="card-head-acciones"><span id="prog-label" class="chico muted"></span></div>
+  </div>
+
+  <div class="card-body">
+    <div class="progreso"><div id="prog-bar" class="progreso-barra"></div></div>
+  </div>
+
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-progreso" data-sin-orden>
+      <thead>
+        <tr>
+          <th data-no-sort>Archivo</th>
+          <th data-no-sort>CUIT</th>
+          <th class="th-center" data-no-sort>Período</th>
+          <th class="th-right" data-no-sort>Insertados</th>
+          <th class="th-right" data-no-sort>Actualizados</th>
+          <th class="th-right" data-no-sort>Ignorados</th>
+          <th class="th-right" data-no-sort>Errores</th>
+          <th data-no-sort>Estado</th>
+        </tr>
+      </thead>
+      <tbody id="tbody-progreso"></tbody>
+    </table>
+  </div>
+</div>
+
+
+<!-- ── PASO 5: Resultado final ───────────────────────────────────────────── -->
+<div id="card-resultado" style="display:none;"></div>
+
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+/* ── Estado global ──────────────────────────────────────────────────────── */
+var _archivos = [];  // [{file, nombre, parsed, estado, error}]
+
+/* ── Selección de carpeta ────────────────────────────────────────────────── */
+function onCarpetaSeleccionada(files) {
+  limpiarEstado();
+  document.getElementById('parse-error').style.display = 'none';
+
+  var xlsFiles = Array.from(files).filter(function(f) {
+    return /\.(xlsx|xls)$/i.test(f.name) && !f.name.startsWith('~$');  // excluir temporales
+  });
+
+  if (!xlsFiles.length) {
+    mostrarErrorGlobal('No se encontraron archivos .xlsx en la carpeta seleccionada.');
+    return;
+  }
+
+  _archivos = xlsFiles.map(function(f) {
+    return { file: f, nombre: f.name, parsed: null, estado: 'parseando', error: null };
+  });
+
+  mostrarTablaArchivos();
+  parsearTodos();
+}
+
+/* ── Parsear todos en paralelo ──────────────────────────────────────────── */
+function parsearTodos() {
+  var done = 0;
+  _archivos.forEach(function(arch) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      try {
+        var data = new Uint8Array(e.target.result);
+        var wb   = XLSX.read(data, { type: 'array' });
+        var ws   = wb.Sheets[wb.SheetNames[0]];
+        var raw  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+        arch.parsed = parsearPlanilla(raw);
+        arch.estado = arch.parsed.warnings.length ? 'warn' : 'ok';
+      } catch(err) {
+        arch.estado = 'error';
+        arch.error  = err.message;
+      }
+      done++;
+      actualizarFilaArchivo(arch);
+      if (done === _archivos.length) onTodosParseados();
+    };
+    reader.readAsArrayBuffer(arch.file);
+  });
+}
+
+/* ── Parseo de una planilla ─────────────────────────────────────────────── */
+function parsearPlanilla(raw) {
+  var headerRow = String(raw[2] ? raw[2][0] : '');
+  var cuitMatch = headerRow.match(/Cuit[:\s]+(\d{11})/i);
+  var perMatch  = headerRow.match(/Per[ií]odo\s*:?\s*(\d{6})/i);
+  var empMatch  = headerRow.match(/Empresa[:\s]+(.+?)\s{3,}/i);
+
+  if (!cuitMatch) throw new Error('No se detectó CUIT en el encabezado');
+  if (!perMatch)  throw new Error('No se detectó Período en el encabezado');
+
+  var cuit    = cuitMatch[1];
+  var periodo = parseInt(perMatch[1], 10);
+  var empresa = empMatch ? empMatch[1].trim() : '—';
+  var filas   = [], warnings = [];
+  var totalR  = 0, totalC = 0;
+
+  for (var i = 4; i < raw.length; i++) {
+    var r    = raw[i];
+    var cuil = String(r[0] || '').trim().replace(/[^0-9]/g, '');
+    if (cuil.length !== 11) continue;
+
+    var remu    = parseFloat(String(r[3] || '0').replace(/[^0-9.]/g, '')) || 0;
+    var cuota   = parseFloat(String(r[4] || '0').replace(/[^0-9.]/g, '')) || 0;
+    var altaRaw = String(r[5] || '').trim().replace(/[^0-9]/g, '');
+    var bajaRaw = String(r[6] || '').trim().replace(/[^0-9]/g, '');
+    var benef   = String(r[1] || '').trim();
+    var per     = parseInt(String(r[2] || periodo).trim(), 10) || periodo;
+    var obsArr  = [];
+
+    if (remu  === 0) { obsArr.push('Remuneración cero'); warnings.push(cuil + ': remuneración cero'); }
+    if (cuota === 0) { obsArr.push('Cuota cero');        warnings.push(cuil + ': cuota cero'); }
+
+    totalR += remu;
+    totalC += cuota;
+
+    filas.push({
+      cuil:         cuil,
+      beneficiario: benef,
+      periodo:      per,
+      remuneracion: remu,
+      cuota:        cuota,
+      alta:  altaRaw.length === 6 ? altaRaw.slice(0,4)+'-'+altaRaw.slice(4,6) : (altaRaw || null),
+      baja:  bajaRaw.length === 6 ? bajaRaw.slice(0,4)+'-'+bajaRaw.slice(4,6) : (bajaRaw || null),
+      obs:   obsArr.join('; ')
+    });
+  }
+
+  if (!filas.length) throw new Error('No se encontraron filas de empleados válidas');
+
+  return { cuit, periodo, empresa, filas, warnings, totalR, totalC };
+}
+
+/* ── Tabla de archivos detectados ───────────────────────────────────────── */
+function mostrarTablaArchivos() {
+  document.getElementById('badge-total-archivos').textContent =
+    _archivos.length + ' archivo' + (_archivos.length !== 1 ? 's' : '');
+  var tbody = document.getElementById('tbody-archivos');
+  tbody.innerHTML = '';
+  _archivos.forEach(function(a, i) {
+    var tr = document.createElement('tr');
+    tr.id  = 'arch-row-' + i;
+    tr.innerHTML = buildFilaArchivo(a, i);
+    tbody.appendChild(tr);
+  });
+  document.getElementById('card-archivos').style.display = '';
+}
+
+function buildFilaArchivo(a, i) {
+  var p  = a.parsed;
+  var est = '';
+  if      (a.estado === 'parseando') est = estadoHTML('proceso', 'Leyendo…');
+  else if (a.estado === 'ok')        est = estadoHTML('ok', 'OK');
+  else if (a.estado === 'warn')      est = estadoHTML('warn', 'Con obs.', (p && p.warnings || []).join('; '));
+  else                               est = estadoHTML('danger', 'Error', a.error);
+
+  return '<td class="td-muted">' + (i+1) + '</td>' +
+    '<td class="td-mono td-recorte" title="' + escH(a.nombre) + '">' + escH(a.nombre) + '</td>' +
+    '<td>' + (p ? escH(p.empresa) + '<br><small class="mono muted">' + fmtCuit(p.cuit) + '</small>' : '—') + '</td>' +
+    '<td class="td-center">'  + (p ? fmtPeriodo(p.periodo) : '—') + '</td>' +
+    '<td class="td-right">'   + (p ? p.filas.length : '—') + '</td>' +
+    '<td class="td-right">'   + (p ? fmtMonto(p.totalR) : '—') + '</td>' +
+    '<td class="td-right">'   + (p ? fmtMonto(p.totalC) : '—') + '</td>' +
+    '<td>' + est + '</td>';
+}
+
+function actualizarFilaArchivo(arch) {
+  var idx = _archivos.indexOf(arch);
+  var tr  = document.getElementById('arch-row-' + idx);
+  if (tr) tr.innerHTML = buildFilaArchivo(arch, idx);
+}
+
+function onTodosParseados() {
+  var conError = _archivos.filter(function(a) { return a.estado === 'error'; });
+  var procesar = _archivos.filter(function(a) { return a.parsed; });
+
+  if (conError.length) {
+    var w = document.getElementById('warn-parse-global');
+    w.style.display = '';
+    w.innerHTML = '<div><strong>' + conError.length + ' archivo' + (conError.length>1?'s':'') +
+      ' no pudieron leerse</strong> y serán omitidos. Los demás (' + procesar.length + ') se importarán normalmente.</div>';
+  }
+  if (procesar.length) {
+    document.getElementById('card-opciones').style.display = '';
+    actualizarModo();
+  }
+}
+
+/* ── Importación en lote ────────────────────────────────────────────────── */
+function filaProgreso(a, celdas, estado) {
+  return '<td class="td-mono td-recorte" title="' + escH(a.nombre) + '">' + escH(a.nombre) + '</td>' +
+    '<td class="td-mono">' + fmtCuit(a.parsed.cuit) + '</td>' +
+    '<td class="td-center">' + fmtPeriodo(a.parsed.periodo) + '</td>' +
+    celdas + '<td>' + estado + '</td>';
+}
+
+function ejecutarImportacionLote() {
+  var aprocesar = _archivos.filter(function(a) { return a.parsed; });
+  if (!aprocesar.length) return;
+
+  var modoDup   = document.querySelector('input[name="modo_dup"]:checked').value;
+  var obsGlobal = document.getElementById('obs-global').value.trim();
+
+  document.getElementById('btn-importar').disabled = true;
+  document.getElementById('import-spinner').style.display = '';
+  document.getElementById('card-progreso').style.display  = '';
+  document.getElementById('card-resultado').style.display = 'none';
+  document.getElementById('card-resultado').innerHTML     = '';
+
+  // Inicializar filas de progreso
+  var vacias = '<td class="td-right td-muted">—</td><td class="td-right td-muted">—</td>' +
+               '<td class="td-right td-muted">—</td><td class="td-right td-muted">—</td>';
+  var tbody = document.getElementById('tbody-progreso');
+  tbody.innerHTML = '';
+  aprocesar.forEach(function(a, i) {
+    var tr = document.createElement('tr');
+    tr.id = 'prog-row-' + i;
+    tr.innerHTML = filaProgreso(a, vacias, estadoHTML('neutro', 'En espera'));
+    tbody.appendChild(tr);
+  });
+
+  document.getElementById('card-progreso').scrollIntoView({ behavior:'smooth', block:'start' });
+
+  var resultados = [];
+  var totIns = 0, totAct = 0, totIgn = 0, totErr = 0;
+
+  function procesarSig(idx) {
+    if (idx >= aprocesar.length) {
+      finalizarLote(resultados, totIns, totAct, totIgn, totErr);
+      return;
+    }
+
+    var arch  = aprocesar[idx];
+    var total = aprocesar.length;
+
+    document.getElementById('prog-bar').style.width = (idx / total * 100) + '%';
+    document.getElementById('prog-label').textContent = (idx+1) + ' / ' + total;
+    document.getElementById('spinner-texto').textContent = 'Importando "' + arch.nombre + '"…';
+
+    // Marcar fila como procesando
+    var tr = document.getElementById('prog-row-' + idx);
+    if (tr) tr.querySelector('td:last-child').innerHTML = estadoHTML('proceso', 'Importando…');
+
+    var payload = {
+      nombre_archivo: arch.nombre,
+      cuit:           arch.parsed.cuit,
+      empresa:        arch.parsed.empresa,
+      periodo:        arch.parsed.periodo,
+      total_filas:    arch.parsed.filas.length,
+      modo_dup:       modoDup,
+      observaciones:  obsGlobal,
+      registros:      arch.parsed.filas.map(function(f) {
+        return {
+          cuil:         f.cuil,
+          periodo:      f.periodo,
+          remuneracion: f.remuneracion,
+          cuota:        f.cuota,
+          alta:         f.alta,
+          baja:         f.baja,
+          observaciones: [f.obs, obsGlobal].filter(Boolean).join(' | ') || null
+        };
+      })
+    };
+
+    fetch(URL_IMPORTAR_POST, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      var ins = resp.insertados   || 0;
+      var act = resp.actualizados || 0;
+      var ign = resp.ignorados    || 0;
+      var err = resp.errores      || 0;
+      totIns += ins; totAct += act; totIgn += ign; totErr += err;
+
+      var estado = !resp.ok ? estadoHTML('danger', 'Error', resp.error) :
+                    err > 0 ? estadoHTML('warn', 'Parcial') :
+                              estadoHTML('ok', 'OK');
+
+      var tr = document.getElementById('prog-row-' + idx);
+      if (tr) {
+        tr.classList.toggle('fila-alerta', err > 0 || !resp.ok);
+        tr.innerHTML = filaProgreso(arch,
+          '<td class="td-right ' + (ins ? 'td-ok' : 'td-muted') + '">' + ins + '</td>' +
+          '<td class="td-right ' + (act ? 'td-fuerte' : 'td-muted') + '">' + act + '</td>' +
+          '<td class="td-right td-muted">' + ign + '</td>' +
+          '<td class="td-right ' + (err ? 'td-danger' : 'td-muted') + '">' + err + '</td>', estado);
+      }
+
+      resultados.push({ arch: arch, resp: resp });
+      procesarSig(idx + 1);
+    })
+    .catch(function(e) {
+      var tr = document.getElementById('prog-row-' + idx);
+      if (tr) tr.querySelector('td:last-child').innerHTML = estadoHTML('danger', 'Sin conexión');
+      resultados.push({ arch: arch, resp: { ok: false, error: 'Error de conexión' } });
+      procesarSig(idx + 1);
+    });
+  }
+
+  procesarSig(0);
+}
+
+/* ── Resultado final ────────────────────────────────────────────────────── */
+function finalizarLote(resultados, ins, act, ign, err) {
+  document.getElementById('btn-importar').disabled = false;
+  document.getElementById('import-spinner').style.display = 'none';
+  document.getElementById('prog-bar').style.width = '100%';
+  document.getElementById('prog-label').textContent = 'Completado';
+
+  var archOk  = resultados.filter(function(r) { return r.resp.ok && !r.resp.errores; }).length;
+  var archErr = resultados.filter(function(r) { return !r.resp.ok || r.resp.errores; });
+  var n = resultados.length;
+
+  var html =
+    '<div class="card">' +
+    '<div class="card-head"><div><span class="card-head-titulo">Lote completado — ' +
+      n + ' archivo' + (n!==1?'s':'') + ' procesado' + (n!==1?'s':'') + '</span></div>' +
+    '<div class="card-head-acciones">' +
+      (archErr.length ? estadoHTML('warn', 'Con problemas') : estadoHTML('ok', 'OK')) + '</div></div>' +
+    '<div class="card-body"><div class="fila">' +
+    mkResCard('Archivos OK',     archOk,         'ok') +
+    mkResCard('Con problemas',   archErr.length, archErr.length ? 'danger' : 'muted') +
+    mkResCard('Insertados',      ins,            'ok') +
+    mkResCard('Actualizados',    act,            'info') +
+    mkResCard('Ignorados',       ign,            'muted') +
+    mkResCard('Errores de fila', err,            err ? 'danger' : 'muted') +
+    '</div></div>';
+
+  if (archErr.length) {
+    html += '<div class="card-body"><div class="alert alert-warning"><div>' +
+      '<strong>Archivos con inconvenientes:</strong><ul>';
+    archErr.forEach(function(r) {
+      html += '<li><strong>' + escH(r.arch.nombre) + '</strong>: ' +
+        escH(r.resp.error || (r.resp.errores + ' fila(s) con error')) + '</li>';
+    });
+    html += '</ul></div></div></div>';
+  }
+
+  html +=
+    '<div class="form-acciones">' +
+    '<button type="button" class="btn btn-secondary" onclick="limpiarTodo()">Nueva importación</button>' +
+    '<a href="' + URL_LOG + '" class="btn btn-ghost">Ver historial de importaciones →</a>' +
+    '</div></div>';
+
+  var res = document.getElementById('card-resultado');
+  res.style.display = '';
+  res.innerHTML = html;
+  res.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function mkResCard(lbl, val, variante) {
+  return '<div class="res-card"><div class="res-card-lbl">' + escH(lbl) + '</div>' +
+    '<div class="res-card-val ' + variante + '">' + val + '</div></div>';
+}
+
+/* ── UI helpers ──────────────────────────────────────────────────────────── */
+function mostrarErrorGlobal(msg) {
+  var el = document.getElementById('parse-error');
+  el.innerHTML = '<div>' + escH(msg) + '</div>';
+  el.style.display = '';
+}
+
+function limpiarEstado() {
+  _archivos = [];
+  ['card-archivos','card-opciones','card-progreso','card-resultado'].forEach(function(id) {
+    document.getElementById(id).style.display = 'none';
+  });
+  document.getElementById('card-resultado').innerHTML = '';
+  document.getElementById('tbody-archivos').innerHTML = '';
+  document.getElementById('tbody-progreso').innerHTML = '';
+  document.getElementById('warn-parse-global').style.display = 'none';
+  document.getElementById('prog-bar').style.width = '0%';
+}
+
+function limpiarTodo() {
+  limpiarEstado();
+  document.getElementById('folder-input').value = '';
+  document.getElementById('obs-global').value   = '';
+  document.getElementById('parse-error').style.display = 'none';
+}
+
+// La tarjeta elegida ya se marca sola por CSS (:has(input:checked)); la clase
+// queda para navegadores que no soporten :has.
+function actualizarModo() {
+  ['skip','update','error'].forEach(function(v) {
+    var inp = document.querySelector('input[name="modo_dup"][value="' + v + '"]');
+    var lbl = document.getElementById('lbl-' + v);
+    if (inp && lbl) lbl.className = 'radio-card' + (inp.checked ? ' activo' : '');
+  });
+}
+
+/* ── Formato ─────────────────────────────────────────────────────────────── */
+// El mismo marcado que ui.estado(): píldora con texto.
+function estadoHTML(tipo, texto, titulo) {
+  return '<span class="estado estado-' + tipo + '"' + (titulo ? ' title="' + escH(titulo) + '"' : '') +
+         '>' + escH(texto) + '</span>';
+}
+function fmtCuit(c) {
+  if (!c || c.length !== 11) return c || '—';
+  return c.slice(0,2) + '-' + c.slice(2,10) + '-' + c.slice(10);
+}
+function fmtPeriodo(p) {
+  var s = String(p || '');
+  if (s.length !== 6) return s;
+  var m = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return m[parseInt(s.slice(4),10)-1] + ' ' + s.slice(0,4);
+}
+// Importes como el filtro `miles`: 1.234,56, sin signo.
+function fmtMonto(n) {
+  if (n == null) return '—';
+  return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function escH(s) {
+  return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+document.addEventListener('DOMContentLoaded', actualizarModo);
+</script>
+{% endblock %}

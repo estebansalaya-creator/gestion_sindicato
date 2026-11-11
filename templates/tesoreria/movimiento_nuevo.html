@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ op.titulo }}{% endblock %}
+
+{#
+  Movimiento entre cuentas propias (tes_mov.movimiento_nuevo): transferencia,
+  depósito o extracción. La misma plantilla, con lo propio de cada uno:
+    depósito    los valores de la cartera que se depositan (definen el importe);
+                sin valores, es un depósito de efectivo por el importe cargado.
+    extracción  los cheques propios con que sale la plata (suman el importe).
+  Las cuentas de inversión no van acá: tienen su pantalla.
+#}
+{% set es_dep = operacion == 'deposito' %}
+{% set es_ext = operacion == 'extraccion' %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ op.titulo }}</h1>
+    <p>{{ op.ayuda }}</p>
+  </div>
+  {% if puede_subdiario %}
+  <div class="page-header-acciones">{{ ui.boton('Subdiario', 'secondary', href=url_for('tes_mov.subdiario'), icono_='volver') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<form method="post" id="form-mov">
+  <div class="card">
+    {{ ui.card_head('Datos del movimiento') }}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:2;">
+          <label>Fecha <span class="req">*</span></label>
+          <input type="date" name="fecha" required max="{{ hoy.isoformat() }}" value="{{ form.get('fecha') or '' }}">
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Sale de <span class="req">*</span></label>
+          <select name="id_cuenta_sale" id="cta-sale" {{ 'required' if not es_dep }}>
+            {{ ui.opciones(cuentas_sale, form.get('id_cuenta_sale'), clave='id', texto='texto', vacio='— Elegí la cuenta —') }}
+          </select>
+          {% if es_dep %}<small class="campo-ayuda">Con valores elegidos, sale de la cartera donde están.</small>{% endif %}
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Entra a <span class="req">*</span></label>
+          <select name="id_cuenta_entra" required>
+            {{ ui.opciones(cuentas_entra, form.get('id_cuenta_entra'), clave='id', texto='texto', vacio='— Elegí la cuenta —') }}
+          </select>
+        </div>
+        <div class="campo" style="--span:2;">
+          <label>Importe <span class="req">*</span></label>
+          <input type="text" name="importe" id="importe" class="inp-importe importe" inputmode="decimal"
+                 value="{{ form.get('importe') or '' }}" {{ 'readonly' if es_ext }}>
+          {% if es_dep %}<small class="campo-ayuda" id="importe-ayuda">Efectivo; con valores, es su suma.</small>{% endif %}
+          {% if es_ext %}<small class="campo-ayuda">La suma de los cheques.</small>{% endif %}
+        </div>
+        <div class="campo" style="--span:12;">
+          <label>Comentario</label>
+          <input type="text" name="comentario" maxlength="250" value="{{ form.get('comentario') or '' }}">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {% if es_dep %}
+  <div class="card">
+    {{ ui.card_head('Valores de la cartera', nota='Tildá los que se depositan. Un cheque de pago diferido no se deposita antes de su fecha.') }}
+    {% call ui.barra_filtros('Filtrar por número o librador…', tam_pagina=9999) %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-valores" data-exportar="Valores en cartera">
+        <thead><tr><th class="col-acciones" data-no-sort>Deposita</th><th>Cartera</th><th>Tipo</th><th>Número</th>
+          <th>Banco</th><th>Librador</th><th>Vence</th><th class="th-right">Importe</th></tr></thead>
+        <tbody>
+          {% for v in valores_cartera %}
+          <tr data-vence="{{ v.fecha_vencimiento.isoformat() if v.fecha_vencimiento else '' }}">
+            <td class="td-center" data-valor="{{ 'Sí' if v.id in form.get('valores', []) else 'No' }}">
+              <input type="checkbox" name="valor" value="{{ v.id }}" class="chk-valor" data-importe="{{ v.importe }}"
+                     aria-label="Depositar {{ v.nro_cheque }}" {{ 'checked' if v.id in form.get('valores', []) }}></td>
+            <td>{{ v.cuenta }}</td>
+            <td>{{ v.tipo_valor | capitalize }}</td>
+            <td class="td-mono">{{ v.nro_cheque }}</td>
+            <td class="td-muted">{{ v.banco or '—' }}</td>
+            <td class="td-wrap">{{ v.razon_social_librador or '—' }}</td>
+            <td>{{ v.fecha_vencimiento.strftime('%d/%m/%Y') if v.fecha_vencimiento else '—' }}</td>
+            <td class="td-right" data-num="{{ v.importe }}">{{ (v.importe or 0) | miles }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="8" class="no-data">No hay valores en cartera: el depósito es de efectivo.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+  {% endif %}
+
+  {% if es_ext %}
+  <div class="card">
+    {% call ui.card_head('Cheques', nota='Uno por renglón. El número sale de la chequera; el banco los informa de a uno.') %}
+      {{ ui.boton('Agregar cheque', 'secondary', chico=True, icono_='agregar', onclick='agregarCheque()') }}
+    {% endcall %}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:5;">
+          <label>Chequera <span class="req">*</span></label>
+          <select name="id_chequera" id="chequera" required>
+            <option value="">— Elegí primero la cuenta de origen —</option>
+            {% for q in chequeras %}
+            <option value="{{ q.id }}" data-cuenta="{{ q.id_cuenta }}" data-proximo="{{ q.proximo_numero }}"
+                    data-hasta="{{ q.numero_hasta }}" {{ 'selected' if form.get('id_chequera')|string == q.id|string }}>
+              {{ q.descripcion or 'Chequera' }} · {{ q.numero_desde }}–{{ q.numero_hasta }} · próximo {{ q.proximo_numero }}</option>
+            {% endfor %}
+          </select>
+          <small class="campo-ayuda" id="chequera-ayuda"></small>
+        </div>
+        <div class="campo" style="--span:7;">
+          <label>A la orden de</label>
+          <input type="text" name="a_la_orden" maxlength="100" value="{{ form.get('a_la_orden') or '' }}">
+        </div>
+      </div>
+    </div>
+    <div class="data-table-wrap" data-sin-scroll-arriba>
+      <table class="data-table compacta" data-sin-orden>
+        <thead><tr><th class="col-acciones"></th><th>Número</th><th class="th-right">Importe</th></tr></thead>
+        <tbody id="cheques">
+          {% for n, im in (form.get('cheques') or [('', '')]) %}
+          <tr><td>{{ ui.accion('borrar', onclick='quitarCheque(this)', titulo='Quitar el cheque') }}</td>
+            <td><input type="text" name="cheque_numero" class="inp-celda mono" inputmode="numeric" value="{{ n }}"></td>
+            <td class="td-right"><input type="text" name="cheque_importe" class="inp-importe importe ch-importe" inputmode="decimal" value="{{ im }}"></td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="card resumen">
+    {{ ui.card_head('El movimiento') }}
+    <div class="card-body">
+      <div class="resumen-fila resumen-total"><span>Importe</span><strong id="r-total">$ 0,00</strong></div>
+      {% if es_dep %}<div class="resumen-fila"><span>Valores</span><strong id="r-valores">0</strong></div>{% endif %}
+      {% if es_ext %}<div class="resumen-fila"><span>Cheques</span><strong id="r-cheques">0</strong></div>{% endif %}
+      <div class="resumen-botones">{{ ui.boton('Registrar', submit=True, icono_='guardar') }}</div>
+    </div>
+  </div>
+</form>
+
+<script>
+function aNumero(t) { var s = (t || '').trim(); if (!s) return 0; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); return parseFloat(s) || 0; }
+function pesos(n) { return '$ ' + n.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+var imp = document.getElementById('importe');
+function total() {
+  var t = aNumero(imp.value);
+  {% if es_dep %}
+  var chk = document.querySelectorAll('.chk-valor:checked'), s = 0;
+  chk.forEach(function (c) { s += parseFloat(c.dataset.importe) || 0; });
+  document.getElementById('r-valores').textContent = chk.length;
+  imp.readOnly = chk.length > 0;
+  document.getElementById('cta-sale').disabled = chk.length > 0;
+  if (chk.length) { t = s; imp.value = s.toLocaleString('es-AR', {minimumFractionDigits: 2}); }
+  {% endif %}
+  {% if es_ext %}
+  var s2 = 0, n = 0;
+  document.querySelectorAll('.ch-importe').forEach(function (i) { var v = aNumero(i.value); if (v > 0) { s2 += v; n++; } });
+  t = s2; imp.value = s2 ? s2.toLocaleString('es-AR', {minimumFractionDigits: 2}) : '';
+  document.getElementById('r-cheques').textContent = n;
+  {% endif %}
+  document.getElementById('r-total').textContent = pesos(t);
+}
+imp.addEventListener('input', total);
+{% if es_dep %}
+document.querySelectorAll('.chk-valor').forEach(function (c) {
+  c.addEventListener('change', function () { c.closest('td').dataset.valor = c.checked ? 'Sí' : 'No'; total(); });
+});
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-valores', { pageSize: 9999 }); });
+{% endif %}
+{% if es_ext %}
+var sale = document.getElementById('cta-sale'), cheq = document.getElementById('chequera');
+function verChequeras() {
+  var hay = 0;
+  Array.from(cheq.options).forEach(function (o) {
+    if (!o.value) return;
+    o.hidden = o.dataset.cuenta !== sale.value;
+    if (!o.hidden) hay++;
+    if (o.hidden && o.selected) cheq.value = '';
+  });
+  cheq.options[0].textContent = !sale.value ? '— Elegí primero la cuenta de origen —'
+    : hay ? '— Elegí la chequera —' : '— La cuenta no tiene chequeras habilitadas —';
+  numerar();
+}
+function numerar() {
+  var o = cheq.selectedOptions[0], ayuda = document.getElementById('chequera-ayuda');
+  if (!o || !o.value) { ayuda.textContent = ''; return; }
+  ayuda.textContent = 'Quedan ' + (parseInt(o.dataset.hasta) - parseInt(o.dataset.proximo) + 1) + ' cheques.';
+  var p = parseInt(o.dataset.proximo);
+  document.querySelectorAll('#cheques input[name=cheque_numero]').forEach(function (i) {
+    if (!i.value) i.value = p;
+    p = Math.max(p, parseInt(i.value) || p) + 1;
+  });
+}
+function agregarCheque() {
+  var tb = document.getElementById('cheques'), fila = tb.rows[0].cloneNode(true);
+  fila.querySelectorAll('input').forEach(function (i) { i.value = ''; });
+  tb.appendChild(fila);
+  var ii = fila.querySelector('.ch-importe');
+  ii.addEventListener('input', function () { fmtMiles(this); total(); });
+  numerar();
+}
+function quitarCheque(b) {
+  var tb = document.getElementById('cheques');
+  if (tb.rows.length > 1) b.closest('tr').remove(); else b.closest('tr').querySelectorAll('input').forEach(function (i) { i.value = ''; });
+  total();
+}
+sale.addEventListener('change', verChequeras);
+cheq.addEventListener('change', numerar);
+document.querySelectorAll('.ch-importe').forEach(function (i) { i.addEventListener('input', total); });
+verChequeras();
+{% endif %}
+total();
+</script>
+{% endblock %}

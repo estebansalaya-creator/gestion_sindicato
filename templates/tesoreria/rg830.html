@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Escala RG 830{% endblock %}
+
+{#
+  Escala RG 830 (rg830.escalas): los regímenes de retención de Ganancias.
+  Una escala ya usada para retener queda fija en sus valores: para cambiarlos,
+  «Nueva vigencia» (copia y cierra la anterior). El simulador calcula con lo
+  que está en el formulario, antes de guardar, con la misma fórmula que el
+  pago (retenciones.retencion_ganancias): importe fijo del tramo + (sujeto −
+  excedente) × alícuota, sobre la base menos el mínimo no sujeto.
+#}
+{% set f = form or {} %}
+{% set fija = f.get('usada') %}
+
+{% macro pct(v) -%}{{ ('%.2f' | format(v)) | replace('.', ',') if v is not none else '' }}{%- endmacro %}
+{% macro imp(v) -%}{{ (v | miles) if v is not none else '' }}{%- endmacro %}
+{% macro estado(e) -%}
+  {%- if e.estado == 'vigente' %}{{ ui.estado('Vigente', 'ok') }}{% elif e.estado == 'futura' %}{{ ui.estado('Futura', 'info') }}
+  {%- elif e.estado == 'vencida' %}{{ ui.estado('Vencida', 'neutro') }}{% else %}{{ ui.estado('Inactiva', 'danger') }}{% endif -%}
+{%- endmacro %}
+
+{% macro tramo(t) -%}
+<tr>
+  <td>{{ ui.accion('borrar', onclick='quitarTramo(this)', titulo='Quitar el tramo', deshabilitado=fija) }}</td>
+  <td class="td-right"><input type="text" name="t_desde" class="inp-importe importe t-desde" inputmode="decimal" value="{{ imp(t.tramo_desde) if t else '' }}" {{ 'readonly' if fija }}></td>
+  <td class="td-right"><input type="text" name="t_hasta" class="inp-importe importe t-hasta" inputmode="decimal" value="{{ imp(t.tramo_hasta) if t else '' }}" placeholder="sin tope" {{ 'readonly' if fija }}></td>
+  <td class="td-right"><input type="text" name="t_fijo" class="inp-importe importe t-fijo" inputmode="decimal" value="{{ imp(t.importe_fijo) if t else '' }}" {{ 'readonly' if fija }}></td>
+  <td class="td-right"><input type="text" name="t_alicuota" class="inp-importe importe t-alic" inputmode="decimal" value="{{ pct(t.alicuota) if t else '' }}" {{ 'readonly' if fija }}></td>
+  <td class="td-right"><input type="text" name="t_exc" class="inp-importe importe t-exc" inputmode="decimal" value="{{ imp(t.excedente_sobre) if t else '' }}" placeholder="= desde" {{ 'readonly' if fija }}></td>
+</tr>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Escala RG 830</h1>
+    <p>Los regímenes de retención de Ganancias: cómo se calcula cada uno y desde cuándo. Los usan la ficha del proveedor y el pago.</p>
+  </div>
+  {% if form %}
+  <div class="page-header-acciones">{{ ui.boton('Nueva escala', href=url_for('rg830.escalas', nuevo=1), icono_='agregar') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+{% for a in avisos %}{{ ui.aviso(a, 'warning') }}{% endfor %}
+
+{% set inicial = 'datos' if form else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', escalas|length), ('datos', ('Nueva vigencia' if f.get('clonada_de') else 'Editar' if f.get('id') else 'Nueva'), None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por código, descripción o resolución…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="vigente" selected>Vigentes</option><option value="futura">Futuras</option>
+        <option value="vencida">Vencidas</option><option value="inactiva">Inactivas</option><option value="">Todas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Cálculo') %}<select class="filtro" id="f-tipo">
+        <option value="">Fija y escala</option><option value="fija">Alícuota fija</option><option value="escala">Escala</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-rg830" data-exportar="Escala RG 830">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th><th>Código</th><th>Descripción</th><th>Cálculo</th>
+          <th class="th-right">Mínimo no sujeto</th><th class="th-right">Ret. mínima</th><th class="th-right">No inscripto</th>
+          <th>Resolución</th><th>Desde</th><th>Hasta</th><th class="th-right">Proveedores</th><th class="th-right">Retenciones</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for e in escalas %}
+          <tr class="{{ 'fila-baja' if e.estado in ('inactiva', 'vencida') }}" data-estado="{{ e.estado }}" data-tipo="{{ e.tipo_calculo }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('rg830.escalas', edit=e.id), titulo='Ver / editar' ~ (' (usada: solo descripción, resolución y fin de vigencia)' if e.usada else '')) }}
+              {{ ui.accion('agregar', href=url_for('rg830.escalas', clonar=e.id), titulo='Nueva vigencia: copia esta escala y cierra esta el día antes') }}
+              {% if e.activa and not e.unica %}
+                {{ ui.accion('baja', titulo='Desactivar', onclick='enviar(this)', datos={'id': e.id, 'accion': 'desactivar'}) }}
+              {% elif not e.activa %}
+                {{ ui.accion('reactivar', titulo='Activar', onclick='enviar(this)', datos={'id': e.id, 'accion': 'activar'}) }}
+              {% endif %}
+              {% if not e.usada and not e.unica %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': e.id, 'nombre': e.codigo ~ ' · ' ~ e.descripcion}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-mono td-fuerte">{{ e.codigo }}</td>
+            <td class="td-wrap">{{ e.descripcion }}</td>
+            <td data-valor="{{ 'Escala' if e.tipo_calculo == 'escala' else 'Fija ' ~ pct(e.alicuota_fija) ~ '%' }}">
+              {% if e.tipo_calculo == 'escala' %}Escala · {{ e.tramos }} tramos{% if not e.tramos %} {{ ui.estado('sin tramos', 'danger') }}{% endif %}
+              {% else %}Fija {{ pct(e.alicuota_fija) }}%{% endif %}</td>
+            <td class="td-right" data-num="{{ e.monto_no_sujeto_inscripto }}">{{ imp(e.monto_no_sujeto_inscripto) }}</td>
+            <td class="td-right" data-num="{{ e.retencion_minima_inscripto }}">{{ imp(e.retencion_minima_inscripto) }}</td>
+            <td class="td-right td-muted" data-num="{{ e.alicuota_no_inscripto }}">{{ pct(e.alicuota_no_inscripto) }}%</td>
+            <td class="td-muted">{{ e.resolucion or '—' }}</td>
+            <td>{{ e.vigencia_desde.strftime('%d/%m/%Y') }}</td>
+            <td>{{ e.vigencia_hasta.strftime('%d/%m/%Y') if e.vigencia_hasta else '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not e.proveedores }}" data-num="{{ e.proveedores }}">{{ e.proveedores }}</td>
+            <td class="td-right {{ 'td-muted' if not e.retenciones }}" data-num="{{ e.retenciones }}">{{ e.retenciones }}</td>
+            <td>{{ estado(e) }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="13" class="no-data">Todavía no hay escalas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+{% if form %}
+  {% if f.get('clonada_de') %}
+    {{ ui.aviso('Nueva vigencia del ' ~ f.clonada_de.codigo ~ ': copia de la que rige desde el ' ~ f.clonada_de.vigencia_desde.strftime('%d/%m/%Y') ~ '. Al guardar, aquella se cierra el día antes de esta.', 'info') }}
+  {% elif fija %}
+    {{ ui.aviso('Esta escala ya se usó en ' ~ f.retenciones ~ ' retención(es): sus valores quedan como están. Se editan la descripción, la resolución, las observaciones y el fin de la vigencia. Para cambiar valores, «Nueva vigencia».', 'warning') }}
+  {% endif %}
+  <form method="post" action="{{ url_for('rg830.escalas') }}" id="form-escala">
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="id" value="{{ f.get('id') or '' }}">
+    <div class="card">
+      {% call ui.card_head('Régimen') %}
+        {% if f.get('id') %}{{ ui.boton('Nueva vigencia', 'secondary', href=url_for('rg830.escalas', clonar=f.id), chico=True, icono_='agregar') }}{% endif %}
+        {{ ui.boton('Cancelar', 'secondary', href=url_for('rg830.escalas'), chico=True) }}
+      {% endcall %}
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label>Código <span class="req">*</span></label>
+            <input type="text" name="codigo_regimen" class="mono" maxlength="3" inputmode="numeric" required value="{{ f.get('codigo_txt') or '' }}" {{ 'readonly' if fija }}>
+          </div>
+          <div class="campo" style="--span:7;">
+            <label>Descripción <span class="req">*</span></label>
+            <input type="text" name="descripcion" maxlength="200" required value="{{ f.get('descripcion') or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Resolución</label>
+            <input type="text" name="resolucion" maxlength="50" value="{{ f.get('resolucion') or '' }}" placeholder="RG 4525/2019">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Vigente desde <span class="req">*</span></label>
+            <input type="date" name="vigencia_desde" required value="{{ f.vigencia_desde.isoformat() if f.get('vigencia_desde') else '' }}" {{ 'readonly' if fija }}>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Hasta</label>
+            <input type="date" name="vigencia_hasta" value="{{ f.vigencia_hasta.isoformat() if f.get('vigencia_hasta') else '' }}">
+            <small class="campo-ayuda">{% if f.get('ultima_retencion') %}No antes del {{ f.ultima_retencion.strftime('%d/%m/%Y') }} (última retención).{% else %}Vacío: sin fin.{% endif %}</small>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check"><input type="checkbox" name="activa" value="1" {{ 'checked' if f.get('activa') }} {{ 'disabled' if fija }}> Activa</label>
+            {% if fija and f.get('activa') %}<input type="hidden" name="activa" value="1">{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="bloque"><fieldset class="grupo-campos {{ 'solo-lectura' if fija }}" {{ 'disabled' if fija }}>
+        <div class="bloque-titulo">Cálculo para inscriptos</div>
+        <div class="campos">
+          <div class="campo" style="--span:3;">
+            <label>Forma de cálculo <span class="req">*</span></label>
+            <select name="tipo_calculo" id="tipo-calculo">
+              <option value="fija" {{ 'selected' if f.get('tipo_calculo') == 'fija' }}>Alícuota fija</option>
+              <option value="escala" {{ 'selected' if f.get('tipo_calculo') == 'escala' }}>Escala progresiva (tramos)</option>
+            </select>
+          </div>
+          <div class="campo solo-fija" style="--span:2;">
+            <label>Alícuota fija % <span class="req">*</span></label>
+            <input type="text" name="alicuota_fija" id="alic-fija" class="inp-importe importe" inputmode="decimal" value="{{ pct(f.get('alicuota_fija')) }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Mínimo no sujeto (por mes) <span class="req">*</span></label>
+            <input type="text" name="monto_no_sujeto_inscripto" id="minimo" class="inp-importe importe" inputmode="decimal" value="{{ imp(f.get('monto_no_sujeto_inscripto')) }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Retención mínima</label>
+            <input type="text" name="retencion_minima_inscripto" id="ret-minima" class="inp-importe importe" inputmode="decimal" value="{{ imp(f.get('retencion_minima_inscripto')) }}">
+          </div>
+        </div>
+        <div class="bloque-titulo separado">No inscriptos en Ganancias</div>
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label>Alícuota % <span class="req">*</span></label>
+            <input type="text" name="alicuota_no_inscripto" class="inp-importe importe" inputmode="decimal" value="{{ pct(f.get('alicuota_no_inscripto')) }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label>Mínimo no sujeto</label>
+            <input type="text" name="monto_no_sujeto_no_inscripto" class="inp-importe importe" inputmode="decimal" value="{{ imp(f.get('monto_no_sujeto_no_inscripto')) }}">
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Retención mínima</label>
+            <input type="text" name="retencion_minima_no_inscripto" class="inp-importe importe" inputmode="decimal" value="{{ imp(f.get('retencion_minima_no_inscripto')) }}">
+          </div>
+        </div>
+      </fieldset></div>
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:12;">
+            <label>Observaciones</label>
+            <textarea name="observaciones" rows="2" maxlength="500">{{ f.get('observaciones') or '' }}</textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card solo-escala">
+      {% call ui.card_head('Tramos', nota='Sobre lo sujeto a retención (la base del mes menos el mínimo no sujeto). El primero desde 0; el último sin tope.') %}
+        {% if not fija %}{{ ui.boton('Agregar tramo', 'secondary', chico=True, icono_='agregar', onclick='agregarTramo()') }}{% endif %}
+      {% endcall %}
+      <div class="data-table-wrap" data-sin-scroll-arriba>
+        <table class="data-table compacta" data-sin-orden>
+          <thead><tr><th class="col-acciones"></th><th class="th-right">Desde</th><th class="th-right">Hasta</th>
+            <th class="th-right">Importe fijo</th><th class="th-right">Alícuota %</th><th class="th-right">Sobre el excedente de</th></tr></thead>
+          <tbody id="tramos">{% for t in (tramos or [none]) %}{{ tramo(t) }}{% endfor %}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card resumen">
+      {{ ui.card_head('Simulador', nota='Con lo que está cargado arriba, sin guardar.') }}
+      <div class="card-body">
+        <div class="campo">
+          <label for="sim-base">Pagado en el mes, neto de IVA</label>
+          <input type="text" id="sim-base" class="inp-importe importe" inputmode="decimal" value="500.000,00">
+        </div>
+        <div class="resumen-fila"><span>Sujeto a retención</span><strong id="sim-sujeto">—</strong></div>
+        <div class="resumen-fila"><span>Alícuota efectiva</span><strong id="sim-alic">—</strong></div>
+        <div class="resumen-fila resumen-total"><span>Retención</span><strong id="sim-ret">—</strong></div>
+        <div id="sim-nota" class="campo-ayuda"></div>
+        <div class="resumen-botones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+      </div>
+    </div>
+  </form>
+  <template id="tpl-tramo">{{ tramo(none) }}</template>
+{% endif %}
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la escala?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('rg830.escalas') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('rg830.escalas') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function aNumero(t) { var s = (t || '').trim(); if (!s) return NaN; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); return parseFloat(s); }
+function pesos(n) { return '$ ' + n.toLocaleString('es-AR', {minimumFractionDigits: 2, maximumFractionDigits: 2}); }
+var tipo = document.getElementById('tipo-calculo');
+function verTipo() {
+  if (!tipo) return;
+  var esc = tipo.value === 'escala';
+  document.querySelectorAll('.solo-escala').forEach(function (x) { x.classList.toggle('oculto', !esc); });
+  document.querySelectorAll('.solo-fija').forEach(function (x) { x.classList.toggle('oculto', esc); });
+  simular();
+}
+function preparar(fila) {
+  fila.querySelectorAll('input').forEach(function (i) {
+    i.addEventListener('input', function () { fmtMiles(this); simular(); });
+    i.addEventListener('blur', function () { fmtMilesBlur(this); });
+  });
+}
+function agregarTramo() {
+  var tb = document.getElementById('tramos'), fila = document.getElementById('tpl-tramo').content.firstElementChild.cloneNode(true);
+  // El nuevo arranca donde termina el último.
+  var ult = tb.rows[tb.rows.length - 1];
+  if (ult) fila.querySelector('.t-desde').value = ult.querySelector('.t-hasta').value;
+  tb.appendChild(fila); preparar(fila); simular();
+}
+function quitarTramo(b) {
+  var tb = document.getElementById('tramos');
+  if (tb.rows.length > 1) b.closest('tr').remove(); else b.closest('tr').querySelectorAll('input').forEach(function (i) { i.value = ''; });
+  simular();
+}
+/* La misma cuenta que retenciones.retencion_ganancias. */
+function simular() {
+  var out = document.getElementById('sim-ret');
+  if (!out) return;
+  var base = aNumero(document.getElementById('sim-base').value) || 0,
+      minimo = aNumero(document.getElementById('minimo').value) || 0,
+      sujeto = Math.max(base - minimo, 0), ret = 0, nota = '';
+  if (tipo.value === 'fija') {
+    var a = aNumero(document.getElementById('alic-fija').value) || 0;
+    ret = sujeto * a / 100;
+  } else {
+    var hallado = false;
+    document.querySelectorAll('#tramos tr').forEach(function (tr) {
+      if (hallado) return;
+      var d = aNumero(tr.querySelector('.t-desde').value), h = aNumero(tr.querySelector('.t-hasta').value),
+          fj = aNumero(tr.querySelector('.t-fijo').value) || 0, al = aNumero(tr.querySelector('.t-alic').value) || 0,
+          ex = aNumero(tr.querySelector('.t-exc').value);
+      if (isNaN(d)) return;
+      if (isNaN(ex)) ex = d;
+      if (sujeto > d && (isNaN(h) || sujeto <= h)) { ret = fj + (sujeto - ex) * al / 100; hallado = true; }
+    });
+    if (sujeto > 0 && !hallado) nota = 'Ningún tramo cubre ese importe: retendría 0.';
+  }
+  ret = Math.round(ret * 100) / 100;
+  var rmin = aNumero(document.getElementById('ret-minima').value) || 0;
+  if (ret > 0 && ret < rmin) nota = 'Menor que la retención mínima (' + pesos(rmin) + '): no se retiene.';
+  document.getElementById('sim-sujeto').textContent = pesos(sujeto);
+  document.getElementById('sim-alic').textContent = sujeto ? (ret * 100 / sujeto).toLocaleString('es-AR', {maximumFractionDigits: 2}) + '%' : '—';
+  out.textContent = pesos(ret);
+  document.getElementById('sim-nota').textContent = nota;
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), ft = document.getElementById('f-tipo');
+  gestion_admTable('tbl-rg830', {
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.estado !== fe.value) return false;
+      if (ft.value && tr.dataset.tipo !== ft.value) return false;
+      return true;
+    }
+  });
+  if (tipo) {
+    document.querySelectorAll('#tramos tr').forEach(preparar);
+    ['sim-base', 'minimo', 'alic-fija', 'ret-minima'].forEach(function (id) {
+      var x = document.getElementById(id); if (x) x.addEventListener('input', simular);
+    });
+    tipo.addEventListener('change', verTipo);
+    verTipo();
+  }
+});
+</script>
+{% endblock %}

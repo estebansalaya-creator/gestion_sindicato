@@ -1,0 +1,193 @@
+{# ══════════════════════════════════════════════════════════════════════════
+   Contactos de un tercero — el mismo bloque para afiliados, empresas y
+   proveedores.
+
+   Se incluye así:
+
+       {% with entidad_tipo='afiliado', entidad_id=afiliado.id_afiliado,
+               contactos=contactos, areas_contacto=areas_contacto %}
+         {% include '_contactos.html' %}
+       {% endwith %}
+
+   POR QUE UN PARCIAL Y NO TRES COPIAS
+   -----------------------------------
+   De estos contactos sale el destinatario de los mails. Con tres formularios
+   distintos, el mismo dato se guardaría de tres maneras y el aviso le llegaría
+   a quien no es según desde qué pantalla se hubiera cargado.
+
+   El área NO es texto libre: sale de `c_areas_contacto`. Es lo que hace que un
+   tipo de aviso pueda decir «esto va a Administración» y encuentre a alguien.
+
+   Con `solo_lectura=True` (la consulta del padrón) se dibuja la grilla sin
+   botones ni formulario.
+
+   El formulario incluye el celular aunque la grilla muestre una sola columna
+   de teléfono: sin el campo, editar un contacto mandaba el celular vacío y lo
+   borraba sin que nadie lo hubiera tocado.
+   ══════════════════════════════════════════════════════════════════════════ #}
+{% import "_ui.html" as ui %}
+
+{% set _accion = url_for('contactos.guardar', entidad_tipo=entidad_tipo, entidad_id=entidad_id) %}
+
+<div class="data-table-wrap">
+<table class="data-table compacta" data-exportar="Contactos">
+  <thead><tr>
+    {% if not solo_lectura %}<th class="col-acciones" data-no-sort>Acciones</th>{% endif %}
+    <th>Nombre</th>
+    <th>Cargo</th>
+    <th>Área</th>
+    <th>Teléfono</th>
+    <th>Celular</th>
+    <th>Email</th>
+    <th class="th-center">Principal</th>
+  </tr></thead>
+  <tbody>
+    {% for c in contactos %}
+    <tr>
+      {% if not solo_lectura %}
+      <td>
+        <div class="acciones">
+          {# Editar carga la fila en el formulario de abajo, con `data-*`: las
+             comillas de un nombre como O'Brien rompen un objeto serializado
+             dentro del onclick. #}
+          {{ ui.accion('editar', onclick='editarContacto(this)', datos={
+               'id': c.id, 'nombre': c.nombre, 'cargo': c.cargo, 'area': c.id_area_contacto,
+               'telefono': c.telefono, 'celular': c.celular, 'email': c.email,
+               'principal': 1 if c.principal else 0}) }}
+          <form method="post" action="{{ _accion }}" class="form-en-linea"
+                data-nombre="{{ c.nombre }}"
+                onsubmit="return confirm('¿Eliminar el contacto ' + this.dataset.nombre + '?');">
+            <input type="hidden" name="accion" value="borrar">
+            <input type="hidden" name="id" value="{{ c.id }}">
+            <input type="hidden" name="volver" value="{{ request.full_path }}">
+            {{ ui.accion('borrar', submit=True) }}
+          </form>
+        </div>
+      </td>
+      {% endif %}
+      <td class="td-fuerte">{{ c.nombre }}</td>
+      <td class="td-muted">{{ c.cargo or '—' }}</td>
+      <td>{{ c.area or '—' }}</td>
+      <td>{{ c.telefono or '—' }}</td>
+      <td>{{ c.celular or '—' }}</td>
+      <td class="td-mono">{% if c.email %}{{ c.email }}{% else %}<span class="muted">sin mail</span>{% endif %}</td>
+      <td class="td-center">{{ ui.si_no(c.principal) }}</td>
+    </tr>
+    {% else %}
+    <tr class="no-data-row"><td colspan="{{ 7 if solo_lectura else 8 }}" class="no-data">
+      Sin contactos registrados. Sin un mail acá, a este destinatario no se le
+      puede enviar nada.
+    </td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if not solo_lectura %}
+<form method="post" action="{{ _accion }}" id="form-contacto">
+  <input type="hidden" name="accion" value="nuevo" id="cto-accion">
+  <input type="hidden" name="id" value="" id="cto-id">
+  <input type="hidden" name="volver" value="{{ request.full_path }}">
+
+  <div class="bloque">
+    <div class="bloque-titulo" id="cto-titulo">Agregar contacto</div>
+    <div class="campos">
+      <div class="campo" style="--span:3;">
+        <label for="cto-nombre">Nombre <span class="req">*</span></label>
+        <input type="text" name="nombre" id="cto-nombre" required maxlength="150">
+      </div>
+      <div class="campo" style="--span:2;">
+        <label for="cto-cargo">Cargo</label>
+        <input type="text" name="cargo" id="cto-cargo" maxlength="100">
+      </div>
+      <div class="campo" style="--span:3;">
+        <label for="cto-area">Área</label>
+        <div class="fila" style="flex-wrap:nowrap;gap:4px;">
+          <select name="id_area_contacto" id="cto-area">
+            <option value="">— Sin área —</option>
+            {% for a in areas_contacto %}
+            <option value="{{ a.id }}" title="{{ a.descripcion or '' }}">{{ a.nombre }}</option>
+            {% endfor %}
+          </select>
+          {# Crear un área sin salir de la carga: mandar a la persona a otra
+             pantalla termina en que elige cualquiera con tal de seguir. #}
+          {{ ui.accion('agregar', onclick='nuevaAreaContacto()', titulo='Agregar un área nueva') }}
+        </div>
+      </div>
+      <div class="campo" style="--span:2;">
+        <label for="cto-telefono">Teléfono</label>
+        <input type="text" name="telefono" id="cto-telefono" maxlength="50">
+      </div>
+      <div class="campo" style="--span:2;">
+        <label for="cto-celular">Celular</label>
+        <input type="text" name="celular" id="cto-celular" maxlength="50">
+      </div>
+      <div class="campo" style="--span:4;">
+        <label for="cto-email">Email</label>
+        <input type="email" name="email" id="cto-email" maxlength="150">
+      </div>
+      <div class="campo" style="--span:3;">
+        <label class="campo-check"><input type="checkbox" name="principal" value="1" id="cto-principal"> Contacto principal</label>
+      </div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    <span id="cto-cancelar" class="oculto">{{ ui.boton('Cancelar', 'secondary', onclick='cancelarContacto()') }}</span>
+    <span id="cto-submit-nuevo">{{ ui.boton('Agregar contacto', icono_='agregar', submit=True) }}</span>
+    <span id="cto-submit-editar" class="oculto">{{ ui.boton('Guardar contacto', icono_='guardar', submit=True) }}</span>
+  </div>
+</form>
+
+<script>
+function editarContacto(b) {
+  var d = b.dataset;
+  document.getElementById('cto-accion').value   = 'editar';
+  document.getElementById('cto-id').value       = d.id;
+  document.getElementById('cto-nombre').value   = d.nombre;
+  document.getElementById('cto-cargo').value    = d.cargo;
+  document.getElementById('cto-area').value     = d.area;
+  document.getElementById('cto-telefono').value = d.telefono;
+  document.getElementById('cto-celular').value  = d.celular;
+  document.getElementById('cto-email').value    = d.email;
+  document.getElementById('cto-principal').checked = d.principal === '1';
+  document.getElementById('cto-titulo').textContent = 'Editar contacto';
+  ['cto-cancelar', 'cto-submit-editar'].forEach(function (id) {
+    document.getElementById(id).classList.remove('oculto');
+  });
+  document.getElementById('cto-submit-nuevo').classList.add('oculto');
+  document.getElementById('cto-nombre').focus();
+}
+
+function cancelarContacto() {
+  document.getElementById('form-contacto').reset();
+  document.getElementById('cto-accion').value = 'nuevo';
+  document.getElementById('cto-id').value     = '';
+  document.getElementById('cto-titulo').textContent = 'Agregar contacto';
+  ['cto-cancelar', 'cto-submit-editar'].forEach(function (id) {
+    document.getElementById(id).classList.add('oculto');
+  });
+  document.getElementById('cto-submit-nuevo').classList.remove('oculto');
+}
+
+function nuevaAreaContacto() {
+  var nombre = prompt('Nombre del área nueva:');
+  if (!nombre) return;
+  var datos = new FormData();
+  datos.append('nombre', nombre);
+  fetch('{{ url_for("contactos.abm_areas") }}', {method: 'POST', body: datos})
+    .then(function (r) { return r.json(); })
+    .then(function (a) {
+      if (a.error) { alert(a.error); return; }
+      var sel = document.getElementById('cto-area');
+      // Puede existir ya y estar sólo desactivada: no se duplica la opción.
+      if (!sel.querySelector('option[value="' + a.id + '"]')) {
+        var op = document.createElement('option');
+        op.value = a.id; op.textContent = a.nombre;
+        sel.appendChild(op);
+      }
+      sel.value = a.id;
+    })
+    .catch(function (e) { alert('No se pudo crear el área: ' + e); });
+}
+</script>
+{% endif %}

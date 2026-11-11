@@ -1,0 +1,81 @@
+{#
+  Diálogo para desaplicar una nota de crédito o un pago de la factura a la que
+  estaba aplicado. Lo usan Aplicación de comprobantes y el estado de cuenta por
+  aplicación: el formulario y lo que explica tienen que ser los mismos en las
+  dos. Va una vez por página, fuera de cualquier otro form, con `proveedor` en
+  el contexto. Cada fila lo abre con
+    ui.accion('baja', titulo='Desaplicar', onclick='desaplicar(this)', datos={
+        'url': url_for('cc_prov.deshacer', id_aplic=…), 'importe': lo aplicado,
+        'credito': …, 'debito': …, 'pago': '1' si es un pago, 'origen': …})
+  Vuelve a la misma pantalla con sus filtros (viaja request.full_path). El
+  motivo es obligatorio: queda en c_pasivo_aplicacion_baja y es lo único que
+  dentro de unos meses explica por qué la factura volvió a tener saldo.
+#}
+<div class="modal" id="modal-desaplicar">
+  <form method="post" id="form-desaplicar" class="modal-caja ancha" novalidate>
+    <input type="hidden" name="id_proveedor" value="{{ proveedor.id }}">
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <div class="modal-titulo">Desaplicar <span id="md-sujeto"></span></div>
+    <div class="modal-texto" id="md-cuerpo"></div>
+    <div class="modal-texto" id="md-nota"></div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="md-importe">Importe a desaplicar <span class="req">*</span></label>
+        <input type="text" name="importe" id="md-importe" class="inp-importe" inputmode="decimal" autocomplete="off">
+        <small class="campo-ayuda" id="md-tope"></small>
+      </div>
+      <div class="campo" style="--span:8;">
+        <label for="md-motivo">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="md-motivo" maxlength="255" autocomplete="off"
+               placeholder="Ej.: estaba aplicada a otra factura">
+      </div>
+    </div>
+    <div class="alert alert-danger oculto" id="md-error" role="alert"></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-desaplicar')") }}
+      {{ ui.boton('Desaplicar', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+<script>
+(function () {
+  var form = document.getElementById('form-desaplicar');
+  var inp = document.getElementById('md-importe');
+  var mot = document.getElementById('md-motivo');
+  var err = document.getElementById('md-error');
+  var tope = 0;
+  function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function error(txt) { err.textContent = txt; err.classList.toggle('oculto', !txt); }
+  window.desaplicar = function (btn) {
+    var d = btn.dataset, esPago = d.pago === '1';
+    tope = parseFloat(d.importe) || 0;
+    form.action = d.url;
+    document.getElementById('md-sujeto').textContent = d.credito + ' → ' + d.debito;
+    document.getElementById('md-cuerpo').textContent = esPago
+      ? 'El pago vuelve a quedar como saldo a cuenta del proveedor, para aplicarlo a otra factura, y la factura vuelve a tener saldo.'
+      : 'La nota de crédito vuelve a quedar disponible para aplicarla a otra factura, y la factura vuelve a tener saldo.';
+    var nota = 'No se mueven fondos ni cambia el saldo total del proveedor: cambia qué comprobantes quedan abiertos.';
+    if (d.origen === 'pago') {
+      nota = 'Esta aplicación la hizo la orden de pago al pagarse. La factura vuelve a ofrecerse para una orden nueva: '
+           + 'aplicale el saldo del pago antes de pagarla otra vez. ' + nota;
+    } else if (d.origen === 'migracion') {
+      nota = 'Vino de AEDA: si se vuelve a correr la importación de cuentas corrientes, vuelve (AEDA manda). '
+           + 'Corregila también allá. ' + nota;
+    }
+    document.getElementById('md-nota').textContent = nota;
+    inp.value = tope.toFixed(2);
+    fmtMilesInit(inp);
+    document.getElementById('md-tope').textContent = 'Aplicado: ' + plata(tope) + '. Un importe menor desaplica en parte.';
+    mot.value = '';
+    error('');
+    abrirModal('modal-desaplicar');
+    setTimeout(function () { mot.focus(); }, 0);
+  };
+  form.addEventListener('submit', function (ev) {
+    var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
+    if (!(v > 0)) { ev.preventDefault(); error('El importe tiene que ser mayor que cero.'); inp.focus(); }
+    else if (v > tope + 0.005) { ev.preventDefault(); error('No se puede desaplicar más de lo aplicado (' + plata(tope) + ').'); inp.focus(); }
+    else if (!mot.value.trim()) { ev.preventDefault(); error('Escribí el motivo: queda registrado junto con quién desaplicó.'); mot.focus(); }
+  });
+})();
+</script>

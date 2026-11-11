@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Anulaciones{% endblock %}
+
+{#
+  Anulaciones de Tesorería (tes_mov.anulaciones_lista): pagos, órdenes de
+  ingreso y movimientos entre cuentas vigentes, en una sola grilla. Cada fila
+  dice por qué no se puede anular, si no se puede (período cerrado,
+  conciliado, ya en un archivo de transferencias, cheques que siguieron su
+  camino). Se vuelve a validar al anular. Nada se borra: queda anulado con su
+  motivo y el libro de fondos deja de contarlo.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Anulaciones</h1>
+    <p>Anular un comprobante de tesorería: deja de mover plata, pero queda registrado con su motivo.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card" data-sin-solapas>
+  <form method="get" action="{{ url_for('tes_mov.anulaciones_lista') }}" class="filter-bar">
+    {% call ui.filtro('Tipo') %}<select name="tipo" class="filtro" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, t in tipos.items() %}<option value="{{ k }}" {{ 'selected' if f.tipo == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ f.desde.isoformat() if f.desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ f.hasta.isoformat() if f.hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('tes_mov.anulaciones_lista') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    <div class="filter-bar-fin"><span class="filter-count">{{ anulables }} de {{ filas | length }} se pueden anular</span></div>
+  </form>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por número, a quién, cuenta o detalle…', tam_pagina=50) %}
+    <label class="filtro-check"><input type="checkbox" class="filtro" id="f-anulables"> Solo los que se pueden anular</label>
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-anulables" data-exportar="Comprobantes anulables">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Fecha</th><th>Tipo</th><th>Número</th><th>A quién / motivo</th><th>Cuenta</th>
+        <th class="th-right">Importe</th><th>Se puede anular</th>
+      </tr></thead>
+      <tbody>
+        {% for x in filas %}
+        <tr data-anulable="{{ 0 if x.impedimentos else 1 }}">
+          <td><div class="acciones">
+            {% if x.origen == 'movimiento' %}{{ ui.accion('ver', href=url_for('tes_mov.movimiento', id_movimiento=x.id)) }}
+            {% elif x.origen == 'ingreso' %}{{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=x.id)) }}
+            {% elif puede_ordenes %}{{ ui.accion('ver', href=url_for('pagos.orden', id_orden=x.id_orden), titulo='Ver la orden de pago') }}{% endif %}
+            {% if not x.impedimentos %}
+              {{ ui.accion('baja', titulo='Anular', onclick='confirmarAnular(this)',
+                           datos={'origen': x.origen, 'id': x.id, 'nombre': x.tipo_txt ~ ' ' ~ x.numero ~ ' · $ ' ~ (x.importe | miles)}) }}
+            {% endif %}
+          </div></td>
+          <td>{{ x.fecha.strftime('%d/%m/%Y') if x.fecha else '—' }}</td>
+          <td>{{ x.tipo_txt }}</td>
+          <td class="td-mono">{{ x.numero }}{% if x.sub %}<div class="td-muted chico">{{ x.sub }}</div>{% endif %}</td>
+          <td class="td-wrap">{{ x.quien or '' }}{% if x.detalle %}<div class="td-muted chico">{{ x.detalle }}</div>{% endif %}</td>
+          <td class="td-wrap td-muted">{{ x.cuenta or '—' }}</td>
+          <td class="td-right td-fuerte" data-num="{{ x.importe }}">{{ (x.importe or 0) | miles }}</td>
+          <td class="td-wrap" data-valor="{{ 'Sí' if not x.impedimentos else 'No: ' ~ (x.impedimentos | join('; ')) }}">
+            {% if x.impedimentos %}{{ ui.estado('No', 'warn') }} <span class="td-muted chico">{{ x.impedimentos | join('; ') }}</span>
+            {% else %}{{ ui.estado('Sí', 'ok') }}{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay comprobantes vigentes en esas fechas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="modal" id="modal-anular">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Anular el comprobante?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('tes_mov.anular') }}">
+      <input type="hidden" name="origen" id="modal-origen">
+      <input type="hidden" name="id" id="modal-id">
+      <input type="hidden" name="tipo" value="{{ f.tipo }}">
+      <input type="hidden" name="desde" value="{{ f.desde.isoformat() if f.desde else '' }}">
+      <input type="hidden" name="hasta" value="{{ f.hasta.isoformat() if f.hasta else '' }}">
+      <div class="campo separado">
+        <label for="modal-motivo">Motivo <span class="req">*</span></label>
+        <textarea name="motivo" id="modal-motivo" rows="3" maxlength="250" required></textarea>
+        <small class="campo-ayuda">Queda en el comprobante y en el libro de fondos.</small>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+        {{ ui.boton('Anular', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function confirmarAnular(b) {
+  document.getElementById('modal-origen').value = b.dataset.origen;
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  document.getElementById('modal-motivo').value = '';
+  abrirModal('modal-anular');
+  document.getElementById('modal-motivo').focus();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fa = document.getElementById('f-anulables');
+  gestion_admTable('tbl-anulables', {
+    pageSize: 50,
+    filtroExtra: function (tr) { return !fa.checked || tr.dataset.anulable === '1'; }
+  });
+});
+</script>
+{% endblock %}

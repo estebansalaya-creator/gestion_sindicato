@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Liquidación de cuota sindical{% endblock %}
+
+{#
+  Liquidación de cuota sindical (fisca_liq.liquidacion): una por empleador y
+  período. Liquidar toma la nómina del empleador si la cargó y, si no, sus
+  afiliados con la DDJJ de OSEDA; volver a liquidar el mismo período lo
+  rehace. Lo que vino de AEDA no se toca.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Liquidación de cuota sindical</h1>
+    <p>Lo que cada empleador tiene que pagar por período: {{ '%.2f'|format(par.alicuota|float) | replace('.', ',') }} % de la
+       remuneración de sus afiliados, con vencimiento el día {{ par.dia_vto }} del mes siguiente. La remuneración sale de la
+       nómina que cargó el empleador y, si no la cargó, de la DDJJ de OSEDA (remuneración imponible 5).</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<form method="post" action="{{ url_for('fisca_liq.liquidacion_generar') }}" class="card" data-proceso="Liquidando…">
+  <div class="bloque">
+    <div class="bloque-titulo">Liquidar un período</div>
+    <div class="campos">
+      <div class="campo" style="--span:3;">
+        <label for="periodo">Período <span class="req">*</span></label>
+        <input type="month" name="periodo" id="periodo" required
+               value="{{ (periodo or sugerido) | periodo }}">
+      </div>
+    </div>
+    <p class="campo-ayuda">Un período ya liquidado se vuelve a liquidar con lo que hay hoy: una nómina cargada después o una
+       DDJJ rectificada cambian lo liquidado, y un empleador que se quedó sin base se anula. Lo que vino de AEDA no se toca.
+       La alícuota y el día de vencimiento se cambian en Datos del Sindicato.</p>
+  </div>
+  <div class="form-acciones">
+    {% if periodo %}{{ ui.boton('Ver otro período', 'secondary', href=url_for('fisca_liq.liquidacion')) }}{% endif %}
+    {{ ui.boton('Liquidar el período', submit=True, icono_='agregar') }}
+  </div>
+</form>
+
+{% if periodo %}
+<div class="card">
+  {{ ui.card_head('Período ' ~ (periodo | periodo), nota=n_vigentes ~ ' empleador(es) con cuota a pagar') }}
+  {% call ui.barra_filtros('Buscar por CUIT o razón social…', tam_pagina=50) %}
+    {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+      <option value="">Todos</option>
+      {% for k, t in origenes.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="vigente">Vigentes</option>
+      <option value="anulada">Anuladas</option>
+      <option value="">Todas</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-liquidacion" data-exportar="Liquidación de cuota sindical {{ periodo | periodo }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>CUIT</th><th>Empleador</th><th>Origen</th>
+        <th class="th-right">Afiliados</th><th class="th-right">Remuneración</th>
+        <th class="th-right">Cuota a pagar</th><th>Vencimiento</th><th>Liquidada</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for l in filas %}
+        <tr data-origen="{{ l.origen }}" data-estado="{{ l.estado }}" class="{{ 'fila-baja' if l.estado == 'anulada' }}">
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion_ficha', id_liq=l.id)) }}</div></td>
+          <td class="td-mono">{{ l.cuit }}</td>
+          <td class="td-wrap">{{ l.razon_social or '— no está en Empleadores —' }}</td>
+          <td>{{ ui.estado(origenes[l.origen], origen_tipo[l.origen]) }}</td>
+          <td class="td-right" data-num="{{ l.afiliados }}">{{ l.afiliados }}</td>
+          <td class="td-right" data-num="{{ l.remuneracion }}">{{ (l.remuneracion or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ l.importe }}">{{ (l.importe or 0) | miles }}</td>
+          <td data-orden="{{ l.vencimiento.isoformat() }}">{{ l.vencimiento.strftime('%d/%m/%Y') }}</td>
+          <td data-orden="{{ l.fecha.isoformat() }}">{{ l.fecha.strftime('%d/%m/%Y') }}{% if l.usuario %} <span class="muted chico">{{ l.usuario }}</span>{% endif %}</td>
+          <td>{% if l.estado == 'anulada' %}<span title="{{ l.observaciones or '' }}">{{ ui.estado('Anulada', 'danger') }}</span>{% else %}{{ ui.estado('Vigente', 'ok') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">Este período no está liquidado. Liquidalo con el botón de arriba.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card resumen">
+  {{ ui.card_head('Resumen del período', nota='Solo las vigentes') }}
+  <div class="card-body">
+    <div class="resumen-fila"><span>Empleadores</span><strong class="mono">{{ n_vigentes }}</strong></div>
+    <div class="resumen-fila"><span>Afiliados</span><strong class="mono">{{ total_afil }}</strong></div>
+    <div class="resumen-fila"><span>Remuneración</span><strong class="mono">$ {{ (total_remu or 0) | miles }}</strong></div>
+    <div class="resumen-fila resumen-total"><span>Cuota a pagar</span><strong class="mono">$ {{ (total or 0) | miles }}</strong></div>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Períodos liquidados', nota='Solo las liquidaciones vigentes') }}
+  {% call ui.barra_filtros('Buscar un período…', tam_pagina=20) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-periodos" data-exportar="Períodos de cuota sindical liquidados">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Período</th>
+        <th class="th-right">Empleadores</th><th class="th-right">Por nómina</th><th class="th-right">Por DDJJ</th>
+        <th class="th-right">De AEDA</th><th class="th-right">Afiliados</th>
+        <th class="th-right">Remuneración</th><th class="th-right">Cuota a pagar</th><th>Vence</th><th>Última liquidación</th>
+      </tr></thead>
+      <tbody>
+        {% for p in periodos %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion', periodo=p.periodo)) }}</div></td>
+          <td class="td-mono">{{ p.periodo | periodo }}</td>
+          <td class="td-right" data-num="{{ p.empleadores }}">{{ p.empleadores }}</td>
+          <td class="td-right" data-num="{{ p.por_nomina or 0 }}">{{ p.por_nomina or 0 }}</td>
+          <td class="td-right" data-num="{{ p.por_ddjj or 0 }}">{{ p.por_ddjj or 0 }}</td>
+          <td class="td-right" data-num="{{ p.de_aeda or 0 }}">{{ p.de_aeda or 0 }}</td>
+          <td class="td-right" data-num="{{ p.afiliados or 0 }}">{{ p.afiliados or 0 }}</td>
+          <td class="td-right" data-num="{{ p.remuneracion }}">{{ (p.remuneracion or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ p.importe }}">{{ (p.importe or 0) | miles }}</td>
+          <td data-orden="{{ p.vto.isoformat() }}">{{ p.vto.strftime('%d/%m/%Y') }}</td>
+          <td data-orden="{{ p.liquidado.isoformat() }}">{{ p.liquidado.strftime('%d/%m/%Y') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="11" class="no-data">Todavía no hay períodos liquidados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fOrigen = document.getElementById('f-origen'), fEstado = document.getElementById('f-estado');
+  if (document.getElementById('tbl-liquidacion')) {
+    gestion_admTable('tbl-liquidacion', { pageSize: 50, filtroExtra: function (tr) {
+      if (fOrigen.value && tr.dataset.origen !== fOrigen.value) return false;
+      if (fEstado.value && tr.dataset.estado !== fEstado.value) return false;
+      return true; } });
+  }
+  gestion_admTable('tbl-periodos', { pageSize: 20 });
+});
+</script>
+{% endblock %}

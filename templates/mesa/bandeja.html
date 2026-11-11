@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Mesa de entradas{% endblock %}
+
+{#
+  Bandeja de la mesa de entradas: un expediente por comprobante cargado.
+  Arranca en «En la mesa» (ingresado, en revisión, aprobado, rechazado): lo
+  liquidado, pagado, archivado o anulado ya no se trabaja acá. Si no hay nada
+  en trámite arranca en «Todos»: lo importado de AEDA entra liquidado o pagado
+  y la mesa quedaba en blanco.
+  Las filas que el filtro inicial no muestra salen ocultas desde el servidor
+  (las de otro estado y las que pasan de la primera página): si no, se dibujan
+  todas y desaparecen cuando arranca la grilla.
+#}
+{% set inicio = 'abiertos' if resumen.abiertos else '' %}
+{% set tam = 50 %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Mesa de entradas</h1>
+    <p>Los expedientes de los comprobantes de proveedores: derivaciones, observaciones, aprobación y rechazo.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_cargar %}{{ ui.boton('Cargar comprobante', href=url_for('comprobantes.carga'), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">En la mesa</div><div class="kpi-val">{{ resumen.abiertos }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Importe en la mesa</div><div class="kpi-val monto">$ {{ resumen.importe_abiertos|miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Ingresados sin tratar</div><div class="kpi-val">{{ resumen.ingresado }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('error', 20) }}</div>
+    <div><div class="kpi-lbl">Rechazados</div><div class="kpi-val">{{ resumen.rechazado }}</div></div></div>
+</div>
+
+{% if not resumen.abiertos and expedientes %}
+{{ ui.aviso('No hay expedientes en trámite en la mesa: se muestran todos. Los que vinieron de AEDA ya están liquidados o pagados.', 'info') }}
+{% endif %}
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por expediente, proveedor, CUIT o comprobante…', tam_pagina=tam) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="abiertos" {{ 'selected' if inicio == 'abiertos' }}>En la mesa</option>
+      {% for k, t in estados %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      <option value="" {{ 'selected' if inicio == '' }}>Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Destino') %}<select class="filtro" id="f-destino">
+      <option value="">Cualquier destino</option>
+      {% if mi_id %}<option value="u{{ mi_id }}">Derivados a mí</option>{% endif %}
+      {% for a in areas %}<option value="a{{ a.id }}">Área: {{ a.nombre }}</option>{% endfor %}
+      {% for u in usuarios %}<option value="u{{ u.id }}">{{ u.nombre or u.email }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Ingresados desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Ingresados hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-mesa" data-exportar="Mesa de entradas">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>Expediente</th>
+          <th>Ingreso</th>
+          <th>Proveedor</th>
+          <th>Comprobante</th>
+          <th>Emisión</th>
+          <th>Período</th>
+          <th class="th-right">Importe</th>
+          <th>Destino</th>
+          <th>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% set vis = namespace(n=0) %}
+        {% for e in expedientes %}
+        {% set entra = inicio == '' or e.estado in abiertos %}
+        {% if entra %}{% set vis.n = vis.n + 1 %}{% endif %}
+        <tr {{ 'style="display:none"'|safe if not entra or vis.n > tam }} data-estado="{{ e.estado }}" data-abierto="{{ 1 if e.estado in abiertos else 0 }}"
+            data-destino=" {{ ('a' ~ e.id_area_destino) if e.id_area_destino }} {{ ('u' ~ e.id_usuario_destino) if e.id_usuario_destino }} "
+            data-fecha="{{ e.creado.strftime('%Y-%m-%d') }}" class="{{ 'fila-baja' if e.estado == 'anulado' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=e.id), titulo='Abrir el expediente') }}
+            {% if e.ruta_local %}{{ ui.accion('pdf', href=url_for('comprobantes.pdf', id_comprobante=e.id_comprobante), titulo='PDF del comprobante', blank=True) }}{% endif %}
+          </div></td>
+          <td data-valor="{{ e.nro_expediente }}">{{ ui.expediente(e.id, e.nro_expediente, nueva=False) }}</td>
+          <td data-valor="{{ e.creado.isoformat() }}">{{ e.creado.strftime('%d/%m/%Y') }}</td>
+          <td class="td-fuerte">{{ e.razon_social_emisor }}
+            {% if e.nombre_fantasia and e.nombre_fantasia != e.razon_social_emisor %}<span class="oculto">{{ e.nombre_fantasia }}</span>{% endif %}
+            <div class="chico muted td-mono">{{ e.cuit_emisor }}</div></td>
+          <td>{{ e.tipo_desc or 'Comprobante' }}<div class="chico muted td-mono">{{ e.numero_completo or '' }}</div>{{ ui.marcas(e) if e.id_comprobante }}</td>
+          <td data-valor="{{ e.fecha_emision.isoformat() if e.fecha_emision else '' }}">{{ e.fecha_emision.strftime('%d/%m/%Y') if e.fecha_emision else '—' }}</td>
+          <td class="td-mono">{{ (e.periodo[4:] ~ '/' ~ e.periodo[:4]) if e.periodo else '—' }}</td>
+          {% set imp = -(e.importe_total or 0) if e.credito else (e.importe_total or 0) %}
+          <td class="td-right td-fuerte" data-num="{{ imp }}">{{ imp|miles }}</td>
+          <td>{{ e.area or '' }}{{ ' · ' if e.area and e.usuario_destino }}{{ e.usuario_destino or ('' if e.area else '—') }}</td>
+          <td data-valor="{{ estados_label.get(e.estado, e.estado) }}">{{ ui.estado(estados_label.get(e.estado, e.estado), estados_tipo.get(e.estado, 'neutro')) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="11" class="no-data">Todavía no hay expedientes: se crean al cargar un comprobante.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fdst = document.getElementById('f-destino'),
+      fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+  gestion_admTable('tbl-mesa', {
+    pageSize: {{ tam }},
+    filtroExtra: function (tr) {
+      if (fe.value === 'abiertos' && tr.dataset.abierto !== '1') return false;
+      if (fe.value && fe.value !== 'abiertos' && tr.dataset.estado !== fe.value) return false;
+      if (fdst.value && tr.dataset.destino.indexOf(' ' + fdst.value + ' ') < 0) return false;
+      if (fd.value && tr.dataset.fecha < fd.value) return false;
+      if (fh.value && tr.dataset.fecha > fh.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

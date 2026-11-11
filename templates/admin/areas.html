@@ -1,0 +1,181 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Áreas{% endblock %}
+
+{#
+  Áreas (admin.areas): el organigrama, a dónde se deriva un expediente en la
+  mesa de entradas. Una que se usa no se elimina —el expediente perdería a
+  dónde fue—: se desactiva y deja de ofrecerse. Al eliminar una sin uso, sus
+  subáreas pasan a colgar de su área madre. Hasta {{ niveles }} niveles.
+#}
+{% set a = area or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Áreas</h1>
+    <p>El organigrama del sindicato: a dónde se derivan los expedientes de la mesa de entradas.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede(url_for('admin.areas_usuario')) %}
+      {{ ui.boton('Áreas por usuario', 'secondary', href=url_for('admin.areas_usuario'), icono_='grupo') }}
+    {% endif %}
+    {{ ui.boton('Nueva área', href=url_for('admin.areas', nuevo=1), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', arbol|length), ('datos', 'Editar' if a.get('id') else 'Nueva', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por área o descripción…', tam_pagina=9999) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activas</option>
+        <option value="0">Inactivas</option>
+        <option value="">Todas</option>
+      </select>{% endcall %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-sinpersonas"> Sin personas</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-areas" data-exportar="Áreas">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Área</th>
+            <th>Descripción</th>
+            <th class="th-right">Personas</th>
+            <th>Uso</th>
+            <th class="th-right">Orden</th>
+            <th class="th-right">Nivel</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in arbol %}
+          <tr class="{{ 'fila-baja' if not n.activo }}" data-activo="{{ n.activo }}" data-personas="{{ n.usuarios }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('admin.areas', edit=n.id)) }}
+              {% if n.prof < niveles - 1 %}
+                {{ ui.accion('agregar', titulo='Agregar un área que dependa de esta', href=url_for('admin.areas', padre=n.id)) }}
+              {% endif %}
+              {% if n.activo %}
+                {{ ui.accion('baja', titulo='Desactivar: deja de ofrecerse para derivar', onclick='enviar(this)',
+                             datos={'id': n.id, 'accion': 'baja'}) }}
+              {% else %}
+                {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': n.id, 'accion': 'reactivar'}) }}
+              {% endif %}
+              {% if not n.usos %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': n.id, 'nombre': n.nombre, 'hijas': n.n_hijos}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-arbol {{ 'td-fuerte' if n.n_hijos }}" style="--sangria:{{ n.prof }};">{{ n.nombre }}</td>
+            <td class="td-wrap td-muted">{{ n.descripcion or '' }}</td>
+            <td class="td-right {{ 'td-muted' if not n.usuarios }}" data-num="{{ n.usuarios }}">{{ n.usuarios }}</td>
+            <td class="td-wrap {{ 'td-muted' if not n.usos }}">
+              {% for cant, que in n.usos %}{{ cant }} {{ que }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}
+            </td>
+            <td class="td-right td-muted" data-num="{{ n.orden }}">{{ n.orden }}</td>
+            <td class="td-right td-muted" data-num="{{ n.prof + 1 }}">{{ n.prof + 1 }}</td>
+            <td>{{ ui.estado('Activa', 'ok') if n.activo else ui.estado('Inactiva', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no hay áreas. Sin ellas la mesa de entradas solo deriva a personas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head('Editar área' if a.get('id') else 'Nueva área') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('admin.areas'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('admin.areas') }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ a.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:5;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="100" value="{{ a.get('nombre') or '' }}">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Depende de</label>
+            <select name="padre_id">
+              <option value="">— Ninguna (primer nivel) —</option>
+              {% for n in madres %}
+              <option value="{{ n.id }}" {{ 'selected' if a.get('padre_id') == n.id }}>{{ '· ' * n.prof }}{{ n.nombre }}{% if not n.activo %} (inactiva){% endif %}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Orden</label>
+            <input type="number" name="orden" step="1" value="{{ a.get('orden') if a.get('orden') is not none else 0 }}">
+          </div>
+          <div class="campo" style="--span:9;">
+            <label>Descripción</label>
+            <input type="text" name="descripcion" maxlength="250" value="{{ a.get('descripcion') or '' }}">
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="activo" value="1" {{ 'checked' if a.get('activo') }}>
+              Activa
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if a.get('id') else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar el área?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('admin.areas') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('admin.areas') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  var n = parseInt(b.dataset.hijas || '0', 10);
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre +
+    (n === 1 ? '. Su subárea pasa a depender de su área madre.' : n ? '. Sus ' + n + ' subáreas pasan a depender de su área madre.' : '.');
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fs = document.getElementById('f-sinpersonas');
+  gestion_admTable('tbl-areas', {
+    pageSize: 9999,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.activo !== fe.value) return false;
+      if (fs.checked && tr.dataset.personas !== '0') return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

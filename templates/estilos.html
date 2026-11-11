@@ -1,0 +1,632 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Guía de estilos{% endblock %}
+
+{#
+  Guía visual del sistema. Todo lo que se ve acá sale de static/css/sindicato.css
+  y de las macros de _ui.html, sin estilos propios: si algo se ve mal en esta
+  página, se ve mal en todas.
+#}
+
+{% macro ej(texto) %}<pre class="codigo">{{ texto }}</pre>{% endmacro %}
+
+{% set secciones = [
+  ('colores', 'Colores'), ('botones', 'Botones'), ('acciones', 'Acciones de grilla'),
+  ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
+  ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
+  ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('importacion', 'Importación'),
+  ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
+] %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Guía de estilos</h1>
+    <p>Los componentes del sistema y cómo usarlos. Una pantalla nueva se arma solo con esto.</p>
+  </div>
+</div>
+
+<div class="guia-indice">
+  {% for ancla, texto in secciones %}
+  <a href="#{{ ancla }}" class="btn btn-secondary btn-sm">{{ texto }}</a>
+  {% endfor %}
+</div>
+
+{# ── Colores ─────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="colores">
+  {{ ui.card_head('Colores', nota='Se usan por su función, nunca por el valor: var(--ok), no #16a34a.') }}
+  <div class="card-body">
+    <div class="bloque-titulo">Marca</div>
+    <div class="muestras">
+      {% for token, uso in [('--navy','títulos, cabecera de grilla'), ('--navy-mid','degradé del encabezado'),
+                            ('--blue','acción principal, enlaces'), ('--blue-hover','hover de la principal'),
+                            ('--blue-light','fondo de selección'), ('--accent','realce puntual')] %}
+      <div class="muestra"><div class="muestra-color" style="background:var({{ token }})"></div>
+        <div class="muestra-texto"><code>{{ token }}</code>{{ uso }}</div></div>
+      {% endfor %}
+    </div>
+    <div class="bloque-titulo" style="margin-top:16px;">Estados — trazo, texto, fondo y borde</div>
+    <div class="muestras">
+      {% for base, uso in [('ok','hecho, activo, ver'), ('danger','error, baja, borrar'),
+                           ('warn','advertencia, pendiente'), ('info','información, en proceso')] %}
+      {% for sufijo in ['', '-texto', '-bg', '-borde'] %}
+      <div class="muestra"><div class="muestra-color" style="background:var(--{{ base }}{{ sufijo }})"></div>
+        <div class="muestra-texto"><code>--{{ base }}{{ sufijo }}</code>{{ uso if not sufijo }}</div></div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+    <div class="bloque-titulo" style="margin-top:16px;">Superficies, texto y archivos</div>
+    <div class="muestras">
+      {% for token, uso in [('--bg','fondo de la app'), ('--surface','tarjetas'), ('--surface-2','barras y bloques'),
+                            ('--border','bordes'), ('--text','texto'), ('--text-muted','texto secundario'),
+                            ('--pdf','PDF'), ('--excel','Excel')] %}
+      <div class="muestra"><div class="muestra-color" style="background:var({{ token }})"></div>
+        <div class="muestra-texto"><code>{{ token }}</code>{{ uso }}</div></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{# ── Botones ─────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="botones">
+  {{ ui.card_head('Botones', nota='Un solo primary por bloque: es lo que se espera que la persona haga.') }}
+  <div class="card-body">
+    <div class="fila">
+      {{ ui.boton('Guardar cambios', 'primary', icono_='guardar') }}
+      {{ ui.boton('Cancelar', 'secondary') }}
+      {{ ui.boton('Agregar familiar', 'ghost', icono_='agregar') }}
+      {{ ui.boton('Dar de baja', 'danger', icono_='baja') }}
+      {{ ui.boton('Reactivar', 'ok', icono_='reactivar') }}
+      {{ ui.boton('Excel', 'excel', icono_='planilla') }}
+      {{ ui.boton('PDF', 'pdf', icono_='pdf') }}
+      {{ ui.boton('Chico', 'secondary', chico=True) }}
+    </div>
+    {{ ej("{{ ui.boton('Guardar cambios', 'primary', icono_='guardar', submit=True) }}\n{{ ui.boton('Nuevo afiliado', href=url_for('afiliados.abm_afiliados'), icono_='agregar') }}\n{{ ui.boton('Cancelar', 'secondary', href=..., chico=True) }}") }}
+  </div>
+</div>
+
+{# ── Acciones de grilla ──────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="acciones">
+  {{ ui.card_head('Botones de acción de grilla', nota='28×28, primera columna, solo ícono. Cada acción, siempre el mismo ícono y color.') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta">
+      <thead><tr><th>Botón</th><th>Tipo</th><th>Uso</th><th>Llamada</th></tr></thead>
+      <tbody>
+        {% for tipo, uso, llamada in [
+          ('ver', 'Abre el detalle, no modifica nada', "ui.accion('ver', href=url_for(..., id=f.id))"),
+          ('editar', 'Abre el formulario con el registro', "ui.accion('editar', href=url_for(..., edit=f.id))"),
+          ('borrar', 'Elimina. Siempre con confirmación', "ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': f.id, 'nombre': f.nombre})"),
+          ('baja', 'Baja lógica, pide fecha y motivo', "ui.accion('baja', onclick='abrirBaja(this)', datos={'id': f.id})"),
+          ('reactivar', 'Deshace una baja', "ui.accion('reactivar', submit=True)"),
+          ('agregar', 'Agrega un hijo del registro', "ui.accion('agregar', href=...)"),
+          ('pdf', 'Abre el PDF en otra pestaña (blank)', "ui.accion('pdf', href=..., blank=True)"),
+          ('planilla', 'Descarga la planilla', "ui.accion('planilla', href=...)"),
+          ('descargar', 'Descarga otro archivo', "ui.accion('descargar', href=...)"),
+          ('historial', 'Movimientos o auditoría', "ui.accion('historial', href=...)"),
+          ('mail', 'Envía o reenvía por mail', "ui.accion('mail', onclick=...)"),
+          ('auditar', 'Resuelve algo pendiente de control', "ui.accion('auditar', href=url_for('reintegros.auditoria_ficha', ...))"),
+          ('aplicaciones', 'Con qué se canceló un comprobante, o a qué se imputó un pago', "ui.accion('aplicaciones', onclick='verAplicaciones(this)', datos={'url': …})"),
+          ('desaplicar', 'Suelta una aplicación: pide importe y motivo', "ui.accion('desaplicar', onclick='desaplicar(this)', datos={…})"),
+        ] %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion(tipo) }} {{ ui.accion(tipo, deshabilitado=True) }}</div></td>
+          <td class="td-mono">{{ tipo }}</td>
+          <td class="td-wrap">{{ uso }}</td>
+          <td class="td-mono td-wrap chico">{{ '{{ ' ~ llamada ~ ' }}' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-body chico muted">
+    Los valores de la fila viajan en <code>datos</code> como atributos <code>data-*</code>, nunca serializados dentro del onclick:
+    las comillas de un nombre como O'Brien rompen el atributo. El segundo botón de cada fila es la versión deshabilitada.
+  </div>
+</div>
+
+{# ── Íconos ──────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="iconos">
+  {{ ui.card_head('Íconos', nota='Trazo de 2px, toman el color del texto que los contiene. No dibujar SVG sueltos en las pantallas.') }}
+  <div class="card-body">
+    <div class="iconos-guia">
+      {% for nombre in ['ver','editar','borrar','baja','reactivar','agregar','cerrar','guardar','volver',
+                        'buscar','filtro','quitar_filtro','descargar','subir','pdf','planilla','imprimir','historial',
+                        'mail','telefono','usuario','grupo','empresa','dinero','calendario','ok','alerta','error',
+                        'info','inicio','salir','reloj','chevron'] %}
+      <div class="icono-guia">{{ ui.icono(nombre, 20) }}{{ nombre }}</div>
+      {% endfor %}
+    </div>
+    {{ ej("{{ ui.icono('grupo') }}        {{ ui.icono('alerta', 18) }}") }}
+  </div>
+</div>
+
+{# ── Grilla ──────────────────────────────────────────────────────────────── #}
+{% set demo = [
+  {'id': 1, 'cuil': '20419547280', 'nombre': 'MANNO IGNACIO', 'parentesco': 'Hijo soltero menor de 21 años', 'edad': 26, 'contacto': False, 'activo': 1, 'alta': '2003-12-15', 'empresa': 'LOGISTICA MERCOSUR S.R.L.'},
+  {'id': 2, 'cuil': '20204564702', 'nombre': 'LUCERO RUDY OCTAVIO', 'parentesco': 'Titular', 'edad': 56, 'contacto': True, 'activo': 1, 'alta': '2013-08-01', 'empresa': 'DEVEREUX S.A.'},
+  {'id': 3, 'cuil': '27206174124', 'nombre': 'TERZIAN SABRINA SILVIA', 'parentesco': 'Cónyuge', 'edad': 56, 'contacto': False, 'activo': 0, 'alta': '1996-02-01', 'empresa': None},
+  {'id': 4, 'cuil': '27487565313', 'nombre': 'DIAZ RAIDAN MAYRA CANDELA', 'parentesco': 'Hijo soltero menor de 21 años', 'edad': 17, 'contacto': False, 'activo': 1, 'alta': '2012-02-03', 'empresa': None},
+  {'id': 5, 'cuil': '20393717670', 'nombre': 'CASTRO LEANDRO FEDERICO', 'parentesco': 'Titular', 'edad': 30, 'contacto': True, 'activo': 0, 'alta': '2019-03-01', 'empresa': 'GOZZI Y ASOCIADOS S.A.'},
+  {'id': 6, 'cuil': '27449379360', 'nombre': 'GONZALEZ T. ZAIRA', 'parentesco': 'Hijo soltero menor de 21 años', 'edad': 23, 'contacto': False, 'activo': 1, 'alta': '2021-01-04', 'empresa': None},
+  {'id': 7, 'cuil': '20424717712', 'nombre': 'MOYANI ALAN HERNAN', 'parentesco': 'Cónyuge', 'edad': 26, 'contacto': False, 'activo': 1, 'alta': '2026-10-19', 'empresa': None},
+  {'id': 8, 'cuil': '20336064652', 'nombre': 'VERGERIO LEONARDO DANTE', 'parentesco': 'Titular', 'edad': 38, 'contacto': True, 'activo': 1, 'alta': '2021-11-01', 'empresa': 'LOGISTICA MERCOSUR S.R.L.'},
+] %}
+<div class="guia-seccion" id="grilla">
+  <div class="card">
+    {{ ui.card_head('Grilla con filtros', nota='Estructura fija: barra de filtros, tabla, paginación. gestion_admTable hace el resto.') }}
+    {% call ui.barra_filtros('Filtrar por CUIL, nombre…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="demo-estado">
+        <option value="">Todos los estados</option><option value="activo">Activos</option><option value="baja">Bajas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Alta desde') %}<input type="date" class="filtro" id="demo-desde">{% endcall %}
+      {% call ui.filtro('Edad desde') %}<input type="number" class="filtro filtro-num" id="demo-edad" min="0">{% endcall %}
+      <label class="filtro-check"><input type="checkbox" id="demo-contacto"> Solo con contacto</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-demo" data-exportar="Afiliados de ejemplo">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>CUIL</th><th>Apellido y nombre</th><th>Parentesco</th><th>Empleador</th>
+          <th class="th-right">Edad</th><th class="th-right">Alta</th><th class="th-center">Contacto</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for f in demo %}
+          <tr class="{{ 'fila-baja' if not f.activo }}" data-estado="{{ 'activo' if f.activo else 'baja' }}" data-contacto="{{ 1 if f.contacto else 0 }}" data-alta="{{ f.alta }}" data-edad="{{ f.edad }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href='#') }}
+              {% if f.activo %}{{ ui.accion('baja', datos={'id': f.id}) }}{% else %}{{ ui.accion('reactivar') }}{% endif %}
+            </div></td>
+            <td class="td-mono">{{ f.cuil }}</td>
+            <td class="td-fuerte">{{ f.nombre }}</td>
+            <td class="td-muted">{{ f.parentesco }}</td>
+            <td>{{ f.empresa or '—' }}</td>
+            <td class="td-right">{{ f.edad }}</td>
+            <td class="td-right">{{ f.alta[8:] ~ '/' ~ f.alta[5:7] ~ '/' ~ f.alta[:4] }}</td>
+            <td class="td-center">{{ ui.si_no(f.contacto) }}</td>
+            <td>{{ ui.activo(f.activo) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+    <div class="card-body chico muted">
+      <ul style="padding-left:16px;line-height:1.8;">
+        <li><strong>Cada filtro lleva su rótulo arriba</strong>, con <code>{% raw %}{% call ui.filtro('Estado') %}…{% endcall %}{% endraw %}</code>:
+            un select solo muestra la opción elegida («Todos») y dos fechas sin rótulo no dicen cuál es desde y cuál hasta.
+            La búsqueda lo trae de la macro; las casillas (<code>label.filtro-check</code>) ya tienen su texto. Sin <code>aria-label</code>: el rótulo es el label.</li>
+        <li><strong>Buscar</strong> filtra mientras se escribe. Los <strong>selects, casillas y números</strong> se aplican solos al cambiar
+            (un número, <code>input type=number class="filtro filtro-num"</code>, al salir del campo, con Enter o con las flechitas).
+            Las <strong>fechas</strong> (<code>type=date</code> o <code>.filtro-fecha</code>) esperan a <strong>Filtrar</strong> o a Enter.</li>
+        <li><strong>Quitar filtro</strong> vuelve cada control a su valor inicial (el que trae el HTML) y está deshabilitado si no hay nada filtrado.</li>
+        <li>Un filtro que va al <strong>servidor</strong> en la misma tarjeta que la grilla (período del estado de cuenta) lleva
+            <code>class="filtro-srv"</code>: se ve igual, pero la grilla no lo toma y Enter envía el formulario.</li>
+        <li><strong>Exportar a Excel</strong>: las filas filtradas, todas las páginas, sin la columna de acciones. Nombre del archivo en
+            <code>data-exportar</code> de la tabla; una celda puede exportar otro valor con <code>data-valor</code>; una columna se excluye con <code>data-no-export</code>.</li>
+        <li><strong>Orden</strong>: clic en cualquier encabezado (⇅); ▲ / ▼ marca la columna y el sentido. Todas las grillas, también las chicas de una ficha;
+            <code>data-no-sort</code> en un th lo excluye, <code>data-sin-orden</code> en la tabla, toda la tabla.</li>
+        <li><strong>Barra de desplazamiento arriba</strong>, sincronizada con la de abajo, cuando la tabla no entra en el ancho
+            (<code>data-sin-scroll-arriba</code> en el wrap la evita).</li>
+        <li><strong>Árbol</strong> (el plan de cuentas): la celda del nombre con <code>td-arbol</code> y la profundidad en
+            <code>style="--sangria:N"</code> (0 = raíz, 20 px por nivel); los títulos, además, <code>td-fuerte</code>.
+            Después de guardar, volver al listado con <code>#id-de-la-fila</code> y marcarla con <code>fila-actual</code>.
+            <strong>Con casillas</strong> (Roles, Permisos por Usuario, Áreas por Usuario): la casilla va en la primera columna
+            (<code>th.col-acciones data-no-sort</code>, celda <code>td-center</code> con <code>data-valor="Sí|No"</code> para el Excel),
+            sin paginar (<code>tam_pagina=9999</code>) y con el filtro «Mostrar» las que tiene / las que no. Un texto en la fila,
+            <code>input.inp-celda</code>. El árbol del menú es la macro <code>tabla()</code> de <code>admin/_arbol_menu.html</code>.</li>
+        <li><strong>Fila que no se puede elegir</strong> porque le falta un dato (una transferencia sin CBU): <code>tr.fila-apagada</code>,
+            sin casilla, y el motivo debajo del nombre en <code>&lt;span class="td-motivo"&gt;</code>. No se esconde: esconderla hace que
+            el problema no se vea. Una dada de baja es <code>fila-baja</code> (tachada).</li>
+      </ul>
+    </div>
+  </div>
+  {{ ej("<div class=\"card\">\n  {% call ui.barra_filtros('Filtrar por CUIL, nombre…') %}\n    {% call ui.filtro('Estado') %}<select class=\"filtro\" id=\"f-estado\">…</select>{% endcall %}   {# opcional #}\n  {% endcall %}\n  <div class=\"data-table-wrap\">\n    <table class=\"data-table\" id=\"tbl-x\">\n      <thead><tr><th class=\"col-acciones\" data-no-sort>Acciones</th> … </tr></thead>\n      <tbody>\n        <tr class=\"{{ 'fila-baja' if not f.activo }}\">\n          <td><div class=\"acciones\">{{ ui.accion('editar', href=…) }}</div></td>\n          <td class=\"td-mono\">CUIL</td> <td class=\"td-fuerte\">Nombre</td> <td class=\"td-right\">Importe</td>\n        …\n  </div>\n  {{ ui.paginacion() }}\n</div>\n<script>\n  gestion_admTable('tbl-x', { pageSize: 20, filtroExtra: function (tr) { … } });   // los .filtro se reaplican solos\n</script>") }}
+</div>
+
+{# ── Marcas de un comprobante ─────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="marcas">
+  {{ ui.card_head('Comprobante y expediente', nota='Las marcas de gestion_adm debajo del número, nunca en una columna aparte; el expediente, siempre como enlace.') }}
+  <div class="card-body">
+    <div class="datos">
+      <div class="dato"><div class="dato-lbl">Sin nada</div><div class="dato-val">Factura B <span class="td-mono">00003-00000001</span>{{ ui.marcas({}) }}</div></div>
+      <div class="dato"><div class="dato-lbl">Constatado</div><div class="dato-val">Factura A <span class="td-mono">00005-00000778</span>{{ ui.marcas({'constatacion_resultado': 'A'}) }}</div></div>
+      <div class="dato"><div class="dato-lbl">Constatado y PDF leído</div><div class="dato-val">Factura C <span class="td-mono">00002-00002050</span>{{ ui.marcas({'constatacion_resultado': 'A', 'leido_automatico': 1}) }}</div></div>
+      <div class="dato"><div class="dato-lbl">Las tres</div><div class="dato-val">Factura C <span class="td-mono">00001-00000014</span>{{ ui.marcas({'constatacion_resultado': 'A', 'leido_automatico': 1, 'verificado_visual': 1}) }}</div></div>
+      <div class="dato"><div class="dato-lbl">Expediente cargado acá</div><div class="dato-val">{{ ui.expediente(1, 'EXP-2026-000001') }}</div></div>
+      <div class="dato"><div class="dato-lbl">Expediente de AEDA</div><div class="dato-val">{{ ui.expediente(2, '000002283/26') }}</div></div>
+    </div>
+    <p class="chico muted separado">Escudo verde: constatado en ARCA. Robot amarillo: el PDF lo leyó el sistema y coincide con los datos.
+      Ojo azul: alguien lo verificó a ojo. Siempre las tres; apagada en gris (<code>--apagado</code>). El título de cada una lo explica al pasar el mouse.</p>
+    {{ ej("<span class=\"td-fuerte\">{{ c.tipo_desc }}</span> <span class=\"td-mono\">{{ c.numero_completo }}</span>{{ ui.marcas(c) }}   {# c: constatacion_resultado, leido_automatico, verificado_visual #}\n<td data-valor=\"{{ e.nro_expediente }}\">{{ ui.expediente(e.id_expediente, e.nro_expediente) }}</td>   {# lleva al expediente, en otra pestaña; nueva=False en la bandeja #}") }}
+  </div>
+</div>
+
+{# ── Estados ─────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="estados">
+  {{ ui.card_head('Estados', nota='Siempre con texto: el color acompaña, nunca es la única señal.') }}
+  <div class="card-body">
+    <div class="fila">
+      {{ ui.estado('Activo', 'ok') }} {{ ui.estado('Baja', 'danger') }} {{ ui.estado('Pendiente', 'warn') }}
+      {{ ui.estado('Informado', 'info') }} {{ ui.estado('Procesando', 'proceso') }} {{ ui.estado('Sin datos', 'neutro') }}
+      {{ ui.activo(0) }}
+      <span>{{ ui.si_no(True) }} {{ ui.si_no(False) }}</span>
+      <span class="chip">Titular</span>
+    </div>
+    {{ ej("{{ ui.estado('Pendiente', 'warn') }}     ok | danger | warn | info | proceso | neutro\n{{ ui.activo(f.activo, f.fecha_baja) }}\n{{ ui.si_no(f.tiene_mail) }}\n<span class=\"chip\">Titular</span>") }}
+    <div class="fila separado">
+      <span class="saldo-acreedor mono">-1.250,00</span> <span class="saldo-deudor mono">300,00</span>
+      <span class="saldo-cero">—</span> <span class="importe-danger mono">1.250,00</span>
+      <span class="importe-ok mono">300,00</span> <span class="importe-pendiente mono">150,00</span>
+    </div>
+    {{ ej("<span class=\"saldo-acreedor\">…</span>  saldo negativo: le debemos     .saldo-deudor  a favor nuestro     .saldo-cero\n<span class=\"importe-danger\">…</span>  .importe-ok   .importe-pendiente (sin auditar)     cuenta corriente\ntr.fila-grupo-cc / tr.fila-hija + td.td-sangria / tr.fila-saldo-anterior   grilla agrupada del estado de cuenta") }}
+  </div>
+</div>
+
+{# ── Mensajes ────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="mensajes">
+  {{ ui.card_head('Mensajes', nota='Arriba del contenido. ui.mensajes() dibuja los flash y los errores de validación.') }}
+  <div class="card-body">
+    {{ ui.aviso('Afiliado «LUCERO RUDY OCTAVIO» creado.', 'ok') }}
+    {{ ui.aviso('El CUIL 20204564703 no es válido: no verifica el dígito de control.', 'danger') }}
+    {{ ui.aviso('Se guardó, pero el titular de este grupo está dado de baja.', 'warning') }}
+    {{ ui.aviso('Los importados de AEDA tienen apellido y nombre en un solo campo.', 'info') }}
+    {{ ej("{{ ui.mensajes(errores) }}                 flash('Guardado.') → verde · flash('!Ojo…') → amarillo\n{{ ui.aviso('Texto', 'info') }}             ok | danger | warning | info") }}
+  </div>
+</div>
+
+{# ── Formulario ──────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="formulario">
+  {{ ui.card_head('Formulario', nota='Grilla de 12 columnas: el ancho de cada campo es cuántas columnas ocupa.') }}
+  <form onsubmit="return false;">
+    <div class="bloque">
+      <div class="bloque-titulo">Identificación</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;">
+          <label>CUIL <span class="req">*</span></label>
+          <input type="text" class="mono" value="20-20456470-2">
+          <small class="campo-ayuda ok">CUIL válido</small>
+        </div>
+        <div class="campo" style="--span:5;">
+          <label>Apellido <span class="req">*</span></label>
+          <input type="text" value="LUCERO">
+          <small class="campo-ayuda"></small>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label>Nombre</label>
+          <input type="text" value="RUDY OCTAVIO">
+        </div>
+        <div class="campo" style="--span:3;">
+          <label>CBU</label>
+          <input type="text" class="mono" value="0110599520000001234567">
+          <small class="campo-ayuda error">No cierran los dígitos verificadores</small>
+        </div>
+        <div class="campo" style="--span:3;">
+          <label>Parentesco</label>
+          <select>{{ ui.opciones([{'codigo': 0, 'descripcion': 'Titular'}, {'codigo': 1, 'descripcion': 'Cónyuge'}], 0) }}</select>
+        </div>
+        <div class="campo" style="--span:3;">
+          <label>Fecha de alta</label>
+          <input type="date">
+        </div>
+        <div class="campo" style="--span:3;">
+          <label class="campo-check"><input type="checkbox"> Con discapacidad</label>
+        </div>
+      </div>
+    </div>
+    <div class="bloque">
+      <div class="bloque-titulo">Alta en línea</div>
+      <div class="campos">
+        <div class="campo" style="--span:5;">
+          <label>Concepto de gasto <span class="req">*</span></label>
+          <select>{{ ui.opciones([{'id': 1, 'descripcion': 'HONORARIOS'}], none, clave='id', vacio='— Elegí —') }}</select>
+        </div>
+        <div class="campo" style="--span:3;">
+          <label>Descripción</label>
+          <input type="text">
+        </div>
+        <div class="campo" style="--span:2;">
+          <label class="campo-check"><input type="checkbox"> Predeterminada</label>
+        </div>
+        <div class="campo campo-boton" style="--span:2;">
+          {{ ui.boton('Agregar', 'secondary', icono_='agregar', chico=True) }}
+        </div>
+      </div>
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Cancelar', 'secondary') }}
+      {{ ui.boton('Guardar cambios', 'primary', icono_='guardar') }}
+    </div>
+  </form>
+  <div class="card-body">
+    {{ ej("<div class=\"bloque\">\n  <div class=\"bloque-titulo\">Identificación</div>\n  <div class=\"campos\">\n    <div class=\"campo\" style=\"--span:3;\">\n      <label>CUIL <span class=\"req\">*</span></label>\n      <input type=\"text\" name=\"cuil\" class=\"mono\">\n      <small class=\"campo-ayuda\" id=\"cuil-ayuda\"></small>        .ok / .error al validar\n    </div>\n    <div class=\"campo\" style=\"--span:3;\">\n      <select name=\"cod_parentesco\">{{ ui.opciones(parentescos, a.cod_parentesco) }}</select>\n    </div>\n    <div class=\"campo\" style=\"--span:3;\"><label class=\"campo-check\"><input type=\"checkbox\"> Texto</label></div>\n    <div class=\"campo campo-boton\" style=\"--span:2;\">{{ ui.boton('Agregar', chico=True) }}</div>   botón en la fila, a la altura de los inputs\n  </div>\n</div>\n<div class=\"form-acciones\">{{ ui.boton('Guardar cambios', submit=True) }}</div>") }}
+    <p class="chico muted" style="margin-top:8px;">
+      <code>ui.opciones()</code>: si el valor guardado no está en el catálogo lo agrega y lo deja elegido.
+      Sin eso, el navegador elige la primera opción y el dato cambia solo al guardar.
+      <code>ui.opciones_grupo(plan, valor)</code> hace lo mismo con <code>&lt;optgroup&gt;</code> por el campo
+      <code>grupo</code>: las cuentas del plan por clase (<code>tesoreria.cuentas_imputables</code>). El CBU se
+      valida con <code>cbuValido()</code> de base.html.
+    </p>
+  </div>
+</div>
+
+{# ── Ficha de solo lectura ───────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="solo-lectura">
+  {{ ui.card_head('Ficha de solo lectura', nota='Las pantallas de consulta muestran el mismo formulario que el ABM, sin poder editarlo.') }}
+  <fieldset class="solo-lectura" disabled>
+    <div class="bloque">
+      <div class="bloque-titulo">Identificación</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;">
+          <label>CUIL</label>
+          <input type="text" class="mono" value="20204564702">
+          <small class="campo-ayuda ok">CUIL válido</small>
+        </div>
+        <div class="campo" style="--span:5;">
+          <label>Apellido</label>
+          <input type="text" value="LUCERO RUDY OCTAVIO">
+        </div>
+        <div class="campo" style="--span:2;">
+          <label>Documento</label>
+          <input type="text" class="mono" value="20456470">
+          <small class="campo-ayuda solo-edicion">Vacío: se toma del CUIL</small>
+        </div>
+        <div class="campo" style="--span:2;">
+          <label>Parentesco</label>
+          <select>{{ ui.opciones([{'codigo': 0, 'descripcion': 'Titular'}], 0) }}</select>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+  <div class="card-body">
+    {{ ej("{% set consulta = modo == 'consulta' %}\n<fieldset class=\"solo-lectura\" {{ 'disabled' if consulta }}>   el mismo formulario, sin form-acciones\n  …\n  <small class=\"campo-ayuda solo-edicion\">Vacío: se toma del CUIL</small>   ayuda de carga: se oculta\n</fieldset>\n{% include '_contactos.html' %} con solo_lectura=True              grilla sin acciones ni formulario") }}
+    <p class="chico muted" style="margin-top:8px;">
+      Se lee con el color normal del texto, no con el gris de un control deshabilitado.
+      Las ayudas vacías, las de carga (<code>.solo-edicion</code>) y las fechas sin valor no se muestran.
+      El permiso es la opción de menú: <code>db.puede(url_for('afiliados.abm_afiliados'))</code>.
+      Quien la tiene ve también los botones de editar desde la consulta.
+    </p>
+    <p class="chico muted" style="margin-top:8px;">
+      Para deshabilitar <em>una parte</em> del formulario —las retenciones de un impuesto en el que el
+      sindicato no es agente— <code>&lt;fieldset class="grupo-campos solo-lectura" disabled&gt;</code>:
+      sin marco, separado del grupo siguiente con una línea. Lo deshabilitado no viaja en el POST, así
+      que el servidor no tiene que pisar esas columnas.
+    </p>
+  </div>
+</div>
+
+{# ── Carga con renglones ─────────────────────────────────────────────────── #}
+<div class="guia-seccion" id="renglones">
+  <div class="con-resumen">
+    <div class="card">
+      {% call ui.card_head('Carga con renglones', nota='la solicitud de reintegro: cabecera, renglones y, debajo, el resumen') %}
+        {{ ui.boton('Agregar renglón', 'secondary', chico=True, icono_='agregar') }}
+      {% endcall %}
+      <div class="card-body">
+        <div class="persona-elegida" style="margin-bottom:18px;">
+          <div class="avatar">L</div>
+          <div class="persona-texto"><div class="persona-nombre">LUCERO RUDY OCTAVIO</div>
+            <div class="persona-datos">CUIL 20204564702 · Doc 20456470</div></div>
+          {{ ui.boton('Cambiar', 'secondary', chico=True) }}
+        </div>
+        <div class="renglon">
+          <span class="renglon-num">1</span>
+          <span class="renglon-quitar">{{ ui.accion('borrar', titulo='Quitar renglón') }}</span>
+          <div class="campos">
+            <div class="campo" style="--span:5;"><label>Afiliado</label><select><option>LUCERO TOMAS — Hijo</option></select></div>
+            <div class="campo" style="--span:4;"><label>Concepto</label><select><option>SUBSIDIO EDUCACIÓN INICIAL</option></select></div>
+            <div class="campo" style="--span:3;"><label>Importe</label>
+              <input type="hidden" id="guia-imp"><input type="text" class="importe" inputmode="decimal" value="45.000,50"
+                     oninput="mascaraImporte(this, 'guia-imp')"></div>
+          </div>
+          <div class="adjuntos"><span class="adjunto"><span class="adjunto-nombre">factura_jardin.pdf</span>{{ ui.accion('ver') }}{{ ui.accion('borrar') }}</span></div>
+        </div>
+        <div class="renglon rechazado">
+          <span class="renglon-num">2</span>
+          <div class="renglon-cabeza"><div><div class="renglon-titulo">LUCERO RUDY OCTAVIO <span class="chip">Titular</span></div>
+            <div class="renglon-sub">MOVILIDAD Y MENSAJERIA · gasto 15/10/2026</div></div>
+            <div class="derecha"><div class="dato-lbl">Reconocido</div><div class="dato-val mono">$ 0,00</div></div></div>
+          <div class="sin-adjunto">{{ ui.icono('alerta', 12) }} Este renglón no tiene comprobante adjunto.</div>
+        </div>
+      </div>
+    </div>
+    <aside class="card resumen">
+      {{ ui.card_head('Resumen') }}
+      <div class="card-body">
+        <div class="resumen-fila"><span>Renglones</span><strong>2</strong></div>
+        <div class="resumen-fila resumen-total"><span>Total</span><strong>$ 45.000,50</strong></div>
+        <div class="resumen-botones">
+          {{ ui.boton('Guardar borrador', icono_='guardar') }}
+          {{ ui.boton('Guardar y auditar', 'ok', icono_='ok') }}
+          {{ ui.boton('Imprimir constancia', 'pdf', icono_='imprimir') }}
+        </div>
+      </div>
+    </aside>
+  </div>
+  <div class="card">
+    <div class="card-body">
+      <div class="datos" style="margin-bottom:14px;">
+        <div class="dato"><div class="dato-lbl">Titular</div><div class="dato-val">LUCERO RUDY OCTAVIO</div></div>
+        <div class="dato"><div class="dato-lbl">CBU destino</div><div class="dato-val mono">0110599520000001234565</div></div>
+      </div>
+      {{ ej(".con-resumen > div + aside.card.resumen           un bloque debajo del otro; el resumen a lo ancho, cifras en fila y botones a la derecha\n.renglon > .renglon-num + .renglon-quitar + .campos   (.rechazado: en rojo)\n.persona-elegida > .avatar + .persona-texto + botón Cambiar\n.autocompletar > input + .ac-lista > button.ac-item\n.adjuntos > .adjunto > .adjunto-nombre + acciones\n.datos > .dato > .dato-lbl + .dato-val             pares rótulo-valor de una ficha (.mono)\n.barra-accion                                      barra fija al pie: totales + botón\n<input type=hidden id=x> + <input class=importe oninput=\"mascaraImporte(this, 'x')\">   1.234,56 → 1234.56") }}
+      <p class="chico muted" style="margin-top:8px;">
+        El importe se escribe en formato argentino y viaja con punto decimal en el hidden. <code>pesos(n)</code>
+        y <code>numeroAR(n)</code> lo muestran. El renglón se dibuja con una sola macro para los guardados y
+        para el &lt;template&gt; que clona «Agregar renglón».
+      </p>
+    </div>
+  </div>
+</div>
+
+{# ── Solapas ─────────────────────────────────────────────────────────────── #}
+<div class="guia-seccion" id="solapas">
+  {{ ui.solapas([('s-listado', 'Listado', 5747), ('s-datos', 'Editar', None), ('s-grupo', 'Grupo familiar', 4), ('s-mov', 'Movimientos', 12)], 's-listado') }}
+  <div class="abm-panel" data-panel="s-listado"><div class="card"><div class="card-body">Panel del listado.</div></div></div>
+  <div class="abm-panel oculto" data-panel="s-datos"><div class="card"><div class="card-body">Panel del formulario.</div></div></div>
+  <div class="abm-panel oculto" data-panel="s-grupo"><div class="card"><div class="card-body">Panel del grupo familiar.</div></div></div>
+  <div class="abm-panel oculto" data-panel="s-mov"><div class="card"><div class="card-body">Panel de movimientos.</div></div></div>
+  {{ ej("{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar', None)], inicial) }}\n<div class=\"abm-panel {{ 'oculto' if inicial != 'listado' }}\" data-panel=\"listado\">…</div>") }}
+</div>
+
+{# ── Diálogo ─────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="dialogo">
+  {{ ui.card_head('Diálogo', nota='Para confirmar algo que no se deshace o pedir un dato puntual. Escape y un clic afuera lo cierran.') }}
+  <div class="card-body">
+    {{ ui.boton('Abrir diálogo de baja', 'danger', icono_='baja', onclick="abrirModal('modal-demo')") }}
+    {{ ej("<div class=\"modal\" id=\"modal-baja\">\n  <div class=\"modal-caja\">\n    <div class=\"modal-titulo\">¿Dar de baja?</div>\n    <div class=\"modal-texto\">…</div>\n    <div class=\"modal-acciones\">…</div>\n  </div>\n</div>\nabrirModal('modal-baja')   cerrarModal('modal-baja')") }}
+    <p class="chico muted separado">Un formulario largo adentro (el instrumento de pago, con su grilla de cheques):
+      <code>modal-caja ancha</code> y el cuerpo en <code>modal-cuerpo alto</code>, que se desplaza con los botones siempre a la vista.</p>
+  </div>
+</div>
+<div class="modal" id="modal-demo">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Dar de baja a LUCERO RUDY OCTAVIO?</div>
+    <div class="modal-texto">La baja queda registrada con fecha y motivo. Se puede reactivar después.</div>
+    <div class="campos">
+      <div class="campo" style="--span:12;"><label>Motivo</label><select><option>RENUNCIA</option></select></div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-demo')") }}
+      {{ ui.boton('Dar de baja', 'danger', onclick="cerrarModal('modal-demo')") }}
+    </div>
+  </div>
+</div>
+
+{# ── Indicadores ─────────────────────────────────────────────────────────── #}
+<div class="guia-seccion" id="indicadores">
+  <div class="kpi-row">
+    <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+      <div><div class="kpi-lbl">Afiliados</div><div class="kpi-val">4.443</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+      <div><div class="kpi-lbl">Titulares</div><div class="kpi-val">3.068</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('alerta', 20) }}</div>
+      <div><div class="kpi-lbl">Sin CUIL</div><div class="kpi-val">12</div></div></div>
+    <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('baja', 20) }}</div>
+      <div><div class="kpi-lbl">Bajas</div><div class="kpi-val">1.298</div></div></div>
+    <a class="kpi-card" href="#"><div class="kpi-ico warn">{{ ui.icono('dinero', 20) }}</div>
+      <div><div class="kpi-lbl">Por pagar</div><div class="kpi-val">7</div><div class="kpi-sub">con enlace: a.kpi-card</div></div></a>
+  </div>
+  {{ ej("<div class=\"kpi-row\">\n  <div class=\"kpi-card\"><div class=\"kpi-ico ok\">{{ ui.icono('ok', 20) }}</div>\n    <div><div class=\"kpi-lbl\">Titulares</div><div class=\"kpi-val\">3.068</div></div></div>\n</div>                     .kpi-ico  ok | warn | danger · <a class=\"kpi-card\" href=…> si lleva a una pantalla · .kpi-sub, la línea de abajo") }}
+</div>
+
+{# ── Importación ─────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="importacion">
+  {{ ui.card_head('Importación de archivos') }}
+  <div class="card-body">
+    <div class="fila" style="margin-bottom:10px;"><span class="paso-badge">1</span><strong>Elegí el archivo</strong></div>
+    <label class="drop-zone">{{ ui.icono('subir', 26) }}<span>Soltá el archivo acá o hacé clic para elegirlo</span><input type="file" class="oculto"></label>
+    <div class="fila" style="margin:16px 0 10px;"><span class="paso-badge">2</span><strong>Qué hacer con lo que ya está</strong></div>
+    <div class="opciones-tarjeta">
+      <label class="radio-card"><input type="radio" name="demo-modo" checked><div><strong>Agregar</strong><span>Suma lo nuevo y deja lo anterior.</span></div></label>
+      <label class="radio-card"><input type="radio" name="demo-modo"><div><strong>Reemplazar el período</strong><span>Borra el período y lo vuelve a cargar.</span></div></label>
+    </div>
+  </div>
+</div>
+
+{# ── Comprobantes ────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="comprobantes">
+  {% call ui.card_head('Comprobantes', nota='carga, Comprobantes ARCA y mesa de entradas') %}
+    <span class="marcas">{{ ui.estado('Validado en ARCA', 'ok') }}{{ ui.estado('PDF sin cotejar', 'warn') }}</span>
+  {% endcall %}
+  <div class="card-body pila">
+    <div class="campos">
+      <div class="campo" style="--span:8;">
+        <label class="drop-zone chica">{{ ui.icono('subir', 22) }}<span>Elegí el PDF para adjuntarlo (opcional)</span><input type="file" class="oculto"></label>
+      </div>
+      <div class="campo campo-boton" style="--span:2;">{{ ui.boton('Adjuntar PDF', 'secondary', icono_='subir') }}</div>
+      <div class="campo" style="--span:2;">
+        <label>Total <span class="req">*</span></label>
+        <input type="text" class="importe total" value="12.100,00">
+      </div>
+    </div>
+    <div>PROVEEDOR 1058 <span class="chip chip-alerta">sin alta</span> <span class="chip">Ganancias 078</span></div>
+    <details class="card texto-leido"><summary>Texto leído del PDF</summary><pre>ORIGINAL
+A FACTURA  COD. 01  Punto de Venta: 00003  Comp. Nro: 00001234</pre></details>
+    {{ ej("<label class=\"drop-zone chica\">…<input type=\"file\" class=\"oculto\"></label>   zona de archivo dentro de un formulario\n<iframe class=\"visor-pdf\" src=\"…\"></iframe>                  el PDF en la pantalla, mientras se carga o se audita\n<details class=\"card texto-leido\"><summary>…</summary><pre>…</pre></details>   lo leído, plegado\n<span class=\"marcas\">{{ ui.estado('ARCA', 'ok') }}{{ ui.estado('sin PDF', 'warn') }}</span>\n<span class=\"chip chip-alerta\">sin alta</span>\n<div class=\"pila\">…</div>   bloques uno debajo del otro, con aire     .separado  margen arriba") }}
+    <p class="chico muted">
+      Una nota de crédito se carga en positivo y el tipo dice que resta: en los totales de las grillas va en negativo.
+      Los datos que identifican un comprobante validado por ARCA van <code>readonly</code>, pero el servidor los vuelve a
+      constatar al guardar: la pantalla no es el control.
+    </p>
+  </div>
+</div>
+
+{# ── Reglas ──────────────────────────────────────────────────────────────── #}
+{# ── Gráficos ────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="graficos">
+  {{ ui.card_head('Gráficos', nota='HTML y CSS, sin librería. Cada marca con su title; al lado, la tabla con los números.') }}
+  <div class="card-body">
+    <div class="bloque-titulo">Reparto (una serie: sin leyenda, el título la nombra)</div>
+    <div class="reparto">
+      <div class="reparto-item" title="Titular: 1.908 (43,0%)"><span class="reparto-rot">Titular</span>
+        <span class="reparto-barra"><span style="width:100%"></span></span><span class="reparto-num">1.908</span><span class="reparto-pct">43,0%</span></div>
+      <div class="reparto-item" title="Hijo: 1.800 (40,6%)"><span class="reparto-rot">Hijo soltero menor de 21 años</span>
+        <span class="reparto-barra"><span style="width:94.3%"></span></span><span class="reparto-num">1.800</span><span class="reparto-pct">40,6%</span></div>
+      <div class="reparto-item" title="Cónyuge: 662 (14,9%)"><span class="reparto-rot">Cónyuge</span>
+        <span class="reparto-barra"><span style="width:34.7%"></span></span><span class="reparto-num">662</span><span class="reparto-pct">14,9%</span></div>
+    </div>
+    {{ ej("<div class=\"reparto\">\n  <div class=\"reparto-item\" title=\"Titular: 1.908 (43,0%)\">\n    <span class=\"reparto-rot\">Titular</span>\n    <span class=\"reparto-barra\"><span style=\"width:100%\"></span></span>   {# contra el mayor del bloque #}\n    <span class=\"reparto-num\">1.908</span><span class=\"reparto-pct\">43,0%</span>\n  </div>\n</div>") }}
+
+    <div class="bloque-titulo">Altas y bajas por mes (arriba y abajo de la línea, la misma escala)</div>
+    <span class="leyenda"><span class="leyenda-item"><i class="muestra-serie alta"></i>Altas</span>
+      <span class="leyenda-item"><i class="muestra-serie baja"></i>Bajas</span></span>
+    <div class="evol" style="height:140px; max-width:320px;">
+      <div class="evol-escala"><span>30</span><span>0</span><span>30</span></div>
+      {% for p, al, ba in [('202608', 17, 21), ('202609', 21, 4), ('202610', 30, 12)] %}
+      <div class="evol-mes" title="{{ p | periodo }} · {{ al }} altas · {{ ba }} bajas">
+        <div class="evol-arriba"><span class="evol-barra alta" style="height:{{ al * 100 / 30 }}%"></span></div>
+        <div class="evol-abajo"><span class="evol-barra baja" style="height:{{ ba * 100 / 30 }}%"></span></div>
+        <div class="evol-rot">{{ p[4:] }}{% if loop.first %}<b>{{ p[:4] }}</b>{% endif %}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {{ ej("<div class=\"evol\">\n  <div class=\"evol-escala\"><span>máx</span><span>0</span><span>máx</span></div>\n  <div class=\"evol-mes\" title=\"2026-10 · 30 altas · 12 bajas\">\n    <div class=\"evol-arriba\"><span class=\"evol-barra alta\" style=\"height:100%\"></span></div>\n    <div class=\"evol-abajo\"><span class=\"evol-barra baja\" style=\"height:40%\"></span></div>\n    <div class=\"evol-rot\">10<b>2026</b></div>\n  </div>\n</div>") }}
+
+    <div class="bloque-titulo">Pirámide (dos series: leyenda y el total en la cabecera de cada lado)</div>
+    <div class="piramide" style="max-width:520px; margin:0;">
+      <div class="piramide-fila piramide-cab"><span>Varones · 339</span><span></span><span>Mujeres · 338</span></div>
+      <div class="piramide-fila" title="18-25 años · 339 varones · 338 mujeres">
+        <span class="piramide-lado izq"><span class="piramide-num">339</span><span class="piramide-barra varon" style="width:90%"></span></span>
+        <span class="piramide-rango">18-25</span>
+        <span class="piramide-lado"><span class="piramide-barra mujer" style="width:89.7%"></span><span class="piramide-num">338</span></span>
+      </div>
+    </div>
+    {{ ej("Colores de serie: var(--serie-1) altas / varones, var(--serie-2) mujeres, var(--serie-baja) bajas.\nSon de dato, no de estado (una baja no es un error), y están validados de a pares para daltonismo:\nun color nuevo se valida antes de usarlo. Nunca dos escalas en el mismo gráfico.") }}
+  </div>
+</div>
+
+<div class="card guia-seccion" id="reglas">
+  {{ ui.card_head('Reglas') }}
+  <div class="card-body">
+    <ol style="padding-left:18px;line-height:1.8;font-size:.86rem;">
+      <li>Una plantilla no trae <code>&lt;style&gt;</code> ni colores escritos a mano. Si falta un componente, se agrega a <code>sindicato.css</code> y a esta guía.</li>
+      <li><code>style="…"</code> solo para datos de la pantalla: el <code>--span</code> de un campo, el ancho de una columna.</li>
+      <li>Íconos y botones de acción, siempre con las macros de <code>_ui.html</code>.</li>
+      <li>Acciones en la primera columna de la grilla; el ojo es ver y va en verde.</li>
+      <li>Edición por <code>?edit=ID</code>, nunca poblando el formulario desde JavaScript.</li>
+      <li>Estados con texto (<code>ui.estado</code>), no con un ✓ o ✗ suelto.</li>
+      <li>Importes con <code>{{ '{{ (valor or 0) | miles }}' }}</code>, alineados a la derecha.</li>
+    </ol>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var estado = document.getElementById('demo-estado');
+  var contacto = document.getElementById('demo-contacto');
+  var desde  = document.getElementById('demo-desde');
+  var edad   = document.getElementById('demo-edad');
+  gestion_admTable('tbl-demo', {
+    pageSize: 20,
+    filtroExtra: function (tr) {
+      if (estado.value && tr.dataset.estado !== estado.value) return false;
+      if (contacto.checked && tr.dataset.contacto !== '1') return false;
+      if (desde.value && tr.dataset.alta < desde.value) return false;
+      if (edad.value && parseInt(tr.dataset.edad, 10) < parseInt(edad.value, 10)) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

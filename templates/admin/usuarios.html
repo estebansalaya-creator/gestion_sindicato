@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Usuarios{% endblock %}
+
+{#
+  Usuarios (admin.usuarios). Uno que ya operó no se elimina —dejaría
+  expedientes, órdenes y reintegros sin saber quién los hizo—: se da de baja.
+  Dónde figura cada uno sale de las claves foráneas de la base. Nadie se da de
+  baja a sí mismo, y siempre queda un administrador activo.
+#}
+{% set r = reg or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Usuarios</h1>
+    <p>Quiénes entran al sistema y con qué roles. Lo que ve cada uno sale de sus roles y de sus permisos sueltos.</p>
+  </div>
+  {% if reg %}
+  <div class="page-header-acciones">{{ ui.boton('Nuevo usuario', href=url_for('admin.usuarios', nuevo=1), icono_='agregar') }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', usuarios|length), ('datos', 'Editar' if r.get('id') else 'Nuevo', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por nombre o email…') %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activos</option>
+        <option value="0">Dados de baja</option>
+        <option value="">Todos</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Rol') %}<select class="filtro" id="f-rol">
+        <option value="">Todos los roles</option>
+        {% for ro in roles %}<option value="{{ ro.id }}">{{ ro.nombre }}</option>{% endfor %}
+        <option value="-">Sin rol</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-usuarios" data-exportar="Usuarios">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Nombre</th>
+            <th>Email</th>
+            <th>Roles</th>
+            <th class="th-right">Permisos sueltos</th>
+            <th>Áreas</th>
+            <th>Último ingreso</th>
+            <th>Alta</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in usuarios %}
+          <tr class="{{ 'fila-baja' if not u.activo }}" data-activo="{{ u.activo }}"
+              data-roles=",{{ u.rol_ids or '' }},">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('admin.usuarios', edit=u.id)) }}
+              {% if u.id != yo %}
+                {% if u.activo %}
+                  {{ ui.accion('baja', onclick='enviar(this)', datos={'id': u.id, 'accion': 'baja'},
+                               titulo='Dar de baja: no puede entrar y lo que hizo queda a su nombre') }}
+                {% else %}
+                  {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': u.id, 'accion': 'reactivar'}) }}
+                {% endif %}
+                {% if not u.usos %}
+                  {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': u.id, 'nombre': u.nombre ~ ' · ' ~ u.email}) }}
+                {% endif %}
+              {% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ u.nombre }}{% if u.id == yo %} <span class="chip">vos</span>{% endif %}</td>
+            <td class="td-mono">{{ u.email }}</td>
+            <td>{{ u.roles or '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not u.extras }}" data-num="{{ u.extras }}">{{ u.extras }}</td>
+            <td class="td-wrap">{{ u.areas or '—' }}</td>
+            <td class="td-muted">{{ u.ultimo_acceso.strftime('%d/%m/%Y %H:%M') if u.ultimo_acceso else 'nunca' }}</td>
+            <td class="td-muted">{{ u.creado.strftime('%d/%m/%Y') if u.creado else '' }}</td>
+            <td>
+              {{ ui.activo(u.activo) }}
+              {% if not u.tiene_clave %} {{ ui.estado('sin contraseña', 'warn') }}{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no hay usuarios.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head(('Editar usuario' if r.get('id') else 'Nuevo usuario'),
+                         nota=('Último ingreso: ' ~ (r.ultimo_acceso.strftime('%d/%m/%Y %H:%M') if r.get('ultimo_acceso') else 'nunca')) if r.get('id') else None) %}
+      {% if r.get('id') and puede(url_for('admin.permisos')) %}
+        {{ ui.boton('Permisos sueltos', 'secondary', href=url_for('admin.permisos', usuario=r.id), chico=True) }}
+      {% endif %}
+      {% if r.get('id') and puede(url_for('admin.areas_usuario')) %}
+        {{ ui.boton('Áreas', 'secondary', href=url_for('admin.areas_usuario', usuario=r.id), chico=True) }}
+      {% endif %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('admin.usuarios'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('admin.usuarios') }}" autocomplete="off">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:5;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="150" value="{{ r.get('nombre') or '' }}">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Email <span class="req">*</span></label>
+            <input type="email" name="email" class="mono" required maxlength="150" value="{{ r.get('email') or '' }}"
+                   autocomplete="off">
+            <small class="campo-ayuda">Es con lo que entra.</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label class="campo-check">
+              <input type="checkbox" name="activo" value="1" {{ 'checked' if r.get('activo') }}
+                     {{ 'disabled' if r.get('id') and r.id == yo }}>
+              Activo
+            </label>
+            {% if r.get('id') and r.id == yo %}<input type="hidden" name="activo" value="1">{% endif %}
+          </div>
+          <div class="campo" style="--span:4;">
+            <label>Contraseña{% if not r.get('id') %} <span class="req">*</span>{% endif %}</label>
+            <input type="password" name="password" minlength="{{ clave_min }}" autocomplete="new-password"
+                   {{ 'required' if not r.get('id') }}>
+            <small class="campo-ayuda">{% if r.get('id') %}Vacía, no se cambia. {% endif %}Al menos {{ clave_min }} caracteres.</small>
+          </div>
+          <div class="campo" style="--span:4;">
+            <label>Repetir contraseña</label>
+            <input type="password" name="password2" minlength="{{ clave_min }}" autocomplete="new-password"
+                   {{ 'required' if not r.get('id') }}>
+            <small class="campo-ayuda" id="clave-ayuda"></small>
+          </div>
+          <div class="campo" style="--span:4;">
+            {% if r.get('id') and not r.get('tiene_clave') %}
+              {{ ui.aviso('No tiene contraseña: no puede entrar hasta que se le cargue una.', 'warning') }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="bloque">
+        <div class="bloque-titulo">Roles</div>
+        <div class="campos">
+          {% for ro in roles %}
+          <div class="campo" style="--span:4;">
+            <label class="campo-check" title="{{ ro.descripcion or '' }}">
+              <input type="checkbox" name="rol_ids" value="{{ ro.id }}"
+                     {{ 'checked' if ro.id in r.get('rol_ids', []) }} {{ 'disabled' if not ro.activo }}>
+              {{ ro.nombre }}{% if not ro.activo %} <span class="td-muted">(inactivo)</span>{% endif %}
+            </label>
+            <small class="campo-ayuda">{{ ro.descripcion or '' }}</small>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if r.get('id') else 'Dar de alta', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar el usuario?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('admin.usuarios') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('admin.usuarios') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fr = document.getElementById('f-rol');
+  gestion_admTable('tbl-usuarios', {
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.activo !== fe.value) return false;
+      if (fr.value === '-') return tr.dataset.roles === ',,';
+      if (fr.value && tr.dataset.roles.indexOf(',' + fr.value + ',') < 0) return false;
+      return true;
+    }
+  });
+  // Las dos contraseñas, mientras se tipea. El servidor lo vuelve a controlar.
+  var c1 = document.querySelector('[name=password]'), c2 = document.querySelector('[name=password2]'),
+      ayuda = document.getElementById('clave-ayuda');
+  function comparar() {
+    if (!c2.value) { ayuda.className = 'campo-ayuda'; ayuda.textContent = ''; return; }
+    var ok = c1.value === c2.value;
+    ayuda.className = 'campo-ayuda ' + (ok ? 'ok' : 'error');
+    ayuda.textContent = ok ? 'Coinciden.' : 'No coinciden.';
+  }
+  c1.addEventListener('input', comparar); c2.addEventListener('input', comparar);
+});
+</script>
+{% endblock %}

@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Áreas por usuario{% endblock %}
+
+{#
+  Áreas por usuario (admin.areas_usuario): a qué áreas pertenece una persona
+  y con qué función (texto libre). La mesa de entradas lo usa para ofrecer, al
+  derivar a un área, a las personas que la integran. Solo las áreas activas
+  se tildan; lo asignado a una inactiva se conserva al guardar.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Áreas por usuario</h1>
+    <p>A qué áreas del organigrama pertenece cada persona y qué función cumple en cada una.</p>
+  </div>
+  {% if puede(url_for('admin.areas')) %}
+  <div class="page-header-acciones">{{ ui.boton('Áreas', 'secondary', href=url_for('admin.areas')) }}</div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card" data-sin-solapas>
+  <form method="get" action="{{ url_for('admin.areas_usuario') }}" class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label>Usuario</label>
+        <select name="usuario" onchange="this.form.submit()">
+          <option value="">— Elegí a quién —</option>
+          {% for u in usuarios %}
+          <option value="{{ u.id }}" {{ 'selected' if usuario and u.id == usuario.id }}>
+            {{ u.nombre }} · {{ u.email }}{% if not u.activo %} (de baja){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% if usuario %}
+      <div class="campo" style="--span:6;">
+        <label>Roles</label>
+        <input type="text" value="{{ usuario.roles or 'sin rol' }}" readonly>
+        <small class="campo-ayuda">{{ asignadas|length }} áreas asignadas.</small>
+      </div>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if usuario %}
+  {% if not arbol %}
+    {{ ui.aviso('Todavía no hay áreas: se cargan en Administración del Sistema → Áreas.', 'warning') }}
+  {% else %}
+  <form method="post" action="{{ url_for('admin.areas_usuario') }}">
+    <input type="hidden" name="usuario" value="{{ usuario.id }}">
+    <div class="card">
+      {% call ui.barra_filtros('Filtrar por área o persona…', tam_pagina=9999) %}
+        {% call ui.filtro('Mostrar') %}<select class="filtro" id="f-marca">
+          <option value="">Todas las áreas</option>
+          <option value="1">Las suyas</option>
+          <option value="0">Las que no</option>
+        </select>{% endcall %}
+      {% endcall %}
+      <div class="data-table-wrap">
+        <table class="data-table" id="tbl-areas" data-exportar="Áreas de {{ usuario.nombre }}">
+          <thead>
+            <tr>
+              <th class="col-acciones" data-no-sort>Pertenece</th>
+              <th>Área</th>
+              <th>Función en el área</th>
+              <th>Integrantes</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for n in arbol %}
+            {% set tiene = n.id in asignadas %}
+            <tr class="{{ 'fila-baja' if not n.activo }}" data-id="{{ n.id }}">
+              <td class="td-center" data-valor="{{ 'Sí' if tiene else 'No' }}">
+                <input type="checkbox" class="area-check" name="area_ids" value="{{ n.id }}" aria-label="{{ n.nombre }}"
+                       {{ 'checked' if tiene }} {{ 'disabled' if not n.activo }}>
+              </td>
+              <td class="td-arbol {{ 'td-fuerte' if n.n_hijos }}" style="--sangria:{{ n.prof }};">{{ n.nombre }}</td>
+              <td data-valor="{{ asignadas.get(n.id, '') }}">
+                <input type="text" name="rol_area_{{ n.id }}" maxlength="100" class="inp-celda"
+                       value="{{ asignadas.get(n.id, '') }}" placeholder="{{ 'Ej.: Jefe, Auditor' if n.activo }}"
+                       {{ 'disabled' if not n.activo or not tiene }}>
+              </td>
+              <td class="td-wrap td-muted">{{ personas.get(n.id) or '—' }}</td>
+              <td>{{ ui.estado('Activa', 'ok') if n.activo else ui.estado('Inactiva', 'neutro') }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {{ ui.paginacion() }}
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Guardar áreas', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+  {% endif %}
+{% else %}
+  {{ ui.aviso('Elegí un usuario para ver y cambiar sus áreas.', 'info') }}
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var tbl = document.getElementById('tbl-areas');
+  if (!tbl) return;
+  tbl.closest('.card').querySelectorAll('.filter-bar input').forEach(function (i) {
+    i.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+  });
+  // La función solo se escribe en las áreas tildadas.
+  tbl.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('area-check')) return;
+    var tr = e.target.closest('tr'), inp = tr.querySelector('input[type=text]');
+    inp.disabled = !e.target.checked;
+    if (e.target.checked) inp.focus();
+    e.target.closest('td').dataset.valor = e.target.checked ? 'Sí' : 'No';
+  });
+  var fm = document.getElementById('f-marca');
+  gestion_admTable('tbl-areas', {
+    pageSize: 9999,
+    filtroExtra: function (tr) {
+      var c = tr.querySelector('.area-check');
+      return !fm.value || (c.checked ? '1' : '0') === fm.value;
+    }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Panel de Control de Tesorería{% endblock %}
+
+{#
+  Panel de Control de Tesorería (tes_panel.panel): lo que está pendiente y
+  cuánto hay en cada cuenta, hoy. Cada tarjeta lleva a la pantalla donde se
+  resuelve, si el usuario la tiene (si no, el número va sin enlace).
+#}
+
+{% macro tarjeta(url, icono, tipo, rotulo, valor, sub, monto=False) -%}
+{%- set cuerpo -%}
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val{{ ' monto' if monto }}">{{ valor }}</div>
+    <div class="kpi-sub">{{ sub }}</div></div>
+{%- endset -%}
+{%- if url -%}<a class="kpi-card" href="{{ url }}">{{ cuerpo }}</a>{%- else -%}<div class="kpi-card">{{ cuerpo }}</div>{%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Panel de Control de Tesorería</h1>
+    <p>Lo pendiente y los saldos de las cuentas al {{ hoy.strftime('%d/%m/%Y') }}.</p>
+  </div>
+  {% if accesos %}
+  <div class="page-header-acciones">
+    {% for t, u in accesos %}{{ ui.boton(t, 'secondary', href=u) }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes() }}
+
+{% set apr = ordenes | selectattr('estado', 'equalto', 'aprobada') | first %}
+{% set pen = ordenes | selectattr('estado', 'equalto', 'pendiente_aprobacion') | first %}
+<div class="kpi-row">
+  {{ tarjeta(url_emision, 'dinero', 'warn' if apr.cant else 'ok', 'Órdenes por pagar', apr.cant,
+             '$ ' ~ (apr.total | miles) ~ ' aprobadas') }}
+  {{ tarjeta(url_emision, 'reloj', 'warn' if pen.cant else 'ok', 'Esperando aprobación', pen.cant,
+             '$ ' ~ (pen.total | miles)) }}
+  {{ tarjeta(url_nueva_orden, 'pdf', 'warn' if liquidados.cant else 'ok', 'Comprobantes sin orden', liquidados.cant,
+             '$ ' ~ (liquidados.total | miles) ~ ' liquidados') }}
+  {% if reintegros %}
+  {{ tarjeta(url_reintegros, 'grupo', 'warn' if reintegros.cant else 'ok', 'Reintegros por pagar', reintegros.cant,
+             '$ ' ~ (reintegros.total | miles) ~ ' de saldo') }}
+  {% endif %}
+  {{ tarjeta(url_transf, 'subir', ('danger' if transf.sin_destino else 'warn') if transf.cant else 'ok',
+             'Transferencias sin archivo', transf.cant,
+             ('$ ' ~ (transf.total | miles)) ~ ((' · ' ~ transf.sin_destino ~ ' sin CBU') if transf.sin_destino else '')
+             ~ ((' · desde el ' ~ transf.desde.strftime('%d/%m')) if transf.desde else '')) }}
+  {{ tarjeta(url_deposito, 'planilla',
+             'info' if cartera.cant else 'ok', 'Valores en cartera', cartera.cant,
+             '$ ' ~ (cartera.total | miles) ~ ((' · ' ~ (cartera.para_depositar | int) ~ ' ya se pueden depositar') if cartera.para_depositar else '')) }}
+</div>
+
+{% if libro_vacio %}
+  {{ ui.aviso('El libro de fondos todavía no tiene movimientos: los saldos son cero porque el historial de tesorería de AEDA no se importó. Cargá el saldo de apertura de cada cuenta con una orden de ingreso, o importá los movimientos de AEDA, para que esta columna diga cuánta plata hay.', 'warning') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Cuentas de fondos', nota='Libro: lo registrado en el sistema. Extracto: lo que informó el banco. La diferencia son cheques en circulación y lo que falta cargar o conciliar.') }}
+  {% call ui.barra_filtros('Buscar por cuenta o banco…') %}
+    {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
+      <option value="">Todos</option>
+      {% for t in cuentas | map(attribute='tipo_txt') | unique %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cuentas" data-exportar="Saldos de cuentas de fondos">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Cuenta</th><th>Tipo</th><th>Banco</th><th>Último movimiento</th>
+        <th class="th-right">Saldo del libro</th><th class="th-right">Saldo del extracto</th><th class="th-right">Diferencia</th>
+      </tr></thead>
+      <tbody>
+        {% for c in cuentas %}
+        <tr data-tipo="{{ c.tipo_txt }}">
+          <td><div class="acciones">
+            {% if url_subdiario %}{{ ui.accion('historial', href=url_for('tes_mov.subdiario', cuenta=c.id, desde=''), titulo='Movimientos de la cuenta') }}{% endif %}
+            {% if url_cuentas %}{{ ui.accion('ver', href=url_for('tesoreria.cuentas_fondos', edit=c.id), titulo='Ficha de la cuenta') }}{% endif %}
+          </div></td>
+          <td class="td-fuerte">{{ c.nombre }}
+            {% if c.predeterminada %}<span class="chip" title="La que viene elegida al pagar">predeterminada</span>{% endif %}</td>
+          <td class="td-muted">{{ c.tipo_txt }}</td>
+          <td class="td-wrap">{{ c.banco or '—' }}</td>
+          <td data-valor="{{ c.ultimo_movimiento.isoformat() if c.ultimo_movimiento else '' }}">{{ c.ultimo_movimiento.strftime('%d/%m/%Y') if c.ultimo_movimiento else '—' }}</td>
+          <td class="td-right td-fuerte {{ 'td-danger' if c.saldo_libro < 0 }}" data-num="{{ c.saldo_libro }}">{{ c.moneda or '$' }} {{ (c.saldo_libro or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ c.saldo_extracto or 0 }}">{% if c.renglones %}{{ c.moneda or '$' }} {{ (c.saldo_extracto or 0) | miles }}{% else %}<span class="td-muted">—</span>{% endif %}</td>
+          <td class="td-right {{ 'td-danger' if c.diferencia and (c.diferencia | abs) > 0.009 }}" data-num="{{ c.diferencia or 0 }}">{{ (c.diferencia | miles) if c.diferencia is not none else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay cuentas de fondos habilitadas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card resumen">
+  <div class="card-body">
+    <div class="resumen-fila resumen-total"><span>Total en pesos, según el libro</span><strong class="mono">$ {{ total_libro | miles }}</strong></div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Órdenes de pago en curso', nota='Las pagadas y anuladas no piden nada.') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-ordenes" data-exportar="Órdenes de pago en curso" data-sin-orden>
+      <thead><tr><th>Estado</th><th class="th-right">Órdenes</th><th class="th-right">Importe</th></tr></thead>
+      <tbody>
+        {% for o in ordenes %}
+        <tr>
+          <td>{{ ui.estado(o.texto, o.tipo) }}</td>
+          <td class="td-right" data-num="{{ o.cant }}">{{ o.cant }}</td>
+          <td class="td-right td-fuerte" data-num="{{ o.total }}">{{ (o.total or 0) | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Extractos bancarios', nota='Último movimiento informado por el banco en cada cuenta.') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-extractos" data-exportar="Estado de los extractos">
+      <thead><tr><th>Cuenta</th><th>Último movimiento</th><th>Importado</th><th class="th-right">Renglones</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for c in bancos %}
+        <tr>
+          <td class="td-fuerte">{{ c.nombre }}</td>
+          <td data-valor="{{ c.ultimo_extracto.isoformat() if c.ultimo_extracto else '' }}">{{ c.ultimo_extracto.strftime('%d/%m/%Y') if c.ultimo_extracto else '—' }}</td>
+          <td class="td-muted">{{ c.ultimo_import.strftime('%d/%m/%Y %H:%M') if c.ultimo_import else '—' }}</td>
+          <td class="td-right" data-num="{{ c.renglones }}">{{ c.renglones or '—' }}</td>
+          <td>{% if not c.renglones %}{{ ui.estado('Sin extractos', 'neutro') }}
+              {% elif c.dias_extracto > 7 %}{{ ui.estado('Atrasado ' ~ c.dias_extracto ~ ' días', 'warn') }}
+              {% else %}{{ ui.estado('Al día', 'ok') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="5" class="no-data">No hay cuentas de banco habilitadas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var ft = document.getElementById('f-tipo');
+  gestion_admTable('tbl-cuentas', { pageSize: 20, filtroExtra: function (tr) {
+    return !ft.value || tr.dataset.tipo === ft.value; } });
+  gestion_admTable('tbl-ordenes', { pageSize: 20 });
+  gestion_admTable('tbl-extractos', { pageSize: 20 });
+});
+</script>
+{% endblock %}

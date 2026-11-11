@@ -1,0 +1,221 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Menú{% endblock %}
+
+{#
+  Menú (admin.menu). Una opción es una rama (sin URL, agrupa otras) o una
+  pantalla (con URL, sin nada debajo). Hasta {{ niveles }} niveles, los que
+  dibuja base.html; el nivel se recalcula solo al mover una rama. Una con
+  opciones debajo no se elimina (la base las borraría en cascada). Usuarios,
+  Roles y Menú no se desactivan ni cambian de URL.
+#}
+{% set it = item or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Menú</h1>
+    <p>Las opciones del menú lateral. Cada pantalla es también un permiso: se asigna en Roles o en Permisos por Usuario.</p>
+  </div>
+  <div class="page-header-acciones">{{ ui.boton('Nueva opción', href=url_for('admin.menu', nuevo=1), icono_='agregar') }}</div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', arbol|length), ('datos', 'Editar' if it.get('id') else 'Nueva', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por nombre o URL…', tam_pagina=9999) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Activas e inactivas</option>
+        <option value="1">Activas</option>
+        <option value="0">Inactivas</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
+        <option value="">Ramas y pantallas</option>
+        <option value="R">Ramas</option>
+        <option value="P">Pantallas</option>
+        <option value="X">Pantallas pendientes</option>
+      </select>{% endcall %}
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-sinrol"> Sin ningún rol</label>
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-menu" data-exportar="Menú">
+        <thead>
+          <tr>
+            <th class="col-acciones" data-no-sort>Acciones</th>
+            <th>Opción</th>
+            <th data-no-export>Ícono</th>
+            <th>URL</th>
+            <th>Pantalla</th>
+            <th class="th-right">Orden</th>
+            <th class="th-right">Nivel</th>
+            <th>Roles</th>
+            <th class="th-right">Sueltos</th>
+            <th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for n in arbol %}
+          <tr id="m{{ n.id }}" class="{{ 'fila-baja' if not n.activo }}" data-activo="{{ n.activo }}"
+              data-tipo="{{ ('X' if not n.pantalla else 'P') if n.url else 'R' }}" data-sinrol="{{ 0 if n.roles else 1 }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('admin.menu', edit=n.id)) }}
+              {% if not n.url and n.prof < niveles - 1 %}
+                {{ ui.accion('agregar', titulo='Agregar una opción dentro', href=url_for('admin.menu', padre=n.id)) }}
+              {% endif %}
+              {% if not n.protegida %}
+                {% if n.activo %}
+                  {{ ui.accion('baja', titulo='Desactivar: deja de verse y de dar permiso', onclick='enviar(this)',
+                               datos={'id': n.id, 'accion': 'baja'}) }}
+                {% else %}
+                  {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': n.id, 'accion': 'reactivar'}) }}
+                {% endif %}
+                {% if not n.n_hijos %}
+                  {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': n.id, 'nombre': n.nombre}) }}
+                {% endif %}
+              {% endif %}
+            </div></td>
+            <td class="td-arbol {{ 'td-fuerte' if not n.url }}" style="--sangria:{{ n.prof }};">{{ n.nombre }}
+              {% if n.protegida %} <span class="chip" title="No se desactiva ni cambia de URL">obligatoria</span>{% endif %}</td>
+            <td class="td-center">{% if n.icono_svg %}<span class="menu-icono-muestra">{{ n.icono_svg|svg_unico }}</span>{% endif %}</td>
+            <td class="td-mono">{{ n.url or '' }}</td>
+            <td data-valor="{{ '' if not n.url else ('Hecha' if n.pantalla else 'Pendiente') }}">
+              {% if n.url %}{{ ui.estado('Hecha', 'ok') if n.pantalla else ui.estado('Pendiente', 'warn') }}
+              {% else %}<span class="td-muted">rama</span>{% endif %}
+            </td>
+            <td class="td-right td-muted" data-num="{{ n.orden }}">{{ n.orden }}</td>
+            <td class="td-right td-muted" data-num="{{ n.prof + 1 }}">{{ n.prof + 1 }}</td>
+            <td>{{ n.roles or '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not n.extras }}" data-num="{{ n.extras }}">{{ n.extras }}</td>
+            <td>{{ ui.estado('Activa', 'ok') if n.activo else ui.estado('Inactiva', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">El menú está vacío.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head('Editar opción' if it.get('id') else 'Nueva opción',
+                         nota='Una nueva no la tiene nadie: después se asigna en Roles.' if not it.get('id') else None) %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('admin.menu'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('admin.menu') }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ it.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:5;">
+            <label>Nombre <span class="req">*</span></label>
+            <input type="text" name="nombre" required maxlength="100" value="{{ it.get('nombre') or '' }}">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Dentro de</label>
+            <select name="padre_id">
+              <option value="">— Raíz del menú —</option>
+              {% for n in ramas %}
+              <option value="{{ n.id }}" {{ 'selected' if it.get('padre_id') == n.id }}>{{ '· ' * n.prof }}{{ n.nombre }}{% if not n.activo %} (inactiva){% endif %}</option>
+              {% endfor %}
+            </select>
+            <small class="campo-ayuda">Solo ramas: una pantalla no lleva opciones debajo.</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Orden</label>
+            <input type="number" name="orden" step="1" value="{{ it.get('orden') if it.get('orden') is not none else 0 }}">
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>URL</label>
+            <input type="text" name="url" class="mono" maxlength="255" value="{{ it.get('url') or '' }}"
+                   placeholder="/modulo/pantalla" {{ 'readonly' if it.get('protegida') }}>
+            <small class="campo-ayuda">{% if it.get('protegida') %}No se cambia: sin esta pantalla nadie podría volver a dar permisos.
+              {% else %}Vacía si es una rama. Empieza con «/». Una que todavía no tiene pantalla da «pantalla pendiente».{% endif %}</small>
+          </div>
+          <div class="campo" style="--span:5;">
+            <label>Ícono (SVG)</label>
+            <textarea name="icono_svg" class="mono" rows="2" id="icono-svg"
+                      placeholder="<svg width=&quot;15&quot; height=&quot;15&quot; viewBox=&quot;0 0 24 24&quot; …>…</svg>">{{ it.get('icono_svg') or '' }}</textarea>
+            <small class="campo-ayuda">Se ve en todos los niveles del menú. En colores (Fluent Color, 18 × 18, como los de sql/menu_iconos_color_20261111.sql) o de trazo con stroke="currentColor".</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label>Vista previa</label>
+            <span class="menu-icono-muestra grande" id="icono-muestra">{{ (it.get('icono_svg') or '')|svg_unico }}</span>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label class="campo-check">
+              <input type="checkbox" name="activo" value="1" {{ 'checked' if it.get('activo') }}
+                     {{ 'disabled' if it.get('protegida') }}>
+              Activa
+            </label>
+            {% if it.get('protegida') %}<input type="hidden" name="activo" value="1">{% endif %}
+          </div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if it.get('id') else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la opción?</div>
+    <div class="modal-texto"><span id="modal-nombre"></span>. Se quita también de los roles y usuarios que la tienen.</div>
+    <form method="post" action="{{ url_for('admin.menu') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('admin.menu') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), ft = document.getElementById('f-tipo'),
+      fs = document.getElementById('f-sinrol');
+  gestion_admTable('tbl-menu', {
+    pageSize: 9999,
+    filtroExtra: function (tr) {
+      if (fe.value && tr.dataset.activo !== fe.value) return false;
+      if (ft.value === 'P' && tr.dataset.tipo === 'R') return false;
+      if (ft.value && ft.value !== 'P' && tr.dataset.tipo !== ft.value) return false;
+      if (fs.checked && tr.dataset.sinrol !== '1') return false;
+      return true;
+    }
+  });
+  // Vista previa del ícono: se dibuja en un <template> para no ejecutar nada
+  // (el servidor rechaza scripts y on…= de todos modos).
+  var ta = document.getElementById('icono-svg'), muestra = document.getElementById('icono-muestra');
+  ta.addEventListener('input', function () {
+    var v = ta.value.trim();
+    muestra.textContent = '';
+    if (!/^<svg[\s>]/i.test(v) || /<\s*script|\son\w+\s*=|javascript:/i.test(v)) return;
+    var t = document.createElement('template'); t.innerHTML = v;
+    var svg = t.content.querySelector('svg');
+    if (svg) muestra.appendChild(svg);
+  });
+});
+</script>
+{% endblock %}

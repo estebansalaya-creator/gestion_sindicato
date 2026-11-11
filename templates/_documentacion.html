@@ -1,0 +1,127 @@
+{# ══════════════════════════════════════════════════════════════════════════
+   Documentación adjunta de una entidad (documentacion.py). Hoy la usa la
+   ficha del afiliado; sirve igual para cualquier otra.
+
+       {% with url_guardar=url_for('afiliados.documentacion', id_af=…),
+               ver_endpoint='afiliados.ver_documento', ver_args={'id_af': …},
+               documentos=documentos, tipos=tipos_doc_adj, faltantes=doc_faltantes,
+               extensiones=doc_extensiones, max_mb=doc_max_mb, solo_lectura=consulta %}
+         {% include '_documentacion.html' %}
+       {% endwith %}
+
+   El archivo se abre en otra pestaña (un PDF o una imagen se ven en el
+   navegador). Con `solo_lectura` se dibuja la grilla sin el formulario ni el
+   botón de eliminar.
+   ══════════════════════════════════════════════════════════════════════════ #}
+{% import "_ui.html" as ui %}
+
+{% if faltantes %}
+<div class="card-aviso">
+  {{ ui.aviso('Falta documentación obligatoria: ' ~ faltantes|join(', ') ~ '.', 'warning') }}
+</div>
+{% endif %}
+
+<div class="data-table-wrap">
+<table class="data-table compacta" data-exportar="Documentación">
+  <thead><tr>
+    <th class="col-acciones" data-no-sort>Acciones</th>
+    <th>Tipo</th>
+    <th>Archivo</th>
+    <th class="th-right">Tamaño</th>
+    <th>Observaciones</th>
+    <th class="th-right">Subido</th>
+    <th>Por</th>
+  </tr></thead>
+  <tbody>
+    {% for d in documentos %}
+    <tr>
+      <td><div class="acciones">
+        {{ ui.accion('ver', href=url_for(ver_endpoint, id_documento=d.id_documento, **ver_args),
+                     blank=True, titulo='Abrir en otra pestaña') }}
+        {% if not solo_lectura %}
+        <form method="post" action="{{ url_guardar }}" class="form-en-linea"
+              data-nombre="{{ d.nombre_original }}"
+              onsubmit="return confirm('¿Eliminar «' + this.dataset.nombre + '»? Se borra también el archivo.');">
+          <input type="hidden" name="accion" value="borrar">
+          <input type="hidden" name="id_documento" value="{{ d.id_documento }}">
+          {{ ui.accion('borrar', submit=True) }}
+        </form>
+        {% endif %}
+      </div></td>
+      <td class="td-fuerte">{{ d.tipo }}</td>
+      <td class="td-wrap">{{ d.nombre_original }}</td>
+      <td class="td-right td-muted" data-num="{{ d.tamanio_bytes or 0 }}">
+        {%- if d.tamanio_bytes is none %}—
+        {%- elif d.tamanio_bytes >= 1048576 %}{{ '%.1f'|format(d.tamanio_bytes / 1048576)|replace('.', ',') }} MB
+        {%- else %}{{ (d.tamanio_bytes / 1024)|round(0, 'ceil')|int }} KB{% endif -%}
+      </td>
+      <td class="td-muted td-wrap">{{ d.observaciones or '—' }}</td>
+      <td class="td-right">{{ d.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+      <td class="td-muted">{{ d.subido_por or '—' }}</td>
+    </tr>
+    {% else %}
+    <tr class="no-data-row"><td colspan="7" class="no-data">Sin documentación adjunta.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{% if not solo_lectura %}
+<form method="post" action="{{ url_guardar }}" enctype="multipart/form-data" id="form-documento"
+      data-proceso="Subiendo el documento…" onsubmit="return validarDocumento(this)">
+  <input type="hidden" name="accion" value="subir">
+  <div class="bloque">
+    <div class="bloque-titulo">Agregar documento</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="doc-tipo">Tipo <span class="req">*</span></label>
+        <select name="id_tipo_doc" id="doc-tipo" required>
+          {{ ui.opciones(tipos, none, clave='id_tipo_doc', texto='descripcion', vacio='— Elegir —') }}
+        </select>
+      </div>
+      <div class="campo" style="--span:4;">
+        <label>Archivo <span class="req">*</span></label>
+        <label class="drop-zone chica">
+          {{ ui.icono('subir', 22) }}<span id="doc-nombre">Elegí el PDF o la imagen</span>
+          <input type="file" name="archivo" id="doc-archivo" class="oculto"
+                 accept="{{ extensiones|join(',') }},application/pdf,image/*"
+                 data-max-mb="{{ max_mb }}" onchange="elegirDocumento(this)">
+        </label>
+        <small class="campo-ayuda">PDF o imagen, hasta {{ max_mb }} MB.</small>
+      </div>
+      <div class="campo" style="--span:4;">
+        <label for="doc-observaciones">Observaciones</label>
+        <input type="text" name="observaciones" id="doc-observaciones" maxlength="300">
+      </div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    {{ ui.boton('Subir documento', icono_='subir', submit=True) }}
+  </div>
+</form>
+
+<script>
+function elegirDocumento(input) {
+  var f = input.files[0], nombre = document.getElementById('doc-nombre');
+  if (!f) { nombre.textContent = 'Elegí el PDF o la imagen'; return; }
+  // El tope se controla también en el servidor; acá es para no esperar la
+  // subida entera de un archivo que igual se va a rechazar.
+  if (f.size > parseFloat(input.dataset.maxMb) * 1024 * 1024) {
+    alert(f.name + ' supera los ' + input.dataset.maxMb + ' MB.');
+    input.value = '';
+    nombre.textContent = 'Elegí el PDF o la imagen';
+    return;
+  }
+  nombre.textContent = f.name;
+}
+// El input del archivo está oculto dentro de la zona: el `required` del
+// navegador no puede marcarlo, así que se avisa acá.
+function validarDocumento(form) {
+  if (!form.querySelector('#doc-archivo').files.length) {
+    alert('Elegí el archivo.');
+    return false;
+  }
+  return true;
+}
+</script>
+{% endif %}

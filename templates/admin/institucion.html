@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Datos del sindicato{% endblock %}
+
+{#
+  Datos del sindicato: el equivalente de «Parámetros de la Obra Social» de
+  gestion_adm. Una sola ficha, en bloques, como la del padrón.
+#}
+
+{% macro texto(campo, rotulo, span, largo, mono=False, tipo='text', req=False, ayuda=None, placeholder='') -%}
+<div class="campo" style="--span:{{ span }};">
+  <label for="{{ campo }}">{{ rotulo }}{% if req %} <span class="req">*</span>{% endif %}</label>
+  <input type="{{ tipo }}" name="{{ campo }}" id="{{ campo }}" maxlength="{{ largo }}"
+         value="{{ d.get(campo) or '' }}"{{ ' class=mono' if mono }}{{ ' required' if req }}
+         {% if placeholder %}placeholder="{{ placeholder }}"{% endif %}>
+  {% if ayuda %}<small class="campo-ayuda">{{ ayuda }}</small>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro fecha(campo, rotulo, span) -%}
+<div class="campo" style="--span:{{ span }};">
+  <label for="{{ campo }}">{{ rotulo }}</label>
+  <input type="date" name="{{ campo }}" id="{{ campo }}"
+         value="{{ d.get(campo).isoformat() if d.get(campo) else '' }}">
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Datos del sindicato</h1>
+    <p>Identificación, datos fiscales y condición de agente de retención. Salen en los documentos
+       que emite el sistema y en el encabezado de las pantallas.</p>
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% if falta_tabla %}
+{{ ui.aviso('Falta correr sql/institucion_20261107.sql: hasta entonces estos datos no se pueden guardar.', 'warning') }}
+{% else %}
+<form method="post" enctype="multipart/form-data" class="card" data-proceso="Guardando…">
+  {{ ui.card_head(d.get('nombre') or 'Sin cargar', nota=d.get('sigla')) }}
+
+  <div class="bloque">
+    <div class="bloque-titulo">Identificación</div>
+    <div class="campos">
+      {{ texto('nombre', 'Denominación', 6, 150, req=True) }}
+      {{ texto('sigla', 'Sigla', 2, 20) }}
+      {{ texto('cuit', 'CUIT', 4, 13, mono=True, placeholder='11 dígitos') }}
+      {{ texto('personeria_gremial', 'Personería gremial', 3, 60, placeholder='N° y resolución') }}
+      {{ texto('inscripcion_gremial', 'Inscripción gremial', 3, 60) }}
+      {{ texto('ambito', 'Ámbito de representación', 6, 250, placeholder='Personal y territorial') }}
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Datos fiscales</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="condicion_iva">Condición frente al IVA</label>
+        <select name="condicion_iva" id="condicion_iva">
+          {{ ui.opciones(condiciones_iva, d.get('condicion_iva'), clave='codigo', vacio='— Elegí —') }}
+        </select>
+      </div>
+      {{ texto('nro_iibb', 'N° de Ingresos Brutos', 3, 30, mono=True) }}
+      {{ fecha('inicio_actividades', 'Inicio de actividades', 3) }}
+      <div class="campo" style="--span:2;"></div>
+      {{ texto('exencion_ganancias', 'Exención en Ganancias', 6, 100,
+               placeholder='Certificado o resolución',
+               ayuda='La que se presenta a proveedores y bancos para que no retengan.') }}
+      {{ fecha('exencion_ganancias_vto', 'Vence', 3) }}
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Agente de retención</div>
+    <div class="campos" style="margin-bottom:14px;">
+      {{ texto('nro_resolucion_ret', 'Resolución o constancia de designación', 6, 100,
+               placeholder='Ej.: Disposición ARCA N° 1234/2024') }}
+    </div>
+    <div class="data-table-wrap" data-sin-scroll-arriba>
+      <table class="data-table compacta" data-sin-orden>
+        <thead>
+          <tr>
+            <th data-no-sort>Impuesto</th>
+            <th class="th-center" data-no-sort>Es agente</th>
+            <th class="th-right" data-no-sort>Alícuota por defecto</th>
+            <th data-no-sort>Configuración</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for imp, nombre, norma, nota in [
+               ('iva', 'IVA', 'RG 2854', 'La alícuota sale del padrón de ARCA y de la ficha del proveedor.'),
+               ('ganancias', 'Ganancias', 'RG 830', None),
+               ('iibb', 'Ingresos Brutos', '', None),
+               ('suss', 'SUSS', 'RG 1556', 'Según el tipo de servicio contratado.')] %}
+          <tr>
+            <td class="td-fuerte">{{ nombre }} {% if norma %}<span class="muted chico">{{ norma }}</span>{% endif %}</td>
+            <td class="td-center">
+              <input type="checkbox" name="ret_{{ imp }}" value="1" aria-label="Agente de retención de {{ nombre }}"
+                     {{ 'checked' if d.get('ret_' ~ imp) }} style="width:16px;height:16px;">
+            </td>
+            <td class="td-right">
+              <input type="text" inputmode="decimal" class="importe" name="ret_{{ imp }}_alicuota"
+                     aria-label="Alícuota por defecto de {{ nombre }}" style="width:80px;"
+                     value="{{ ('%.2f'|format(d.get('ret_' ~ imp ~ '_alicuota')|float)).replace('.', ',') if d.get('ret_' ~ imp ~ '_alicuota') is not none else '' }}"> %
+            </td>
+            <td class="td-wrap chico muted">
+              {% if imp == 'ganancias' %}
+              <div class="fila" style="flex-wrap:nowrap;">
+                <label for="ret_arca_tasa_ivaid" class="fuerte" style="color:var(--navy);white-space:nowrap;">Tasa de IVA para la base</label>
+                <select name="ret_arca_tasa_ivaid" id="ret_arca_tasa_ivaid" class="filtro" style="min-width:170px;">
+                  {{ ui.opciones(tasas_iva, d.get('ret_arca_tasa_ivaid'), clave='id', vacio='— sin definir (21%) —') }}
+                </select>
+              </div>
+              <div style="margin-top:4px;">La base es el importe de la orden dividido (1 + la tasa): con 21%, dividido 1,21.
+                El régimen (código SIR) y la alícuota dependen de cada proveedor.</div>
+              {% elif imp == 'iibb' %}
+              <div class="fila" style="flex-wrap:nowrap;">
+                <label for="ret_iibb_regimen" class="fuerte" style="color:var(--navy);">Régimen</label>
+                <select name="ret_iibb_regimen" id="ret_iibb_regimen" class="filtro">
+                  <option value="">—</option>
+                  {% for r in regimenes_iibb %}<option{{ ' selected' if d.get('ret_iibb_regimen') == r }}>{{ r }}</option>{% endfor %}
+                </select>
+              </div>
+              {% else %}{{ nota }}{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="campo-ayuda" style="margin-top:8px;">
+      La alícuota por defecto se usa solo cuando el proveedor no tiene una propia.
+    </p>
+  </div>
+
+  {% if 'cuota_alicuota' in d %}
+  <div class="bloque">
+    <div class="bloque-titulo">Cuota sindical</div>
+    <div class="campos">
+      <div class="campo" style="--span:3;">
+        <label for="cuota_alicuota">Alícuota (%) <span class="req">*</span></label>
+        <input type="text" inputmode="decimal" class="importe" name="cuota_alicuota" id="cuota_alicuota" required
+               value="{{ ('%.2f'|format(d.get('cuota_alicuota')|float)).replace('.', ',') if d.get('cuota_alicuota') is not none else '' }}">
+        <small class="campo-ayuda">Sobre la Remuneración imponible 5 del F.931.</small>
+      </div>
+      <div class="campo" style="--span:3;">
+        <label for="cuota_dia_vto">Día de vencimiento <span class="req">*</span></label>
+        <input type="number" min="1" max="31" name="cuota_dia_vto" id="cuota_dia_vto" required
+               value="{{ d.get('cuota_dia_vto') or '' }}">
+        <small class="campo-ayuda">Del mes siguiente al período.</small>
+      </div>
+    </div>
+    <p class="campo-ayuda">Los usa la Liquidación de Cuota Sindical. Cambiarlos no toca lo ya liquidado: rige al
+       liquidar o reliquidar un período.</p>
+  </div>
+  {% endif %}
+
+  <div class="bloque">
+    <div class="bloque-titulo">Domicilio y contacto</div>
+    <div class="campos">
+      {{ texto('domicilio', 'Domicilio', 6, 200) }}
+      {{ texto('localidad', 'Localidad', 3, 100) }}
+      <div class="campo" style="--span:3;">
+        <label for="provincia">Provincia</label>
+        <select name="provincia" id="provincia">
+          {{ ui.opciones(provincias, d.get('provincia'), clave='codigo', texto='nombre', vacio='— Elegí —') }}
+        </select>
+      </div>
+      {{ texto('cp', 'Código postal', 2, 8, mono=True) }}
+      {{ texto('telefono', 'Teléfono', 3, 50) }}
+      {{ texto('email', 'Email', 4, 100, tipo='email') }}
+      {{ texto('web', 'Sitio web', 3, 100) }}
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Autoridades</div>
+    <div class="campos">
+      {{ texto('secretario_general', 'Secretario general', 4, 150) }}
+      {{ texto('secretario_adjunto', 'Secretario adjunto', 4, 150) }}
+      {{ texto('tesorero', 'Tesorero o secretario de finanzas', 4, 150) }}
+    </div>
+  </div>
+
+  <div class="bloque">
+    <div class="bloque-titulo">Logo</div>
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label for="logo">Archivo</label>
+        <input type="file" name="logo" id="logo" accept=".png,.jpg,.jpeg,.svg">
+        <small class="campo-ayuda">PNG o JPG, hasta {{ max_mb }} MB; mejor con fondo transparente. Un SVG se ve en
+          las pantallas pero no sale en los PDF.</small>
+      </div>
+      {% if tiene_logo %}
+      <div class="campo" style="--span:6;">
+        <span class="campo-label">Logo actual</span>
+        <div class="fila">
+          <img src="{{ url_for('institucion.logo', v=(d.get('actualizado_at').timestamp()|int if d.get('actualizado_at') else 0)) }}"
+               alt="Logo" style="max-height:64px;max-width:200px;border:1px solid var(--border);border-radius:6px;padding:4px;background:#fff;">
+          <label class="campo-check" style="margin:0;padding:0;"><input type="checkbox" name="borrar_logo" value="1"> Quitar el logo</label>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="form-acciones">
+    {% if d.get('actualizado_at') %}
+    <span class="chico muted empuja" style="margin-left:0;margin-right:auto;">
+      Última modificación: {{ d.get('actualizado_at').strftime('%d/%m/%Y %H:%M') }}{% if d.get('actualizado_por') %} — {{ d.get('actualizado_por') }}{% endif %}
+    </span>
+    {% endif %}
+    {{ ui.boton('Guardar', submit=True, icono_='guardar') }}
+  </div>
+</form>
+{% endif %}
+{% endblock %}

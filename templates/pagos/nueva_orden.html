@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Nueva orden de pago{% endblock %}
+
+{#
+  Paso 1 de la orden a proveedor: a quién se le paga. Un renglón por proveedor
+  con comprobantes liquidados y saldo que no están en otra orden viva. El
+  proveedor se elige antes que los comprobantes: así «una orden, un
+  proveedor» es la forma de la pantalla y no un cuidado del que tilda.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Nueva orden de pago</h1>
+    <p>Proveedores con comprobantes liquidados por pagar. Elegí uno para armar su orden.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver a las órdenes', 'secondary', href=url_for('pagos.ordenes'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por proveedor, CUIT o rubro…', tam_pagina=50) %}
+    <label class="filtro-check"><input type="checkbox" class="filtro" id="f-credito"> Con crédito sin aplicar</label>
+    <label class="filtro-check"><input type="checkbox" class="filtro" id="f-ops"> Con órdenes sin pagar</label>
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-provs" data-exportar="Proveedores a pagar">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>Proveedor</th>
+          <th>CUIT</th>
+          <th>Rubro</th>
+          <th class="th-right">Comprob.</th>
+          <th class="th-right">Saldo a pagar</th>
+          <th class="th-right">Crédito sin aplicar</th>
+          <th>Órdenes sin pagar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in proveedores %}
+        <tr data-credito="{{ 1 if p.credito_n else 0 }}" data-ops="{{ 1 if p.ops_sin_pago else 0 }}">
+          <td><div class="acciones">
+            {% if p.id_proveedor %}
+            {{ ui.accion('agregar', titulo='Armar la orden', href=url_for('pagos.nueva_proveedor', id_proveedor=p.id_proveedor)) }}
+            {% endif %}
+          </div></td>
+          <td class="td-fuerte">{{ p.proveedor }}</td>
+          <td class="td-mono">{{ p.cuit or '' }}</td>
+          <td class="td-muted td-wrap">{{ p.rubros|join(', ') or '—' }}</td>
+          <td class="td-right" data-num="{{ p.n }}">{{ p.n }}</td>
+          <td class="td-right td-mono td-fuerte" data-num="{{ p.importe }}">{{ p.importe | miles }}</td>
+          <td class="td-right td-mono {{ 'td-muted' if not p.credito_n }}" data-num="{{ p.credito_importe }}">
+            {% if p.credito_n %}<span class="chip chip-alerta" title="{{ p.credito_n }} crédito(s): notas de crédito o pagos sin imputar">{{ p.credito_importe | miles }}</span>{% else %}—{% endif %}
+          </td>
+          <td class="td-wrap">
+            {% for o in p.ops_sin_pago %}
+            <a href="{{ url_for('pagos.orden', id_orden=o.id) }}" class="chip chip-alerta" title="{{ o.estado_txt }}">{{ o.clase_txt }} {{ o.nro_vis }}</a>
+            {% else %}<span class="td-muted">—</span>{% endfor %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay comprobantes liquidados por pagar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fc = document.getElementById('f-credito'), fo = document.getElementById('f-ops');
+  gestion_admTable('tbl-provs', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      if (fc.checked && tr.dataset.credito !== '1') return false;
+      if (fo.checked && tr.dataset.ops !== '1') return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

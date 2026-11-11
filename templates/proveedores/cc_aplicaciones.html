@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Aplicación de Comprobantes{% endblock %}
+
+{#
+  Aplicación de comprobantes (cc_prov.aplicaciones): cancelar facturas con
+  notas de crédito o con pagos y anticipos que tienen saldo a cuenta, sin mover
+  fondos, y desaplicar lo ya aplicado.
+
+  Sin proveedor: los que tienen saldo de los dos signos (algo abierto y algo
+  con qué cancelarlo) y, abajo, los demás con aplicaciones, que es la puerta
+  para desaplicar. Con proveedor: débitos, créditos, el formulario y las
+  aplicaciones registradas, un bloque debajo del otro. Se elige un débito y un
+  crédito; el importe propuesto es el menor de los dos disponibles. Lo que está
+  en una orden de pago sin pagar no se puede aplicar: se pagaría de más.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Aplicación de Comprobantes</h1>
+    <p>{% if proveedor %}{{ proveedor.razon_social }} · CUIT <span class="mono">{{ proveedor.cuit }}</span>
+       {%- else %}Cancelar facturas con notas de crédito o con pagos ya entregados, sin movimiento de fondos, o desaplicar lo aplicado.{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if proveedor %}
+      {{ ui.boton('Cambiar proveedor', 'secondary', href=url_for('cc_prov.aplicaciones'), icono_='volver') }}
+      {% if puede_cc %}{{ ui.boton('Estado de cuenta', 'secondary', href=url_for('cc_prov.estado_cuenta', id_proveedor=proveedor.id, vista='aplicacion')) }}{% endif %}
+    {% elif puede_cc %}
+      {{ ui.boton('Cuenta corriente', 'secondary', href=url_for('cc_prov.bandeja'), icono_='volver') }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if not proveedor %}
+{# ══ Sin proveedor: dónde hay algo que aplicar ══ #}
+<div class="card">
+  {{ ui.card_head('Proveedores con algo para aplicar', nota='comprobantes abiertos de un lado y notas de crédito, pagos o anticipos sin imputar del otro') }}
+  {% call ui.barra_filtros('Buscar por razón social, nombre de fantasía o CUIT…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-sug" data-exportar="Proveedores con saldo para aplicar">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Proveedor</th><th>CUIT</th>
+        <th class="th-right" data-tipo="n" title="Comprobantes con saldo">Débitos</th>
+        <th class="th-right">Deuda abierta</th>
+        <th class="th-right" data-tipo="n" title="Notas de crédito, pagos y anticipos con saldo">Créditos</th>
+        <th class="th-right">Crédito disponible</th>
+        <th class="th-right" data-orden="desc" title="El menor de los dos: lo que se puede cancelar">Aplicable</th>
+      </tr></thead>
+      <tbody>
+        {% for s in sugeridos %}
+        <tr>
+          <td><div class="acciones">{{ ui.boton('Aplicar', href=url_for('cc_prov.aplicaciones', id_proveedor=s.id_proveedor), chico=True) }}</div></td>
+          <td class="td-fuerte">{{ s.razon_social }}{% if s.nombre_fantasia and s.nombre_fantasia|lower != s.razon_social|lower %}<div class="chico muted">{{ s.nombre_fantasia }}</div>{% endif %}</td>
+          <td class="td-mono">{{ s.cuit }}</td>
+          <td class="td-right">{{ s.debitos }}</td>
+          <td class="td-right td-danger" data-num="{{ s.debito_pendiente or 0 }}">{{ (s.debito_pendiente or 0) | miles }}</td>
+          <td class="td-right">{{ s.creditos }}</td>
+          <td class="td-right td-ok" data-num="{{ s.credito_pendiente or 0 }}">{{ (s.credito_pendiente or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ s.aplicable or 0 }}">{{ (s.aplicable or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Ningún proveedor tiene saldo de los dos signos: no hay nada para aplicar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Otros proveedores con aplicaciones', nota='sin nada pendiente de aplicar: se entra para revisar o desaplicar') }}
+  {% call ui.barra_filtros('Buscar por razón social o CUIT…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-otros" data-exportar="Proveedores con aplicaciones">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Proveedor</th><th>CUIT</th>
+        <th class="th-right" data-tipo="n">Aplicaciones</th>
+        <th class="th-right" data-tipo="n">Manuales</th>
+        <th>Última</th>
+      </tr></thead>
+      <tbody>
+        {% for o in otros %}
+        <tr>
+          <td><div class="acciones">{{ ui.boton('Abrir', 'secondary', href=url_for('cc_prov.aplicaciones', id_proveedor=o.id), chico=True) }}</div></td>
+          <td class="td-fuerte">{{ o.razon_social }}</td>
+          <td class="td-mono">{{ o.cuit }}</td>
+          <td class="td-right">{{ o.aplicaciones }}</td>
+          <td class="td-right {{ 'td-muted' if not o.manuales }}">{{ o.manuales or 0 }}</td>
+          <td>{{ o.ultima.strftime('%d/%m/%Y') if o.ultima else '' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">No hay otros proveedores con aplicaciones.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% else %}
+{# ══ Con proveedor: débitos, créditos, aplicar, registradas ══ #}
+{% macro filtro_rubro(id) %}
+  {% if rubros | length > 1 %}
+  {% call ui.filtro('Rubro de pasivo') %}<select class="filtro" id="{{ id }}">
+    <option value="">Todos</option>
+    {% for r in rubros %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+  </select>{% endcall %}
+  {% endif %}
+{% endmacro %}
+
+<div class="card">
+  {{ ui.card_head('Débitos — facturas con saldo', nota='$ ' ~ ((debitos | sum(attribute='saldo')) | miles) ~ ' · elegí uno') }}
+  {% call ui.barra_filtros('Buscar por número, expediente o rubro…', exportar=True) %}{{ filtro_rubro('f-rubro-deb') }}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-deb" data-exportar="Débitos con saldo {{ proveedor.razon_social }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Elegir</th>
+        <th data-orden="asc">Fecha</th><th>Comprobante</th><th>Expediente</th><th>Rubro</th>
+        <th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
+        <th class="th-right" title="Lo que no está en una orden de pago sin pagar">Disponible</th>
+      </tr></thead>
+      <tbody>
+        {% for d in debitos %}
+        <tr data-id="{{ d.id }}" data-saldo="{{ d.disponible }}" data-rubro="{{ d.rubro or '' }}" data-rubro-id="{{ d.id_rubro_pasivo or '' }}"
+            data-ref="{{ d.descripcion }} {{ d.referencia }}" class="{{ 'fila-apagada' if d.disponible <= 0.01 }}">
+          <td>{% if d.disponible > 0.01 %}<input type="radio" name="sel-deb" aria-label="Elegir {{ d.referencia }}" onchange="elegir('deb', this)">{% endif %}</td>
+          <td>{{ d.fecha.strftime('%d/%m/%Y') if d.fecha else '' }}</td>
+          <td class="td-wrap"><span class="td-fuerte">{{ d.descripcion }}</span> <span class="td-mono">{{ d.referencia }}</span>
+            {%- if d.numero_completo %}{{ ui.marcas(d) }}{% endif %}
+            {%- if d.signo_dudoso %}<span class="td-motivo">{{ d.signo_dudoso }}</span>{% endif %}
+            {%- if d.reservado > 0.01 %}<span class="td-motivo">$ {{ d.reservado | miles }} en la orden {{ d.ordenes }}, sin pagar</span>{% endif %}</td>
+          <td>{{ ui.expediente(d.id_expediente, d.nro_expediente) }}</td>
+          <td>{{ d.rubro or '—' }}</td>
+          <td class="td-right" data-num="{{ d.importe_liquidado }}">{{ (d.importe_liquidado or 0) | miles }}</td>
+          <td class="td-right {{ 'td-muted' if not d.aplicado }}" data-num="{{ d.aplicado }}">{{ d.aplicado | miles }}</td>
+          <td class="td-right" data-num="{{ d.saldo }}">{{ d.saldo | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ d.disponible }}">{{ d.disponible | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene comprobantes con saldo.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Créditos — notas de crédito y pagos con saldo', nota='$ ' ~ ((creditos | sum(attribute='saldo')) | miles) ~ ' · elegí uno') }}
+  {% call ui.barra_filtros('Buscar por número, expediente o rubro…') %}{{ filtro_rubro('f-rubro-cre') }}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cre" data-exportar="Créditos con saldo {{ proveedor.razon_social }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Elegir</th>
+        <th data-orden="asc">Fecha</th><th>Tipo</th><th>Número</th><th>Expediente / orden</th><th>Rubro</th>
+        <th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
+      </tr></thead>
+      <tbody>
+        {% for c in creditos %}
+        <tr data-id="{{ c.id }}" data-saldo="{{ c.disponible }}" data-rubro="{{ c.rubro or '' }}" data-rubro-id="{{ c.id_rubro_pasivo or '' }}"
+            data-pago="{{ '1' if c.es_pago else '0' }}" data-ref="{{ c.referencia if c.es_pago else c.descripcion ~ ' ' ~ c.referencia }}">
+          <td><input type="radio" name="sel-cre" aria-label="Elegir {{ c.referencia }}" onchange="elegir('cre', this)"></td>
+          <td>{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}</td>
+          <td>{% if c.es_pago %}{{ ui.estado(c.descripcion, 'ok') }}{% else %}{{ c.descripcion }}{% endif %}</td>
+          <td class="td-wrap"><span class="td-mono">{{ c.referencia }}</span>
+            {%- if not c.es_pago and c.numero_completo %}{{ ui.marcas(c) }}{% endif %}
+            {%- if c.signo_dudoso %}<span class="td-motivo">{{ c.signo_dudoso }}</span>{% endif %}</td>
+          <td>{% if c.es_pago %}<span class="td-mono">Orden {{ c.nro_orden_vis }}</span>{% else %}{{ ui.expediente(c.id_expediente, c.nro_expediente) }}{% endif %}</td>
+          <td>{{ c.rubro or '—' }}</td>
+          <td class="td-right" data-num="{{ c.importe_total if c.es_pago else -(c.importe_liquidado|float) }}">{{ ((c.importe_total if c.es_pago else -(c.importe_liquidado|float)) or 0) | miles }}</td>
+          <td class="td-right {{ 'td-muted' if not c.aplicado }}" data-num="{{ c.aplicado }}">{{ c.aplicado | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ c.saldo }}">{{ c.saldo | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene notas de crédito ni pagos con saldo a cuenta.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<form method="post" action="{{ url_for('cc_prov.aplicar') }}" id="form-aplicar" class="card">
+  {{ ui.card_head('Aplicar', nota='Seleccioná un crédito y un débito. El importe propuesto es el menor de los dos saldos; podés bajarlo para aplicar en forma parcial.') }}
+  <input type="hidden" name="id_proveedor" value="{{ proveedor.id }}">
+  <input type="hidden" name="id_debito" id="id_debito">
+  <input type="hidden" name="id_credito" id="id_credito">
+  <input type="hidden" name="credito_es_pago" id="credito_es_pago" value="0">
+  <div class="card-body">
+    <div class="campos">
+      <div class="campo" style="--span:4;"><label>Débito seleccionado</label><input type="text" id="lbl-deb" value="—" readonly tabindex="-1"></div>
+      <div class="campo" style="--span:4;"><label>Crédito seleccionado</label><input type="text" id="lbl-cre" value="—" readonly tabindex="-1"></div>
+      <div class="campo" style="--span:4;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
+        <input type="text" name="importe" id="importe" class="inp-importe" inputmode="decimal" autocomplete="off" disabled>
+        <small class="campo-ayuda" id="aviso">Elegí un débito y un crédito para habilitar la aplicación.</small></div>
+      <div class="campo" style="--span:12;"><label for="f-obs">Observaciones</label>
+        <input type="text" name="observaciones" id="f-obs" maxlength="255"></div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    {{ ui.boton('Aplicar', submit=True, id='btn-aplicar') }}
+  </div>
+</form>
+
+<div class="card">
+  {{ ui.card_head('Aplicaciones registradas', nota='el botón de cada fila desaplica: la nota de crédito o el pago vuelven a quedar disponibles') }}
+  {% call ui.barra_filtros('Buscar por comprobante, expediente, pago u observación…') %}
+    {% call ui.filtro('Crédito') %}<select class="filtro" id="f-tipo">
+      <option value="">Todos</option><option value="nc">Notas de crédito</option><option value="pago">Pagos y anticipos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+      <option value="">Todos</option>
+      {% for k, v in origenes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-aplic" data-exportar="Aplicaciones {{ proveedor.razon_social }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Fecha</th><th>Crédito</th><th>Aplicado a</th><th class="th-center">Origen</th>
+        <th>Observaciones</th><th class="th-right">Importe</th>
+      </tr></thead>
+      <tbody>
+        {% for a in aplicadas %}
+        <tr data-tipo="{{ 'pago' if a.es_pago else 'nc' }}" data-origen="{{ a.origen }}">
+          <td><div class="acciones">
+            {{ ui.accion('desaplicar', onclick='desaplicar(this)', datos={
+                 'url': url_for('cc_prov.deshacer', id_aplic=a.id), 'importe': '%.2f' % (a.importe_aplicado | float),
+                 'credito': a.credito_txt, 'debito': a.debito_txt, 'pago': '1' if a.es_pago else '0', 'origen': a.origen}) }}
+          </div></td>
+          <td>{{ a.fecha.strftime('%d/%m/%Y') if a.fecha else '' }}</td>
+          <td class="td-wrap">{% if a.es_pago %}{{ ui.estado('Pago', 'ok') }} {% endif %}{{ a.credito_txt }}
+            <div class="chico muted">{% if a.es_pago %}{{ a.fecha_pago.strftime('%d/%m/%Y') if a.fecha_pago else '' }}
+              {% if a.id_orden %}· <a href="{{ url_for('pagos.orden', id_orden=a.id_orden) }}" target="_blank" rel="noopener">ver orden</a>{% endif %}
+              {% else %}{{ ui.expediente(a.id_exp_credito, a.exp_credito) }}{% endif %}</div></td>
+          <td class="td-wrap">{{ a.debito_txt }}
+            <div class="chico muted">{{ ui.expediente(a.id_exp_debito, a.exp_debito) }}
+              {% if a.estado_debito in ('anulado', 'reintegro') %}<span title="El expediente de la factura está {{ a.estado_debito }}">{{ ui.estado(a.estado_debito | capitalize, 'danger') }}</span>{% endif %}</div></td>
+          <td class="td-center">{{ ui.estado(a.origen_txt, 'neutro' if a.origen == 'migracion' else ('ok' if a.origen == 'pago' else 'info')) }}</td>
+          <td class="td-muted td-wrap">{{ a.observaciones or '' }}{% if a.usuario %}<div class="chico">{{ a.usuario }}</div>{% endif %}</td>
+          <td class="td-right td-fuerte" data-num="{{ a.importe_aplicado }}">{{ (a.importe_aplicado or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">Este proveedor no tiene aplicaciones registradas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% include "proveedores/_desaplicar.html" %}
+
+<script>
+var sel = { deb: null, cre: null };
+function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// El rubro de pasivo separa cuentas que no se compensan entre sí: elegido uno
+// de un lado, del otro se apaga lo que es de otro rubro (sin rubro, no se
+// apaga: no hay con qué decidir). El servidor lo controla igual.
+function compatibles(idTabla, rubro) {
+  document.querySelectorAll('#' + idTabla + ' tbody tr[data-id]').forEach(function (tr) {
+    var choca = rubro && tr.dataset.rubroId && tr.dataset.rubroId !== rubro;
+    var r = tr.querySelector('input[type=radio]');
+    if (r) { r.disabled = !!choca; if (choca && r.checked) { r.checked = false; tr.classList.remove('fila-actual'); sel[idTabla === 'tbl-deb' ? 'deb' : 'cre'] = null; } }
+    tr.classList.toggle('fila-apagada', !!choca || (idTabla === 'tbl-deb' && parseFloat(tr.dataset.saldo) <= 0.01));
+  });
+}
+function elegir(lado, radio) {
+  var tr = radio.closest('tr'), tabla = lado === 'deb' ? 'tbl-deb' : 'tbl-cre';
+  document.querySelectorAll('#' + tabla + ' tbody tr').forEach(function (x) { x.classList.remove('fila-actual'); });
+  tr.classList.add('fila-actual');
+  sel[lado] = { id: tr.dataset.id, saldo: parseFloat(tr.dataset.saldo), ref: tr.dataset.ref,
+                esPago: tr.dataset.pago === '1', rubro: tr.dataset.rubroId || '' };
+  compatibles(lado === 'deb' ? 'tbl-cre' : 'tbl-deb', sel[lado].rubro);
+  actualizar();
+}
+function actualizar() {
+  var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  document.getElementById('id_debito').value = sel.deb ? sel.deb.id : '';
+  document.getElementById('id_credito').value = sel.cre ? sel.cre.id : '';
+  document.getElementById('credito_es_pago').value = sel.cre && sel.cre.esPago ? '1' : '0';
+  document.getElementById('lbl-deb').value = sel.deb ? sel.deb.ref + ' · ' + plata(sel.deb.saldo) : '—';
+  document.getElementById('lbl-cre').value = sel.cre ? sel.cre.ref + ' · ' + plata(sel.cre.saldo) : '—';
+  if (sel.deb && sel.cre) {
+    var tope = Math.min(sel.deb.saldo, sel.cre.saldo);
+    inp.disabled = false;
+    inp.dataset.tope = tope;
+    inp.value = tope.toFixed(2);
+    fmtMilesInit(inp);
+    aviso.textContent = 'Máximo aplicable: ' + plata(tope);
+  } else {
+    inp.disabled = true;
+    inp.value = '';
+    aviso.textContent = 'Elegí un débito y un crédito para habilitar la aplicación.';
+  }
+}
+document.getElementById('form-aplicar').addEventListener('submit', function (ev) {
+  var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
+  var tope = parseFloat(inp.dataset.tope || '0');
+  var error = !(sel.deb && sel.cre) ? 'Elegí un débito y un crédito.'
+            : !(v > 0) ? 'El importe tiene que ser mayor que cero.'
+            : v > tope + 0.01 ? 'El importe no puede superar ' + plata(tope) + '.' : '';
+  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); }
+});
+document.addEventListener('DOMContentLoaded', function () {
+  function porRubro(id) {
+    var s = document.getElementById(id);
+    return function (tr) { return !s || !s.value || tr.dataset.rubro === s.value; };
+  }
+  gestion_admTable('tbl-deb', { pageSize: 20, filtroExtra: porRubro('f-rubro-deb') });
+  gestion_admTable('tbl-cre', { pageSize: 20, filtroExtra: porRubro('f-rubro-cre') });
+  var fTipo = document.getElementById('f-tipo'), fOrigen = document.getElementById('f-origen');
+  gestion_admTable('tbl-aplic', { pageSize: 20, filtroExtra: function (tr) {
+    return (!fTipo.value || tr.dataset.tipo === fTipo.value) && (!fOrigen.value || tr.dataset.origen === fOrigen.value);
+  } });
+});
+</script>
+{% endif %}
+{% endblock %}

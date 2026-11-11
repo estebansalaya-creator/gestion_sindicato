@@ -1,0 +1,1597 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Sindicato{% endblock %} — Gestión Sindical</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  {# Toda la presentación sale de static/css/sindicato.css. Las plantillas no
+     traen <style> propio: ver la guía en /estilos. El ?v= es la fecha del
+     archivo, para que el navegador no se quede con una versión vieja. #}
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sindicato.css') }}?v={{ v_css }}">
+  <!-- ── gestion_admTable: Pagination + Filter + Sort ───────── -->
+<script>
+/* ── Grillas ──────────────────────────────────────────────────────────────
+   Filtro, orden, paginación y exportación de cualquier .data-table. Los
+   controles los busca dentro de la .card de la tabla, por clase; los arma la
+   macro `ui.barra_filtros` y son los mismos en todas las pantallas:
+
+     .filter-input        búsqueda de texto, filtra mientras se escribe
+     .filtro              filtros propios: se aplican solos al cambiar, salvo las
+                          fechas (input type=date o .filtro-fecha), que esperan
+                          a Filtrar o a Enter
+     .btn-filtrar         aplica
+     .btn-quitar-filtro   vuelve todo a como estaba; deshabilitado si no hay filtro
+     .btn-exportar        baja un .xlsx con las filas filtradas (todas las páginas)
+
+   La exportación saltea la columna de acciones (th.col-acciones) y las que
+   tengan data-no-export. El tipo de cada columna sale de la cabecera:
+   th-right → número; td-mono en la celda → texto (CUIL, CUIT, códigos);
+   el resto, fecha si parece fecha y texto si no. Una celda puede mandar otro
+   valor que el que muestra con data-valor (texto, tal cual) o data-num (un
+   número sin formato, con punto decimal). El nombre del archivo, de
+   data-exportar en la tabla. */
+var URL_EXPORTAR_EXCEL = "{{ url_for('exportar.excel') }}";
+
+function gestion_admTable(tableId, opts) {
+  opts = opts || {};
+  var tbl = typeof tableId === 'string' ? document.getElementById(tableId) : tableId;
+  if (!tbl) return;
+  // Una sola vez por tabla: la inicialización automática del final de este
+  // archivo no debe pisar la que hizo la pantalla con sus filtros.
+  if (tbl._grilla) return tbl._grilla;
+  var tbody = tbl.querySelector('tbody');
+  var allRows = Array.from(tbody.querySelectorAll('tr:not(.total-row):not(.no-data-row)'));
+  var pageSize = opts.pageSize || 20;
+  var currentPage = 1;
+  var filteredRows = allRows.slice();
+  var sortCol = -1, sortDir = 1;
+  var card = tbl.closest('.card') || document.body;
+
+  var filterInput = card.querySelector('.filter-input');
+  var pageSizeSel = card.querySelector('.page-size-select');
+  var countEl     = card.querySelector('.filter-count');
+  var pagBar      = card.querySelector('.pagination-controls');
+  var pgInfo      = card.querySelector('.pagination-info');
+
+  if (pageSizeSel) {
+    pageSizeSel.value = pageSize;
+    pageSizeSel.addEventListener('change', function() { pageSize = parseInt(this.value); currentPage = 1; render(); });
+  }
+  if (filterInput) {
+    filterInput.addEventListener('input', function() { currentPage = 1; applyFilter(); });
+  }
+
+  var btnFiltrar = card.querySelector('.btn-filtrar');
+  var btnQuitar  = card.querySelector('.btn-quitar-filtro');
+  var btnExcel   = card.querySelector('.btn-exportar');
+  var extras     = Array.from(card.querySelectorAll('.filter-bar .filtro, .filter-bar .filtro-check input'));
+
+  // Los filtros de selección (select, casilla, texto) aplican solos al
+  // cambiar. Las fechas no: mientras se tipea «01/0» el navegador ya dispara
+  // `change` con una fecha a medio escribir, y la grilla saltaría con cada
+  // dígito. Esas esperan a Filtrar o a Enter.
+  function esFecha(c) {
+    return c.type === 'date' || c.type === 'month' || c.classList.contains('filtro-fecha');
+  }
+  extras.forEach(function (c) {
+    if (esFecha(c)) {
+      c.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); applyFilter(); } });
+      c.addEventListener('input', function () { if (btnQuitar) btnQuitar.disabled = !hayFiltro(); });
+    } else {
+      c.addEventListener('change', applyFilter);
+    }
+  });
+  if (btnFiltrar) btnFiltrar.addEventListener('click', applyFilter);
+  if (btnQuitar) btnQuitar.addEventListener('click', function () {
+    if (filterInput) filterInput.value = '';
+    extras.forEach(function (c) {
+      if (c.type === 'checkbox' || c.type === 'radio') c.checked = c.defaultChecked;
+      else if (c.tagName === 'SELECT') c.selectedIndex = inicialSelect(c);
+      else c.value = c.defaultValue;
+    });
+    applyFilter();
+    if (filterInput) filterInput.focus();
+  });
+  if (btnExcel) btnExcel.addEventListener('click', function () { exportar(btnExcel); });
+
+  // La opción con la que arranca un select: la marcada en el HTML o, si no
+  // hay ninguna, la primera. Comparar opción por opción con defaultSelected
+  // daba «cambiado» en un select recién cargado sin `selected`.
+  function inicialSelect(c) {
+    var i = Array.from(c.options).findIndex(function (o) { return o.defaultSelected; });
+    return i < 0 ? 0 : i;
+  }
+
+  function hayFiltro() {
+    if (filterInput && filterInput.value.trim()) return true;
+    return extras.some(function (c) {
+      if (c.type === 'checkbox' || c.type === 'radio') return c.checked !== c.defaultChecked;
+      if (c.tagName === 'SELECT') return c.selectedIndex !== inicialSelect(c);
+      return c.value !== c.defaultValue;
+    });
+  }
+
+  function exportar(boton) {
+    var ths = Array.from(tbl.querySelectorAll('thead th'));
+    var muestra = filteredRows[0];
+    var cols = [];
+    ths.forEach(function (th, i) {
+      if (th.classList.contains('col-acciones') || th.dataset.noExport !== undefined) return;
+      var celda = muestra && muestra.cells[i];
+      var tipo = th.dataset.tipo
+        || (th.classList.contains('th-right') ? 'n'
+        : (celda && celda.classList.contains('td-mono') ? 't' : ''));
+      cols.push({ i: i, titulo: th.textContent.replace(/[▲▼]/g, '').trim(), tipo: tipo });
+    });
+    var filas = filteredRows.map(function (tr) {
+      return cols.map(function (c) {
+        var td = tr.cells[c.i];
+        if (!td) return '';
+        if (td.dataset.valor !== undefined) return td.dataset.valor;
+        // data-num: el número sin formato (punto decimal). Se pasa con coma,
+        // que es como el servidor lee los importes: «2321251.1» leído como
+        // número argentino serían veintitrés millones.
+        if (td.dataset.num !== undefined) return String(td.dataset.num).replace('.', ',');
+        var v = td.textContent.replace(/\s+/g, ' ').trim();
+        // Los signos de pantalla se traducen: el tilde es Sí, la cruz es No y
+        // la raya —el «sin dato» de todas las grillas— es una celda vacía.
+        return v === '✓' ? 'Sí' : v === '✗' ? 'No' : v === '—' ? '' : v;
+      });
+    });
+    var nombre = tbl.dataset.exportar
+      || (document.querySelector('.page-header h1') || {}).textContent || 'grilla';
+    nombre = nombre.trim();
+
+    boton.disabled = true;
+    fetch(URL_EXPORTAR_EXCEL, {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        nombre: nombre,
+        columnas: cols.map(function (c) { return { titulo: c.titulo, tipo: c.tipo }; }),
+        filas: filas
+      })
+    }).then(function (r) {
+      if (!r.ok) return r.json().then(function (j) { throw new Error(j.error || r.statusText); },
+                                      function () { throw new Error(r.status + ' ' + r.statusText); });
+      var nombreArchivo = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/);
+      return r.blob().then(function (b) { return [b, nombreArchivo ? nombreArchivo[1] : nombre + '.xlsx']; });
+    }).then(function (par) {
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(par[0]);
+      a.download = par[1];
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+    }).catch(function (e) {
+      alert('No se pudo exportar a Excel: ' + e.message);
+    }).finally(function () { boton.disabled = false; });
+  }
+
+  var RE_FECHA = /^(\d{2})\/(\d{2})\/(\d{4})/;      // dd/mm/aaaa
+  var RE_NUM   = /^-?\d+(\.\d+)?$/;                  // ya normalizado
+
+  /* Valor comparable de una celda: fecha → aaaammdd, importe → número,
+     resto → texto. Sin el chequeo estricto de RE_NUM, parseFloat('01/10/2023')
+     devolvía 1 y las fechas se ordenaban por día. */
+  function valorCelda(txt) {
+    var m = txt.match(RE_FECHA);
+    if (m) return { n: parseInt(m[3] + m[2] + m[1], 10) };
+    var limpio = txt.replace(/[$.,%\s]/g, '');
+    if (limpio && RE_NUM.test(limpio)) return { n: parseFloat(limpio) };
+    return { s: txt };
+  }
+
+  tbl.querySelectorAll('thead th').forEach(function(th, i) {
+    if (th.dataset.noSort !== undefined) return;     // th data-no-sort para excluir
+    // th data-orden="asc|desc": la grilla ya viene ordenada así del servidor.
+    // Solo se marca la flecha y se toma como orden actual, para que el primer
+    // clic en esa columna la invierta en vez de repetir el mismo orden.
+    if (th.dataset.orden) {
+      sortCol = i; sortDir = th.dataset.orden === 'desc' ? -1 : 1;
+      th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+    }
+    th.addEventListener('click', function() {
+      if (sortCol === i) sortDir *= -1; else { sortCol = i; sortDir = 1; }
+      tbl.querySelectorAll('thead th').forEach(function(t) { t.classList.remove('sort-asc','sort-desc'); });
+      th.classList.add(sortDir === 1 ? 'sort-asc' : 'sort-desc');
+      filteredRows.sort(function(a, b) {
+        var av = valorCelda(a.cells[i] ? a.cells[i].textContent.trim() : '');
+        var bv = valorCelda(b.cells[i] ? b.cells[i].textContent.trim() : '');
+        if (av.n !== undefined && bv.n !== undefined) return (av.n - bv.n) * sortDir;
+        if (av.n !== undefined) return -1 * sortDir;   // números/fechas antes que texto
+        if (bv.n !== undefined) return  1 * sortDir;
+        return av.s.localeCompare(bv.s, 'es', { numeric: true }) * sortDir;
+      });
+      currentPage = 1;
+      render();
+    });
+  });
+
+  function normalize(s) { return s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); }
+
+  /* `opts.filtroExtra` es un segundo criterio, además del texto: recibe la
+     fila y devuelve si se muestra. Existe porque una pantalla puede necesitar
+     filtrar por algo que no se escribe —un checkbox, un select, un mínimo de
+     importe— y hacerlo por afuera escondiendo filas rompía la paginación, que
+     es la que decide qué se ve. Quien no lo pasa sigue funcionando igual.
+
+     Para reaplicarlo cuando cambia ese control está el objeto que devuelve
+     gestion_admTable: `.aplicarFiltro()`. */
+  function applyFilter() {
+    var q = normalize(filterInput ? filterInput.value : '');
+    var extra = typeof opts.filtroExtra === 'function' ? opts.filtroExtra : null;
+    filteredRows = allRows.filter(function(row) {
+      if (normalize(row.textContent).indexOf(q) === -1) return false;
+      return extra ? extra(row) : true;
+    });
+    currentPage = 1;
+    render();
+  }
+
+  function render() {
+    var total = filteredRows.length;
+    var pages = Math.max(1, Math.ceil(total / pageSize));
+    if (currentPage > pages) currentPage = pages;
+    var start = (currentPage - 1) * pageSize;
+    var end = Math.min(start + pageSize, total);
+
+    allRows.forEach(function(r) { r.style.display = 'none'; });
+    filteredRows.forEach(function(r, i) { r.style.display = (i >= start && i < end) ? '' : 'none'; });
+
+    /* El sort ordena el array: hay que reflejarlo en el DOM o las filas se
+       siguen viendo en el orden original. Se reinsertan antes de la fila de
+       totales / sin-resultados para que esas queden siempre al final. */
+    var ancla = tbody.querySelector('tr.total-row, tr.no-data-row');
+    var frag = document.createDocumentFragment();
+    filteredRows.forEach(function(r) { frag.appendChild(r); });
+    tbody.insertBefore(frag, ancla || null);
+
+    var noData = tbody.querySelector('.no-data-row');
+    if (total === 0) {
+      if (!noData) {
+        noData = document.createElement('tr');
+        noData.className = 'no-data-row';
+        var cols = tbl.querySelectorAll('thead th').length;
+        noData.innerHTML = '<td colspan="'+cols+'" class="no-data">Sin resultados para este filtro.</td>';
+        tbody.appendChild(noData);
+      }
+      noData.style.display = '';
+    } else if (noData) { noData.style.display = 'none'; }
+
+    if (countEl) countEl.textContent = 'Mostrando '+(total===0?0:start+1)+'–'+end+' de '+total+' registros';
+    if (btnQuitar) btnQuitar.disabled = !hayFiltro();
+    if (btnExcel)  btnExcel.disabled  = total === 0;
+    if (pgInfo)  pgInfo.textContent  = 'Página '+currentPage+' de '+pages;
+
+    /* Enganche para quien necesite recalcular algo cuando cambia el filtro,
+       típicamente un pie de totales. Recibe TODAS las filas que pasaron el
+       filtro, no sólo las de la página: un total tiene que sumar lo filtrado
+       entero, no lo que se está viendo. Sin esto, una grilla con totales los
+       muestra del servidor y quedan mintiendo apenas se filtra por texto. */
+    if (typeof opts.onRender === 'function') opts.onRender(filteredRows);
+
+    if (pagBar) {
+      pagBar.innerHTML = '';
+      function mkBtn(label, page, disabled, active) {
+        var b = document.createElement('button');
+        b.className = 'page-btn' + (active ? ' active' : '');
+        b.textContent = label; b.disabled = !!disabled;
+        if (!disabled) b.onclick = function() { currentPage = page; render(); };
+        return b;
+      }
+      pagBar.appendChild(mkBtn('«', 1, currentPage===1));
+      pagBar.appendChild(mkBtn('‹', currentPage-1, currentPage===1));
+      var lo = Math.max(1, currentPage-2), hi = Math.min(pages, currentPage+2);
+      if (lo > 1) { pagBar.appendChild(mkBtn('1',1,false,false)); if(lo>2){var e=document.createElement('span');e.textContent='…';e.className='page-sep';pagBar.appendChild(e);} }
+      for (var p=lo; p<=hi; p++) pagBar.appendChild(mkBtn(p,p,false,p===currentPage));
+      if (hi < pages) { if(hi<pages-1){var e2=document.createElement('span');e2.textContent='…';e2.className='page-sep';pagBar.appendChild(e2);} pagBar.appendChild(mkBtn(pages,pages,false,false)); }
+      pagBar.appendChild(mkBtn('›', currentPage+1, currentPage===pages));
+      pagBar.appendChild(mkBtn('»', pages, currentPage===pages));
+    }
+  }
+
+  // Arranca filtrando y no solo dibujando: una pantalla puede abrir con un
+  // filtro ya elegido (Activos), y sin esto mostraba todo hasta que alguien
+  // tocara un control.
+  applyFilter();
+  tbl._grilla = { aplicarFiltro: applyFilter, filas: function() { return filteredRows; } };
+  return tbl._grilla;
+}
+// Alias para compatibilidad con templates
+var ospepTable = gestion_admTable;
+
+/* ── Importes ─────────────────────────────────────────────────────────────
+   El campo visible se escribe en formato argentino (1.234,56) y el valor que
+   viaja al servidor va en un hidden con punto decimal (1234.56):
+
+     <input type="hidden" name="importe" id="imp-1">
+     <input type="text" inputmode="decimal" class="importe"
+            oninput="mascaraImporte(this, 'imp-1')">
+
+   El punto se toma como coma decimal si lo siguen uno o dos dígitos
+   («1500.5»); con tres es de miles («1.500»). `pesos(n)` lo muestra con el
+   signo y `numeroAR(n)` sin él. */
+function numeroAR(n) {
+  return (Number(n) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pesos(n) { n = Number(n) || 0; return (n < 0 ? '-' : '') + '$ ' + numeroAR(Math.abs(n)); }
+function mascaraImporte(inp, idOculto) {
+  var raw = inp.value;
+  if (raw.indexOf(',') === -1) {
+    var ult = raw.lastIndexOf('.');
+    if (ult !== -1 && raw.length - ult - 1 <= 2) raw = raw.substring(0, ult) + ',' + raw.substring(ult + 1);
+  }
+  var i = raw.indexOf(','), dec = i !== -1;
+  var ent = (dec ? raw.substring(0, i) : raw).replace(/[^\d]/g, '');
+  var frc = dec ? raw.substring(i + 1).replace(/[^\d]/g, '').substring(0, 2) : null;
+  var entFmt = ent === '' ? '' : ent.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  inp.value = frc !== null ? (entFmt || '0') + ',' + frc : entFmt;
+  var oculto = document.getElementById(idOculto);
+  if (oculto) oculto.value = (ent === '' && frc === null) ? '' : parseFloat((ent || '0') + '.' + (frc || '0')).toFixed(2);
+}
+</script>
+</head>
+<body>
+
+<header class="app-header">
+  {# Nombre y logo de «Datos del sindicato»; sin cargar, como antes. #}
+  {% if inst and inst.logo %}
+  <img src="{{ url_for('institucion.logo', v=inst.version) }}" alt="{{ inst.sigla or inst.nombre }}">
+  {% else %}
+  <img src="{{ url_for('static', filename='imagenes/LOGO.GIF') }}" alt="Sindicato" onerror="this.style.display='none'">
+  {% endif %}
+  <div class="header-brand">
+    <strong>{{ (inst.sigla or inst.nombre) if inst and (inst.sigla or inst.nombre) else 'Sindicato' }}</strong>
+    <small>{{ inst.nombre if inst and inst.sigla and inst.nombre else 'Gestión Sindical' }}</small>
+  </div>
+
+  {% if session.get('sind_validausuario') %}
+  <a href="{{ url_for('menu') }}" id="btn-home"
+     onclick="menuCollapseAll()"
+     title="Volver al menú principal" class="header-boton">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <polyline points="9 22 9 12 15 12 15 22"/>
+    </svg>
+    Inicio
+  </a>
+  {# Vuelve a la pantalla desde la que se llegó a esta. Lo arma el script
+     «Volver a la pantalla anterior» del final: arranca oculto y aparece
+     cuando hay una pantalla anterior a la que volver. #}
+  <a href="#" id="btn-volver" class="header-boton oculto" title="Volver a la pantalla anterior">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/>
+    </svg>
+    Volver
+  </a>
+  {% endif %}
+
+  <div class="header-spacer"></div>
+
+  {% if session.get('sind_usuario_nombre') %}
+  {# Reloj de la barra.
+     Se arma en el navegador y no en el servidor por dos motivos. Uno: una hora
+     dibujada por Jinja queda congelada en el momento del render y una pestaña
+     abierta desde la mañana muestra la hora de la mañana, que es peor que no
+     mostrar nada. Dos: la aplicación corre en un contenedor que arranca en UTC
+     y la hora del servidor no es la hora del negocio.
+     La zona va fija en Buenos Aires y no se toma la del equipo: lo que importa
+     es la hora en que operan las pantallas, no dónde esté parado quien mira. #}
+  <div class="header-reloj" id="header-reloj" title="Hora de Argentina">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15.5 14"/>
+    </svg>
+    <span class="reloj-fecha"></span>
+    <span class="reloj-hora"></span>
+  </div>
+  <div class="header-user">
+    {% if avatar %}
+    <img src="{{ avatar }}" alt="">
+    {% else %}
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>
+    {% endif %}
+    {{ session.get('sind_usuario_nombre') }}
+  </div>
+  <a href="{{ url_for('logout') }}" class="header-boton">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+      <polyline points="16 17 21 12 16 7"/>
+      <line x1="21" y1="12" x2="9" y2="12"/>
+    </svg>
+    Salir
+  </a>
+  {% endif %}
+</header>
+
+<script>
+  /* Reloj de la barra superior. Ver el comentario del bloque en el header. */
+  (function () {
+    var caja = document.getElementById('header-reloj');
+    if (!caja) return;
+
+    var fecha = caja.querySelector('.reloj-fecha');
+    var hora  = caja.querySelector('.reloj-hora');
+    var ZONA  = 'America/Argentina/Buenos_Aires';
+
+    var fmtFecha, fmtHora;
+    try {
+      fmtFecha = new Intl.DateTimeFormat('es-AR', { timeZone: ZONA,
+        weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+      fmtHora  = new Intl.DateTimeFormat('es-AR', { timeZone: ZONA,
+        hour: '2-digit', minute: '2-digit', hour12: false });
+    } catch (e) {
+      /* Un navegador sin soporte de zonas cae en la del equipo. Es la hora
+         correcta para el 99% de los casos —las pantallas se operan desde acá—
+         y mostrarla vale más que dejar el hueco vacío. */
+      fmtFecha = new Intl.DateTimeFormat('es-AR',
+        { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+      fmtHora  = new Intl.DateTimeFormat('es-AR',
+        { hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function pintar() {
+      var ahora = new Date();
+      fecha.textContent = fmtFecha.format(ahora);
+      hora.textContent  = fmtHora.format(ahora);
+    }
+
+    pintar();
+
+    /* Se engancha al cambio de minuto en lugar de refrescar cada segundo: el
+       reloj muestra minutos, y un timer por segundo despierta la pestaña 59
+       veces de cada 60 para no cambiar nada en pantalla. */
+    setTimeout(function siguienteMinuto() {
+      pintar();
+      setTimeout(siguienteMinuto, 60000);
+    }, (60 - new Date().getSeconds()) * 1000);
+
+    /* Una pestaña que estuvo en segundo plano vuelve con la hora vieja: los
+       navegadores estiran los timers de las pestañas ocultas. */
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) pintar();
+    });
+  })();
+</script>
+
+<div class="app-shell">
+
+  {# El menú que no se pudo cargar se dice, no se omite.
+     Un menú vacío se ve igual si al usuario no le asignaron permisos que si la
+     conexión a la base falló, y esas dos cosas se arreglan en lugares
+     distintos. El texto crudo del error es a propósito: lo lee quien mantiene
+     el sistema, y es el que dice si faltó una contraseña o un permiso. #}
+  {% if menu_error %}
+  <div class="menu-error">
+    No se pudo cargar el menú — {{ menu_error }}
+  </div>
+  {% endif %}
+
+  {% if session.get('sind_validausuario') and menu_tree is defined and menu_tree %}
+  <aside class="app-sidebar">
+    <div>
+      <a href="{{ url_for('menu') }}" class="sidebar-home" onclick="menuCollapseAll()">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+          <polyline points="9 22 9 12 15 12 15 22"/>
+        </svg>
+        Inicio
+      </a>
+    </div>
+    {# Buscador de opciones (el de gestion_adm): filtra el árbol sin ir al
+       servidor. Busca cada palabra en el nombre de la opción y en el de sus
+       ramas, así «tesorería» trae todo lo de Tesorería y «cuenta proveedores»
+       encuentra Proveedores → Cuenta Corriente. Flechas para elegir, Enter
+       para ir, Esc limpia. #}
+    <div class="menu-buscar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"
+           stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>
+      <input type="search" id="menu-buscar" placeholder="Buscar opción del menú…"
+             autocomplete="off" spellcheck="false"
+             aria-label="Buscar una opción del menú" aria-controls="sidebar-nav">
+    </div>
+    <div class="menu-buscar-vacio" id="menu-buscar-vacio" hidden>Ninguna opción coincide.</div>
+    <div class="sidebar-label">Navegación</div>
+
+    {# La chincheta de cada pantalla. Es la misma en los cuatro niveles,
+       así que se define una vez: lo único que cambia es de qué ítem
+       cuelga. Solo la llevan las opciones finales —las que tienen URL—;
+       una rama que solo agrupa no es un destino al cual ir. #}
+    {% macro chincheta(item) %}
+      {% if item.url %}
+      {% set fijado = accesos_fijados is defined and item.id in accesos_fijados %}
+      <button type="button"
+              class="pin-menu{% if fijado %} pin-on{% endif %}"
+              data-menu-id="{{ item.id }}"
+              title="{% if fijado %}Quitar del panel de inicio{% else %}Fijar en el panel de inicio{% endif %}"
+              aria-label="Fijar en el panel de inicio"
+              onclick="fijarAcceso(event, this)">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9 3h6v1.6l1.4 4.2a4 4 0 0 1 .6 2.2v1H7v-1a4 4 0 0 1 .6-2.2L9 4.6z"/>
+          <line x1="12" y1="12" x2="12" y2="21"/>
+        </svg>
+      </button>
+      {% endif %}
+    {% endmacro %}
+
+    <ul class="sidebar-nav" id="sidebar-nav">
+      {% for item in menu_tree %}
+      <li>
+        {% if item.url %}
+        <a href="{{ item.url }}" class="mn-hoja">
+          {% if item.icono_svg %}{{ item.icono_svg|svg_unico }}{% endif %}
+          <span>{{ item.nombre }}</span>
+        </a>
+        {{ chincheta(item) }}
+        {% else %}
+        <a href="#" onclick="toggleSubmenu(this, '{{ item.id }}'); return false;"
+           class="rama"
+           data-menu-id="{{ item.id }}">
+          <span class="rama-nombre">
+            {% if item.icono_svg %}{{ item.icono_svg|svg_unico }}{% endif %}
+            {{ item.nombre }}
+          </span>
+          <svg class="chevron" width="12" height="12" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </a>
+        {% endif %}
+        {% if item.hijos %}
+        <ul class="submenu" data-menu-id="{{ item.id }}">
+          {% for hijo in item.hijos %}
+          <li>
+            {% if hijo.url %}
+            <a href="{{ hijo.url }}" class="mn-hoja">
+              {% if hijo.icono_svg %}{{ hijo.icono_svg|svg_unico }}{% endif %}
+              <span>{{ hijo.nombre }}</span>
+            </a>
+            {{ chincheta(hijo) }}
+            {% else %}
+            <a href="#" onclick="toggleSubmenu(this, '{{ hijo.id }}'); return false;" class="rama"
+               data-menu-id="{{ hijo.id }}">
+              <span class="rama-nombre">
+                {% if hijo.icono_svg %}{{ hijo.icono_svg|svg_unico }}{% endif %}
+                {{ hijo.nombre }}
+              </span>
+              <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none"
+                   stroke="currentColor" stroke-width="2.5">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </a>
+            {% endif %}
+            {% if hijo.hijos %}
+            <ul class="submenu" data-menu-id="{{ hijo.id }}">
+              {% for nieto in hijo.hijos %}
+              <li>
+                {% if nieto.url %}
+                <a href="{{ nieto.url }}" class="mn-hoja">
+                  {% if nieto.icono_svg %}{{ nieto.icono_svg|svg_unico }}{% endif %}
+                  <span>{{ nieto.nombre }}</span>
+                </a>
+                {{ chincheta(nieto) }}
+                {% else %}
+                {# Un nieto con hijos también muestra su ícono. Antes esta rama
+                   dibujaba sólo el nombre y la flecha, así que el ícono que se
+                   había elegido en el ABM desaparecía al agregarle un hijo: el
+                   dato seguía guardado, no se renderizaba. Los niveles 1 y 2 sí
+                   lo hacían en sus dos ramas — era una inconsistencia, no un
+                   criterio. #}
+                <a href="#" onclick="toggleSubmenu(this, '{{ nieto.id }}'); return false;" class="rama"
+                   data-menu-id="{{ nieto.id }}">
+                  <span class="rama-nombre">
+                    {% if nieto.icono_svg %}{{ nieto.icono_svg|svg_unico }}{% endif %}
+                    {{ nieto.nombre }}
+                  </span>
+                  <svg class="chevron" width="10" height="10" viewBox="0 0 24 24" fill="none"
+                       stroke="currentColor" stroke-width="2.5">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </a>
+                {% endif %}
+                {% if nieto.hijos %}
+                <ul class="submenu" data-menu-id="{{ nieto.id }}">
+                  {% for bisnieto in nieto.hijos %}
+                  <li>
+                    <a href="{{ bisnieto.url or '#' }}" class="{{ 'mn-hoja' if bisnieto.url }}">
+                      {% if bisnieto.icono_svg %}{{ bisnieto.icono_svg|svg_unico }}{% endif %}
+                      <span>{{ bisnieto.nombre }}</span>
+                    </a>
+                    {{ chincheta(bisnieto) }}
+                  </li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+              </li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </aside>
+  {% endif %}
+
+  <main class="app-main">
+    {% block content %}{% endblock %}
+  </main>
+
+</div>
+
+{# ── Ayuda de la pantalla ────────────────────────────────────────────────────
+   El botón se arma solo: cada módulo con manual publica una función que, dada
+   la pantalla actual, devuelve su sección. Así no hay que agregar el botón
+   pantalla por pantalla, y en las que no tienen manual no aparece nada. #}
+{% set _ayuda = ayuda_de(request.endpoint) if ayuda_de is defined else None %}
+{% if _ayuda %}
+<a id="btn-ayuda" href="{{ url_for(_ayuda.endpoint, s=_ayuda.seccion) }}#{{ _ayuda.seccion }}"
+   title="Ver el manual de esta pantalla">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+    <circle cx="12" cy="12" r="10"/>
+    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+    <line x1="12" y1="17" x2="12.01" y2="17"/>
+  </svg>
+  Ayuda
+</a>
+{% endif %}
+
+{# ── Aviso de proceso en curso ───────────────────────────────────────────────
+   Los procesos largos (liquidar, importar padrón, consultar ARCA) tardan y no
+   dan señal de vida: sin esto el usuario vuelve a apretar el botón y dispara
+   el proceso dos veces. Cualquier form con data-proceso lo muestra solo. #}
+<div id="proceso-overlay">
+  <div class="proceso-caja">
+    <div class="proceso-spinner"></div>
+    <strong id="proceso-titulo">Procesando…</strong>
+    <p id="proceso-detalle">Esto puede demorar varios minutos.</p>
+    <small>No cierres ni recargues esta pantalla hasta que termine.</small>
+  </div>
+</div>
+
+
+<script>
+
+// ── Aviso de proceso en curso ────────────────────────────────────────────────
+// Un form marcado con data-proceso="mensaje" muestra el cartel al enviarse y
+// bloquea sus botones, así no se dispara dos veces el mismo proceso.
+function mostrarProceso(titulo, detalle) {
+  var ov = document.getElementById('proceso-overlay');
+  if (!ov) return;
+  if (titulo)  document.getElementById('proceso-titulo').textContent  = titulo;
+  if (detalle) document.getElementById('proceso-detalle').textContent = detalle;
+  ov.classList.add('visible');
+}
+
+function ocultarProceso() {
+  var ov = document.getElementById('proceso-overlay');
+  if (ov) ov.classList.remove('visible');
+}
+
+document.addEventListener('submit', function (ev) {
+  // Si un confirm() canceló el envío, el evento ya viene prevenido
+  if (ev.defaultPrevented) return;
+  var form = ev.target;
+  if (!form || !form.getAttribute) return;
+  var msg = form.getAttribute('data-proceso');
+  if (!msg) return;
+
+  mostrarProceso(msg, form.getAttribute('data-proceso-detalle'));
+
+  // Se deshabilitan en el tick siguiente: hacerlo ahora anularía el name/value
+  // del botón que disparó el envío.
+  setTimeout(function () {
+    form.querySelectorAll('button, input[type=submit]').forEach(function (b) {
+      b.disabled = true;
+    });
+  }, 0);
+});
+
+// Al volver con el botón "atrás" la página sale del caché con el cartel puesto
+window.addEventListener('pageshow', ocultarProceso);
+
+// ── Menú sidebar con persistencia de estado ──────────────────────────────────
+var MENU_KEY = 'sidebar_open';
+
+function _menuGetOpen() {
+  try { return JSON.parse(localStorage.getItem(MENU_KEY) || '[]'); } catch(e) { return []; }
+}
+function _menuSetOpen(ids) {
+  try { localStorage.setItem(MENU_KEY, JSON.stringify(ids)); } catch(e) {}
+}
+
+function toggleSubmenu(el, id) {
+  var ul = el.nextElementSibling;
+  if (!ul || ul.tagName !== 'UL') return;
+  // Oculto por CSS (.submenu) y no por style: se mide el estilo calculado.
+  var open = window.getComputedStyle(ul).display !== 'none';
+  ul.style.display = open ? 'none' : 'block';
+  var chev = el.querySelector('.chevron');
+  if (chev) chev.style.transform = open ? '' : 'rotate(90deg)';
+
+  // Persistir estado
+  var ids = _menuGetOpen();
+  var sid = String(id);
+  if (open) {
+    ids = ids.filter(function(x){ return x !== sid; });
+  } else {
+    if (ids.indexOf(sid) === -1) ids.push(sid);
+  }
+  _menuSetOpen(ids);
+}
+
+function _initMenu() {
+  var openIds = _menuGetOpen();
+  var curPath  = window.location.pathname;
+
+  // Expandir ítems que estaban abiertos + marcar activo + auto-expandir padres
+  var allLinks = document.querySelectorAll('.sidebar-nav a[href]');
+  var activeLink = null;
+
+  allLinks.forEach(function(a) {
+    var href = a.getAttribute('href');
+    if (!href || href === '#') return;
+    // Comparar path (ignorar query string)
+    var aPath = href.split('?')[0];
+    if (aPath && curPath === aPath) {
+      activeLink = a;
+    }
+  });
+
+  // Restaurar ítems abiertos desde localStorage
+  document.querySelectorAll('.submenu[data-menu-id]').forEach(function(ul) {
+    var mid = ul.getAttribute('data-menu-id');
+    if (openIds.indexOf(mid) !== -1) {
+      ul.style.display = 'block';
+      var trigger = document.querySelector('a[data-menu-id="' + mid + '"]');
+      if (trigger) {
+        var chev = trigger.querySelector('.chevron');
+        if (chev) chev.style.transform = 'rotate(90deg)';
+      }
+    }
+  });
+
+  // Marcar activo y auto-expandir todos los ancestros
+  if (activeLink) {
+    activeLink.classList.add('active');
+    var parent = activeLink.parentElement;
+    while (parent) {
+      if (parent.classList && parent.classList.contains('submenu')) {
+        parent.style.display = 'block';
+        var mid = parent.getAttribute('data-menu-id');
+        // Rotar chevron del trigger padre
+        if (mid) {
+          var trigger = document.querySelector('a[data-menu-id="' + mid + '"]');
+          if (trigger) {
+            var chev = trigger.querySelector('.chevron');
+            if (chev) chev.style.transform = 'rotate(90deg)';
+          }
+          // Agregar a openIds si no está
+          if (openIds.indexOf(mid) === -1) openIds.push(mid);
+        }
+      }
+      parent = parent.parentElement;
+    }
+    _menuSetOpen(openIds);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', _initMenu);
+
+function menuCollapseAll() {
+  /* Cierra todos los submenús y limpia el estado persistido */
+  document.querySelectorAll('.submenu').forEach(function(ul) {
+    ul.style.display = 'none';
+  });
+  document.querySelectorAll('.chevron').forEach(function(chev) {
+    chev.style.transform = '';
+  });
+  try { localStorage.removeItem(MENU_KEY); } catch(e) {}
+}
+
+/* ── Buscador de opciones del menú (el de gestion_adm) ────────────────
+   Filtra el árbol en el navegador: el menú ya está entero en la página.
+   Mientras se busca, el estado abierto/cerrado de cada rama se guarda y
+   no se toca el que persiste en localStorage; al borrar la búsqueda el
+   árbol vuelve a quedar como estaba. Solo se buscan pantallas (a.mn-hoja):
+   una rama aparece si algo de adentro coincide. */
+(function () {
+  var input, vacio, nav, hojas = [], submenus = [], antes = null, visibles = [], sel = -1;
+
+  function norm(s) {
+    return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .toLowerCase().replace(/\s+/g, ' ').trim();
+  }
+  // El texto de la opción con el de todas sus ramas.
+  function camino(a) {
+    var partes = [a.textContent];
+    var ul = a.parentElement.parentElement;
+    while (ul && ul.classList.contains('submenu')) {
+      if (ul.previousElementSibling) partes.unshift(ul.previousElementSibling.textContent);
+      ul = ul.parentElement.parentElement;
+    }
+    return norm(partes.join(' '));
+  }
+  function chevrons() {
+    submenus.forEach(function (ul) {
+      var chev = ul.previousElementSibling && ul.previousElementSibling.querySelector('.chevron');
+      if (chev) chev.style.transform = ul.style.display === 'block' ? 'rotate(90deg)' : '';
+    });
+  }
+  function marcar(i) {
+    if (sel >= 0 && visibles[sel]) visibles[sel].classList.remove('mn-sel');
+    sel = i;
+    if (sel >= 0 && visibles[sel]) {
+      visibles[sel].classList.add('mn-sel');
+      visibles[sel].scrollIntoView({ block: 'nearest' });
+    }
+  }
+  function filtrar() {
+    var palabras = norm(input.value).split(' ').filter(Boolean);
+    marcar(-1);
+    visibles = [];
+    if (!palabras.length) {
+      if (antes) {
+        nav.querySelectorAll('li').forEach(function (li) { li.style.display = ''; });
+        submenus.forEach(function (ul, i) { ul.style.display = antes[i]; });
+        antes = null;
+        chevrons();
+      }
+      vacio.hidden = true;
+      return;
+    }
+    if (!antes) antes = submenus.map(function (ul) { return ul.style.display; });
+    nav.querySelectorAll('li').forEach(function (li) { li.style.display = 'none'; });
+    submenus.forEach(function (ul) { ul.style.display = 'none'; });
+    hojas.forEach(function (a) {
+      var t = a.getAttribute('data-buscar');
+      if (!palabras.every(function (p) { return t.indexOf(p) !== -1; })) return;
+      visibles.push(a);
+      var li = a.parentElement;
+      while (li && li.tagName === 'LI') {
+        li.style.display = '';
+        var ul = li.parentElement;
+        if (!ul.classList.contains('submenu')) break;
+        ul.style.display = 'block';
+        li = ul.parentElement;
+      }
+    });
+    chevrons();
+    vacio.hidden = visibles.length > 0;
+    if (visibles.length) marcar(0);
+  }
+  function teclas(e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!visibles.length) return;
+      e.preventDefault();
+      var n = visibles.length;
+      marcar(((sel < 0 ? -1 : sel) + (e.key === 'ArrowDown' ? 1 : -1) + n) % n);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (sel >= 0 && visibles[sel]) window.location.href = visibles[sel].href;
+    } else if (e.key === 'Escape') {
+      // Sin cortar la propagación, Escape también dispararía «volver».
+      e.stopPropagation();
+      if (input.value) { e.preventDefault(); input.value = ''; filtrar(); }
+      else input.blur();
+    }
+  }
+  document.addEventListener('DOMContentLoaded', function () {
+    input = document.getElementById('menu-buscar');
+    vacio = document.getElementById('menu-buscar-vacio');
+    nav = document.getElementById('sidebar-nav');
+    if (!input || !nav) return;
+    submenus = Array.prototype.slice.call(nav.querySelectorAll('ul.submenu'));
+    nav.querySelectorAll('a.mn-hoja[href]').forEach(function (a) {
+      a.setAttribute('data-buscar', camino(a));
+      hojas.push(a);
+    });
+    input.addEventListener('input', filtrar);
+    input.addEventListener('keydown', teclas);
+  });
+})();
+
+/* ── Accesos directos ─────────────────────────────────────────────────
+   La chincheta fija o saca la pantalla del panel de inicio. No navega
+   ni recarga: el menú queda abierto donde estaba, que es la mitad de
+   la gracia de fijar algo mientras se está trabajando. */
+function fijarAcceso(ev, btn) {
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (btn.disabled) return;
+  btn.disabled = true;
+
+  fetch('/accesos-directos/alternar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json',
+               'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ menu_id: parseInt(btn.getAttribute('data-menu-id'), 10) })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    btn.disabled = false;
+    if (d.error) { alert(d.error); return; }
+    btn.classList.toggle('pin-on', !!d.fijado);
+    btn.title = d.fijado ? 'Quitar del panel de inicio'
+                         : 'Fijar en el panel de inicio';
+
+    // Si estamos parados en el panel de inicio, la tarjeta tiene que
+    // aparecer o desaparecer ahí mismo: se recarga. En cualquier otra
+    // pantalla no, porque recargar en el medio de una carga se lleva
+    // puesto lo que la persona venía escribiendo.
+    if (window.location.pathname.replace(/\/$/, '') === '/menu') {
+      window.location.reload();
+    }
+  })
+  .catch(function() {
+    btn.disabled = false;
+    alert('No se pudo guardar el acceso directo.');
+  });
+}
+
+
+var GEOREF_BASE = 'https://apis.datos.gob.ar/georef/api';
+
+function georefGet(url, cb) {
+  fetch(url).then(function(r){return r.json();}).then(cb).catch(function(e){console.error('Georef:',e);});
+}
+
+function georefPoblarSelect(selId, items, valorActual, textoVacio) {
+  var sel = document.getElementById(selId);
+  if (!sel) return;
+  sel.innerHTML = '<option value="">' + textoVacio + '</option>';
+  items.forEach(function(item) {
+    var opt = document.createElement('option');
+    opt.value = item.id; opt.textContent = item.nombre;
+    if (item.id === valorActual) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
+function georefCargarDepartamentos(pfx, selId) {
+  var sel = document.getElementById(pfx + '_provincia_id');
+  if (!sel) return;
+  var provId = sel.value;
+  georefPoblarSelect(pfx + '_departamento_id', [], '', '— Seleccionar —');
+  georefPoblarSelect(pfx + '_localidad_id',    [], '', '— Seleccionar —');
+  var opt = sel.options[sel.selectedIndex];
+  var el = document.getElementById(pfx + '_provincia_nombre');
+  if (el) el.value = opt ? opt.text : '';
+  if (!provId) return;
+  georefGet(GEOREF_BASE + '/departamentos?provincia=' + provId + '&orden=nombre&max=200', function(data) {
+    var deps = data.departamentos || [];
+    georefPoblarSelect(pfx + '_departamento_id', deps, selId || '', '— Seleccionar —');
+    if (selId) {
+      var d = deps.find(function(x){return x.id===selId;});
+      if (d) { var el2=document.getElementById(pfx+'_departamento_nombre'); if(el2) el2.value=d.nombre; }
+    }
+  });
+}
+
+function georefCargarLocalidades(pfx, selId) {
+  var sel = document.getElementById(pfx + '_departamento_id');
+  if (!sel) return;
+  var depId = sel.value;
+  georefPoblarSelect(pfx + '_localidad_id', [], '', '— Seleccionar —');
+  var opt = sel.options[sel.selectedIndex];
+  var el = document.getElementById(pfx + '_departamento_nombre');
+  if (el) el.value = opt ? opt.text : '';
+  if (!depId) return;
+  georefGet(GEOREF_BASE + '/localidades?departamento=' + depId + '&orden=nombre&max=500', function(data) {
+    var locs = data.localidades || [];
+    georefPoblarSelect(pfx + '_localidad_id', locs, selId || '', '— Seleccionar —');
+    if (selId) {
+      var l = locs.find(function(x){return x.id===selId;});
+      if (l) { var el2=document.getElementById(pfx+'_localidad_nombre'); if(el2) el2.value=l.nombre; }
+    }
+  });
+}
+
+function georefGuardarLocalidadNombre(pfx) {
+  var sel = document.getElementById(pfx + '_localidad_id');
+  if (!sel) return;
+  var opt = sel.options[sel.selectedIndex];
+  var el = document.getElementById(pfx + '_localidad_nombre');
+  if (el) el.value = opt ? opt.text : '';
+}
+
+
+// Mapeo idProvincia AFIP → id Georef INDEC
+var AFIP_PROV_MAP = {
+  "0":"02","1":"06","2":"10","3":"14","4":"18","5":"30","6":"38","7":"42",
+  "8":"46","9":"50","10":"54","11":"58","12":"62","13":"66","14":"70",
+  "15":"74","16":"78","17":"82","18":"86","19":"94","20":"90",
+  "21":"22","22":"26","23":"34","24":"54"
+};
+
+// Completar domicilio fiscal desde datos AFIP usando Georef
+// provNombre: nombre de provincia de AFIP (ej: "BUENOS AIRES")
+// locNombre:  nombre de localidad  de AFIP (ej: "SAN MARTIN")
+// idProvAfip: idProvincia numérico de AFIP  (ej: 1)
+window.georefCompletarDesdeDireccion = function(pfx, calle, numero, cp, provNombre, locNombre, idProvAfip) {
+
+  // Obtener id Georef de la provincia — por mapa AFIP o buscando por nombre
+  georefGet(GEOREF_BASE + '/provincias?orden=nombre&max=30', function(d0) {
+    var provs = d0.provincias || [];
+
+    // Intentar por id AFIP primero, luego por nombre
+    var georefProvId = idProvAfip ? AFIP_PROV_MAP[String(idProvAfip)] : null;
+    var prov = georefProvId
+      ? provs.find(function(p) { return p.id === georefProvId; })
+      : provs.find(function(p) {
+          return p.nombre.toUpperCase().replace(/[^A-Z]/g,'')
+              .indexOf((provNombre||'').toUpperCase().replace(/[^A-Z]/g,'').slice(0,6)) !== -1;
+        });
+
+    if (!prov) return;
+
+    // Poblar combo provincia
+    georefPoblarSelect(pfx + '_provincia_id', provs, prov.id, '— Seleccionar —');
+    var elP = document.getElementById(pfx + '_provincia_nombre');
+    if (elP) elP.value = prov.nombre;
+
+    if (!locNombre) return;
+
+    // Buscar localidad por nombre dentro de la provincia
+    georefGet(GEOREF_BASE + '/localidades?nombre=' + encodeURIComponent(locNombre) +
+              '&provincia=' + prov.id + '&max=10', function(d1) {
+      var locs = d1.localidades || [];
+      if (!locs.length) return;
+
+      // Preferir "Localidad simple"
+      var loc = locs.find(function(l) { return l.categoria === 'Localidad simple'; }) || locs[0];
+      var dep = loc.departamento || {};
+
+      // Poblar combo departamento
+      georefGet(GEOREF_BASE + '/departamentos?provincia=' + prov.id + '&orden=nombre&max=200', function(d2) {
+        var deps = d2.departamentos || [];
+        georefPoblarSelect(pfx + '_departamento_id', deps, dep.id, '— Seleccionar —');
+        var elD = document.getElementById(pfx + '_departamento_nombre');
+        if (elD) elD.value = dep.nombre || '';
+
+        if (!dep.id) return;
+
+        // Poblar combo localidad
+        georefGet(GEOREF_BASE + '/localidades?departamento=' + dep.id + '&orden=nombre&max=500', function(d3) {
+          var allLocs = d3.localidades || [];
+          var match = allLocs.find(function(l) { return l.id === loc.id; }) || allLocs[0];
+          if (!match) return;
+          georefPoblarSelect(pfx + '_localidad_id', allLocs, match.id, '— Seleccionar —');
+          var elL = document.getElementById(pfx + '_localidad_nombre');
+          if (elL) elL.value = match.nombre;
+        });
+      });
+    });
+  });
+};
+
+function georefCargarProvincias(pfx, selId) {
+  georefGet(GEOREF_BASE + '/provincias?orden=nombre&max=30', function(data) {
+    var provs = data.provincias || [];
+    georefPoblarSelect(pfx + '_provincia_id', provs, selId || '', '— Seleccionar —');
+    if (selId) {
+      var p = provs.find(function(x){return x.id===selId;});
+      if (p) { var el=document.getElementById(pfx+'_provincia_nombre'); if(el) el.value=p.nombre; }
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Inicializar provincias en todos los widgets de domicilio
+  document.querySelectorAll('.domicilio-widget').forEach(function(w) {
+    var pfx = w.getAttribute('data-prefix');
+    georefCargarProvincias(pfx);
+  });
+
+  // Precargar widgets con valores guardados (edición)
+  if (!window.georefPrecargas) return;
+  georefPrecargas.forEach(function(pc) {
+    if (!pc.prvId) return; // sin precarga, ya se inicializó arriba
+    georefGet(GEOREF_BASE + '/provincias?orden=nombre&max=30', function(d1) {
+      var provs = d1.provincias || [];
+      georefPoblarSelect(pc.pfx + '_provincia_id', provs, pc.prvId, '— Seleccionar —');
+      var el = document.getElementById(pc.pfx + '_provincia_nombre');
+      if (el) el.value = pc.prvNom;
+      if (!pc.depId) return;
+      georefGet(GEOREF_BASE + '/departamentos?provincia=' + pc.prvId + '&orden=nombre&max=200', function(d2) {
+        var deps = d2.departamentos || [];
+        georefPoblarSelect(pc.pfx + '_departamento_id', deps, pc.depId, '— Seleccionar —');
+        var el2 = document.getElementById(pc.pfx + '_departamento_nombre');
+        if (el2) el2.value = pc.depNom;
+        if (!pc.locId) return;
+        georefGet(GEOREF_BASE + '/localidades?departamento=' + pc.depId + '&orden=nombre&max=500', function(d3) {
+          var locs = d3.localidades || [];
+          georefPoblarSelect(pc.pfx + '_localidad_id', locs, pc.locId, '— Seleccionar —');
+          var el3 = document.getElementById(pc.pfx + '_localidad_nombre');
+          if (el3) el3.value = pc.locNom;
+        });
+      });
+    });
+  });
+});
+</script>
+
+
+<script>
+/* ── Separador de miles — función global ─────────────────────────────────
+   Uso manual:   oninput="fmtMiles(this)"  onblur="fmtMilesBlur(this)"
+   Uso auto:     agregar class="inp-importe" al input (se aplica al cargar)
+────────────────────────────────────────────────────────────────────────── */
+function fmtMiles(inp) {
+  // Mientras se tipea: solo dígitos y separador decimal
+  inp.value = inp.value.replace(/[^\d,]/g, '');
+}
+function fmtMilesBlur(inp) {
+  var raw = inp.value.replace(/\./g, '').replace(',', '.');
+  var n = parseFloat(raw);
+  if (!isNaN(n) && inp.value.trim() !== '') {
+    inp.value = n.toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+}
+function fmtMilesInit(inp) {
+  // Formatea un valor ya cargado (pre-poblado del servidor).
+  // Acepta tanto formato AR ("1.234,56") como US ("1234.56" o "1234").
+  var s = String(inp.value || '').trim();
+  if (s === '') return;
+  var n;
+  if (s.indexOf(',') !== -1) {
+    // Formato AR: puntos son separador de miles, coma es decimal
+    n = parseFloat(s.replace(/\./g, '').replace(',', '.'));
+  } else {
+    // Formato US / plano: "1234.56" o "1234" — el punto es decimal
+    // (si hubiera más de un punto sería formato AR sin decimales, pero
+    // esos casos los maneja la rama anterior si alguna coma está presente)
+    n = parseFloat(s);
+  }
+  if (!isNaN(n)) {
+    inp.value = n.toLocaleString('es-AR', {minimumFractionDigits:2, maximumFractionDigits:2});
+  }
+}
+
+// Auto-apply a cualquier input con class="inp-importe"
+document.addEventListener('DOMContentLoaded', function() {
+  document.querySelectorAll('input.inp-importe').forEach(function(inp) {
+    fmtMilesInit(inp);
+    inp.addEventListener('input', function() { fmtMiles(this); });
+    inp.addEventListener('blur',  function() { fmtMilesBlur(this); });
+  });
+});
+
+// ── Todas las grillas se ordenan ──────────────────────────────────────
+// Una tabla que la pantalla no inicializó (las chicas de una ficha: grupo
+// familiar, contactos) igual se ordena por columna. Se hace en el tick
+// siguiente a DOMContentLoaded para llegar después de la pantalla: si ella ya
+// la armó con sus filtros, gestion_admTable devuelve esa y no la pisa. Sin
+// barra de paginación, se muestran todas las filas. `data-sin-orden` en la
+// tabla lo evita.
+document.addEventListener('DOMContentLoaded', function () {
+  setTimeout(function () {
+    document.querySelectorAll('table.data-table').forEach(function (tbl) {
+      if (tbl._grilla || tbl.dataset.sinOrden !== undefined) return;
+      // Una tabla que llega vacía la llena el JS de la pantalla (una consulta
+      // por fetch): inicializarla ahora congelaría cero filas. Esa pantalla
+      // llama a gestion_admTable cuando termina de dibujar.
+      if (!tbl.tBodies[0] || !tbl.tBodies[0].querySelector('tr:not(.no-data-row)')) return;
+      var card = tbl.closest('.card');
+      var paginada = card && card.querySelector('.pagination-controls');
+      gestion_admTable(tbl, { pageSize: paginada ? 20 : 1000000 });
+    });
+  }, 0);
+});
+
+// ── Barra de desplazamiento arriba de las grillas ─────────────────────
+// Una grilla ancha se desplaza de costado con la barra de abajo, y con 20 o
+// 50 filas esa barra queda fuera de la pantalla: para ver la última columna
+// había que bajar hasta el final, correr, y volver a subir. Cada
+// .data-table-wrap recibe una segunda barra arriba, sincronizada con la de
+// abajo. Solo se ve cuando la tabla no entra; `data-sin-scroll-arriba` en el
+// wrap la evita.
+function scrollArriba(wrap) {
+  if (wrap.dataset.sinScrollArriba !== undefined || wrap.previousElementSibling &&
+      wrap.previousElementSibling.classList.contains('scroll-arriba')) return;
+  var tabla = wrap.querySelector('table');
+  if (!tabla) return;
+  var barra = document.createElement('div');
+  barra.className = 'scroll-arriba';
+  barra.setAttribute('aria-hidden', 'true');
+  var relleno = document.createElement('div');
+  barra.appendChild(relleno);
+  wrap.parentNode.insertBefore(barra, wrap);
+
+  function medir() {
+    relleno.style.width = tabla.scrollWidth + 'px';
+    barra.classList.toggle('oculto', tabla.scrollWidth <= wrap.clientWidth + 1);
+    barra.scrollLeft = wrap.scrollLeft;
+  }
+  // Mover una dispara el scroll de la otra; como solo se copia cuando la
+  // posición difiere, el rebote se corta solo en el segundo evento.
+  function seguir(origen, destino) {
+    origen.addEventListener('scroll', function () {
+      if (destino.scrollLeft !== origen.scrollLeft) destino.scrollLeft = origen.scrollLeft;
+    });
+  }
+  seguir(barra, wrap);
+  seguir(wrap, barra);
+  // El ancho cambia al filtrar, al paginar y al cambiar de solapa (una tabla
+  // en un panel oculto mide cero): se vuelve a medir cada vez que cambia.
+  if (window.ResizeObserver) {
+    var ro = new ResizeObserver(medir);
+    ro.observe(tabla); ro.observe(wrap);
+  } else {
+    window.addEventListener('resize', medir);
+  }
+  medir();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('.data-table-wrap').forEach(scrollArriba);
+});
+
+// ── CBU ───────────────────────────────────────────────────────────────
+// Los dos dígitos verificadores (BCRA), el mismo cálculo que
+// afiliados.cbu_valido en el servidor: el aviso mientras se tipea. Los tres
+// primeros dígitos son el banco (c_codigo_de_banco).
+function cbuValido(c) {
+  if (!/^\d{22}$/.test(c)) return false;
+  function cierra(b, pesos) {
+    var s = 0;
+    for (var i = 0; i < pesos.length; i++) s += parseInt(b[i], 10) * pesos[i];
+    return (10 - s % 10) % 10 === parseInt(b[b.length - 1], 10);
+  }
+  return cierra(c.slice(0, 8), [7,1,3,9,7,1,3]) && cierra(c.slice(8), [3,9,7,1,3,9,7,1,3,9,7,1,3]);
+}
+
+// ── Diálogos ──────────────────────────────────────────────────────────
+// <div class="modal" id="modal-x"><div class="modal-caja">…</div></div>
+// Escape y un clic en el fondo los cierran; el foco va al primer campo.
+function abrirModal(id) {
+  var m = document.getElementById(id);
+  if (!m) return;
+  m.classList.add('abierto');
+  var foco = m.querySelector('input:not([type=hidden]), select, textarea, button');
+  if (foco) setTimeout(function () { foco.focus(); }, 0);
+}
+function cerrarModal(id) {
+  var m = typeof id === 'string' ? document.getElementById(id) : id;
+  if (m) m.classList.remove('abierto');
+}
+document.addEventListener('click', function (e) {
+  if (e.target.classList && e.target.classList.contains('modal')) cerrarModal(e.target);
+});
+// Escape con un diálogo abierto lo cierra y nada más: sin cortar la
+// propagación, el atajo de «volver» de más abajo también lo vería y sacaría
+// de la pantalla.
+document.addEventListener('keydown', function (e) {
+  if (e.key !== 'Escape') return;
+  var abiertos = document.querySelectorAll('.modal.abierto');
+  if (!abiertos.length) return;
+  abiertos.forEach(cerrarModal);
+  e.stopImmediatePropagation();
+});
+
+// ── Solapas de ABM ────────────────────────────────────────────────────
+// Muestra el panel cuyo data-panel coincide con la solapa. Es local a la
+// página: no toca la URL ni el historial, porque la solapa no es un estado
+// que valga la pena poder compartir por link.
+function abmSolapa(nombre) {
+  document.querySelectorAll('.abm-tab').forEach(function (t) {
+    t.classList.toggle('activa', t.dataset.panel === nombre);
+  });
+  document.querySelectorAll('.abm-panel').forEach(function (p) {
+    p.classList.toggle('oculto', p.dataset.panel !== nombre);
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  abmSolapasAutomaticas();
+  document.querySelectorAll('.abm-tab').forEach(function (t) {
+    t.addEventListener('click', function () { abmSolapa(this.dataset.panel); });
+  });
+});
+
+// ── Solapas automáticas ───────────────────────────────────────────────
+// Las 31 pantallas ABM comparten la misma forma: una tarjeta con el
+// formulario de alta/edición y otra con la grilla. En vez de editar las 31
+// plantillas, se detecta el patrón y se arman las solapas acá.
+//
+// El criterio es estricto a propósito: se exige el formulario con
+// `name="accion"` —la convención de los ABM— y una `table.data-table`, y que
+// las dos tarjetas cuelguen del mismo padre. Una pantalla que no cumpla eso
+// queda exactamente como estaba; es preferible a reacomodar a ciegas algo
+// que no es un ABM.
+//
+// Las plantillas que ya traen `.abm-tabs` escrito a mano ganan: hay casos
+// con más de dos solapas, como las chequeras dentro de cuentas de fondos.
+//
+// Y una pantalla puede rechazar las solapas con `data-sin-solapas` en la
+// tarjeta del formulario. Hace falta donde el alta no es la otra mitad de la
+// pantalla sino algo ocasional —Movimientos entre Cuentas es una consulta con
+// un alta rápida al costado—: ahí la solapa le da al formulario el mismo peso
+// que al listado, y encima lo pone primero.
+function abmSolapasAutomaticas() {
+  if (document.querySelector('.abm-tabs')) return;
+
+  var main = document.querySelector('main') || document.body;
+
+  var cardForm = null, cardGrid = null;
+  main.querySelectorAll('.card').forEach(function (c) {
+    if (c.hasAttribute('data-sin-solapas')) return;
+    // Tarjeta de formulario: tiene el `accion` de los ABM y al menos un
+    // campo visible. Sin lo segundo entraría el modal de borrado, que
+    // también manda `accion` pero solo con hidden.
+    if (!cardForm && c.querySelector('[name="accion"]')
+                  && c.querySelector('input:not([type=hidden]), select, textarea')) {
+      cardForm = c;
+    }
+    if (!cardGrid && c.querySelector('table.data-table')) { cardGrid = c; }
+  });
+
+  if (!cardForm || !cardGrid || cardForm === cardGrid) return;
+  if (cardForm.parentNode !== cardGrid.parentNode) return;
+
+  var padre = cardForm.parentNode;
+
+  // ¿Se está editando un registro? Los ABM mandan el id en un hidden y
+  // ponen accion=guardar. Si es así conviene abrir en el formulario.
+  var accion = cardForm.querySelector('[name="accion"]');
+  var idOculto = cardForm.querySelector('input[name="id"]');
+  var editando = (accion && accion.value === 'guardar')
+              || (idOculto && idOculto.value);
+  // El cartel de errores de validación: todos los ABM lo pintan con el
+  // mismo fondo. Buscar `--danger` a secas traería cualquier botón de
+  // borrar de la grilla y abriría el formulario sin motivo.
+  //
+  // Y tiene que estar VISIBLE. `querySelector` no distingue: en Movimientos
+  // entre Cuentas el panel de anulación usa el mismo #fff0ef y vive con
+  // display:none hasta que alguien anula, así que la pantalla abría siempre
+  // en el formulario —incluso al aplicar un filtro, que es cuando uno quiere
+  // ver justamente el listado—. `offsetParent` es null para todo lo que no
+  // tiene caja, que es exactamente lo que hay que descartar.
+  var hayError = Array.prototype.some.call(
+    main.querySelectorAll('.alert-danger'),
+    function (el) { return el.offsetParent !== null; });
+  var inicial  = (editando || hayError) ? 'datos' : 'listado';
+
+  // Una pantalla puede imponer con qué solapa abre. Hace falta donde la
+  // grilla no es el listado del formulario: en la ficha del afiliado el
+  // formulario es del titular y la grilla es su grupo familiar, así que
+  // "estoy editando el titular" no es motivo para esconder a la familia.
+  if (window.ABM_SOLAPA_INICIAL) inicial = window.ABM_SOLAPA_INICIAL;
+
+  var filas = cardGrid.querySelectorAll('table.data-table tbody tr');
+  var conteo = 0;
+  filas.forEach(function (tr) { if (!tr.querySelector('.no-data')) conteo += 1; });
+
+  function envolver(card, nombre) {
+    var panel = document.createElement('div');
+    panel.className = 'abm-panel' + (nombre === inicial ? '' : ' oculto');
+    panel.dataset.panel = nombre;
+    padre.insertBefore(panel, card);
+    panel.appendChild(card);
+    return panel;
+  }
+
+  // Si las dos tarjetas venían en una grilla de dos columnas —la grilla a la
+  // izquierda y el formulario a la derecha, como en Valores Base—, esa grilla
+  // ya no tiene sentido: ahora son solapas y sólo se ve una por vez. Peor
+  // todavía, dejarla rompe la pantalla: al padre le entran tres hijos (las
+  // solapas y los dos paneles) y, como el panel oculto no ocupa lugar, las
+  // solapas se quedan con la primera columna y la tarjeta visible cae en la
+  // segunda —los 320px del formulario—, corrida contra el borde derecho.
+  //
+  // Se pasa a bloque en vez de tocar `grid-template-columns` porque el padre
+  // puede ser flex o cualquier otra cosa: bloque apila, que es lo que hace
+  // falta en todos los casos.
+  var disposicion = window.getComputedStyle(padre).display;
+  if (disposicion === 'grid' || disposicion === 'inline-grid' ||
+      disposicion === 'flex' || disposicion === 'inline-flex') {
+    padre.style.display = 'block';
+  }
+
+  var panelGrid = envolver(cardGrid, 'listado');
+  var panelForm = envolver(cardForm, 'datos');
+
+  var tabs = document.createElement('div');
+  tabs.className = 'abm-tabs';
+  tabs.innerHTML =
+    '<button type="button" class="abm-tab' +
+      (inicial === 'listado' ? ' activa' : '') + '" data-panel="listado">' +
+      'Listado<span class="conteo">' + conteo + '</span></button>' +
+    '<button type="button" class="abm-tab' +
+      (inicial === 'datos' ? ' activa' : '') + '" data-panel="datos">' +
+      (editando ? 'Editar' : 'Nuevo') + '</button>';
+
+  // Las solapas van arriba del primero de los dos paneles, sea cual sea.
+  padre.insertBefore(tabs, panelForm.compareDocumentPosition(panelGrid)
+                          & Node.DOCUMENT_POSITION_FOLLOWING
+                          ? panelForm : panelGrid);
+
+  // ── El botón editar de la grilla tiene que traer la solapa del formulario ──
+  //
+  // Cada ABM resuelve "editar" con su propia función —editarValor, editarInc,
+  // editarBon…— que llena los campos del formulario y le hace scrollIntoView.
+  // Eso alcanzaba cuando el formulario estaba al lado de la grilla, pero desde
+  // que las dos tarjetas son solapas el formulario arranca oculto: se llenaba
+  // un panel en display:none y en pantalla no pasaba nada. El scrollIntoView
+  // tampoco avisaba, porque sobre un elemento sin caja no hace nada.
+  //
+  // Se resuelve acá y no en cada plantilla porque el que escondió el
+  // formulario fue este código: son 31 pantallas y ninguna sabe que ahora hay
+  // solapas. Ninguna llama a abmSolapa().
+  //
+  // No se detecta "el botón editar" —cada pantalla lo pinta a su manera— sino
+  // su efecto: después de un clic en la grilla se mira si el formulario quedó
+  // en modo edición. Va en `setTimeout` porque el onclick de la fila corre
+  // primero y esto tiene que leer el resultado, no adelantarse.
+  panelGrid.addEventListener('click', function () {
+    setTimeout(function () {
+      var acc = cardForm.querySelector('[name="accion"]');
+      var oculto = cardForm.querySelector('input[name="id"]');
+      if ((acc && acc.value === 'guardar') || (oculto && oculto.value)) {
+        abmSolapa('datos');
+        var solapa = document.querySelector('.abm-tab[data-panel="datos"]');
+        if (solapa) solapa.textContent = 'Editar';
+      }
+    }, 0);
+  });
+}
+
+/* ── Volver a la pantalla anterior ───────────────────────────────────────
+   El botón «Volver» de la barra de arriba y la tecla Esc llevan al mismo
+   lugar: la pantalla desde la que se llegó a esta.
+
+   No alcanza con history.back(). Después de guardar, el historial tiene dos
+   veces la misma ficha (la del formulario y la que devuelve el redirect) y
+   «atrás» parecía no hacer nada; y volver con un enlace común suma una
+   entrada más, así que dos «Volver» seguidos iban y venían entre las mismas
+   dos pantallas. Por eso cada pestaña lleva su propia pila de pantallas en
+   sessionStorage:
+     - una pantalla nueva se apila;
+     - la misma dirección otra vez (recargar, guardar) no suma;
+     - llegar con atrás o adelante del navegador recorta la pila hasta ahí;
+     - «Volver» la recorta antes de irse. Si la anterior es justo la entrada
+       previa del historial usa history.back(), que la devuelve como estaba
+       (con los filtros puestos) cuando el navegador la tiene guardada.
+   La pila se vacía en el login: no se vuelve a pantallas de otra sesión.
+
+   Esc no actúa si el usuario está escribiendo ni si hay un modal abierto
+   —ahí Esc debe cerrarlo, no navegar—. Con cambios sin guardar en un
+   formulario, el botón y Esc preguntan antes de irse. */
+(function () {
+  var CLAVE = 'sind_pantallas', MAX = 30;
+  var boton = document.getElementById('btn-volver');
+  if (!boton) return;       // sin sesión no hay barra ni a dónde volver
+
+  function leer() {
+    try { return JSON.parse(sessionStorage.getItem(CLAVE)) || []; } catch (e) { return []; }
+  }
+  function guardar(pila) {
+    try { sessionStorage.setItem(CLAVE, JSON.stringify(pila.slice(-MAX))); } catch (e) {}
+  }
+  function aqui() { return location.pathname + location.search; }
+  function titulo() {
+    var h1 = document.querySelector('.page-header h1');
+    var t = h1 ? h1.textContent : document.title.split(' — ')[0];
+    return t.replace(/\s+/g, ' ').trim();
+  }
+  function posicion(pila, url) {
+    for (var i = pila.length - 1; i >= 0; i--) if (pila[i].url === url) return i;
+    return -1;
+  }
+  function anterior(pila) { return pila.length >= 2 ? pila[pila.length - 2] : null; }
+
+  // Cómo se llegó: con un enlace, recargando, o con atrás/adelante.
+  function llegada(restaurada) {
+    if (restaurada) return 'back_forward';
+    try {
+      var n = performance.getEntriesByType('navigation')[0];
+      if (n) return n.type;
+    } catch (e) {}
+    return 'navigate';
+  }
+
+  function registrar(restaurada) {
+    var pila = leer(), url = aqui(), tope = pila[pila.length - 1];
+    if (tope && tope.url === url) {
+      tope.titulo = titulo();
+    } else if (llegada(restaurada) === 'back_forward' && posicion(pila, url) >= 0) {
+      pila = pila.slice(0, posicion(pila, url) + 1);
+    } else {
+      pila.push({ url: url, titulo: titulo() });
+    }
+    guardar(pila);
+    var a = anterior(pila);
+    boton.classList.toggle('oculto', !a);
+    if (a) {
+      boton.href = a.url;
+      boton.title = 'Volver a «' + a.titulo + '»';
+    }
+  }
+
+  function esEditable(el) {
+    if (!el) return false;
+    var tag = (el.tagName || '').toUpperCase();
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+           el.isContentEditable;
+  }
+
+  function hayModalAbierto() {
+    var abierto = false;
+    document.querySelectorAll('[id^="modal-"], .modal, dialog[open]').forEach(function (m) {
+      if (m.tagName === 'DIALOG') { abierto = true; return; }
+      var vis = window.getComputedStyle(m).display;
+      if (vis && vis !== 'none') abierto = true;
+    });
+    return abierto;
+  }
+
+  // Solo los formularios que guardan (POST): uno de búsqueda (GET) con un
+  // filtro tocado no es un cambio que se pierda.
+  function hayCambiosSinGuardar() {
+    var sucio = false;
+    document.querySelectorAll('form').forEach(function (f) {
+      if (f.dataset.escIgnorar === '1') return;
+      if ((f.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+      f.querySelectorAll('input, textarea, select').forEach(function (c) {
+        // :disabled y no .disabled: cuenta también un fieldset deshabilitado (la consulta).
+        if (sucio || c.type === 'hidden' || c.matches(':disabled')) return;
+        if (c.type === 'checkbox' || c.type === 'radio') {
+          if (c.checked !== c.defaultChecked) sucio = true;
+        } else if (c.tagName === 'SELECT') {
+          for (var i = 0; i < c.options.length; i++) {
+            if (c.options[i].selected !== c.options[i].defaultSelected) { sucio = true; break; }
+          }
+        } else if (c.value !== c.defaultValue) {
+          sucio = true;
+        }
+      });
+    });
+    return sucio;
+  }
+
+  function volver() {
+    var pila = leer(), a = anterior(pila);
+    if (!a) return;
+    if (hayCambiosSinGuardar() &&
+        !confirm('Hay cambios sin guardar. ¿Salir de la pantalla igual?')) return;
+    pila.pop();
+    guardar(pila);
+    var previa = '';
+    try {
+      var r = new URL(document.referrer);
+      if (r.origin === location.origin) previa = r.pathname + r.search;
+    } catch (e) {}
+    if (previa === a.url && history.length > 1) history.back();
+    else location.href = a.url;
+  }
+
+  boton.addEventListener('click', function (e) {
+    // Ctrl/clic del medio: que abra la anterior en otra pestaña, como un enlace.
+    if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return;
+    e.preventDefault();
+    volver();
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.metaKey) return;
+    if (esEditable(document.activeElement)) return;
+    if (hayModalAbierto()) return;
+    volver();
+  });
+
+  registrar(false);
+  // Una página que el navegador devuelve de su caché (atrás/adelante) no
+  // vuelve a correr los scripts: hay que registrar la llegada igual.
+  window.addEventListener('pageshow', function (e) { if (e.persisted) registrar(true); });
+})();
+</script>
+
+</body>
+</html>

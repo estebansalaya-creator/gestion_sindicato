@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Órdenes de pago a proveedores{% endblock %}
+
+{#
+  Órdenes de pago a proveedores y anticipos (pagos.ordenes). Las de las otras
+  clases —concepto, reintegros, sueldos— se ven en Emisión de Pagos. Las que
+  vinieron de AEDA muestran el número de AEDA.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Órdenes de pago a proveedores</h1>
+    <p>Pagos de comprobantes y anticipos: de la orden en borrador al pago emitido.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva orden', href=url_for('pagos.nueva'), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Filtrar por número, proveedor o CUIT…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="">Todos los estados</option>
+      {% for k, t in estados %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      <option value="sin_pago">Sin pagar (no anuladas)</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Clase') %}<select class="filtro" id="f-clase">
+      <option value="">Comprobantes y anticipos</option>
+      <option value="proveedor">Comprobantes</option>
+      <option value="anticipo">Anticipos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Fecha desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Fecha hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-ordenes" data-exportar="Órdenes de pago">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>N° orden</th>
+          <th class="th-right">Fecha</th>
+          <th>Clase</th>
+          <th>Proveedor</th>
+          <th>CUIT</th>
+          <th class="th-right">Comprob.</th>
+          <th class="th-right">Importe</th>
+          <th>Estado</th>
+          <th>Pago</th>
+          <th>Cargó</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in ordenes %}
+        <tr class="{{ 'fila-baja' if o.estado == 'anulada' }}" data-estado="{{ o.estado }}" data-clase="{{ o.clase }}"
+            data-fecha="{{ o.fecha.isoformat() if o.fecha }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('pagos.orden', id_orden=o.id)) }}
+            {{ ui.accion('pdf', href=url_for('pagos.orden_pdf', id_orden=o.id), blank=True) }}
+          </div></td>
+          <td class="td-mono td-fuerte">{{ o.nro_vis }}</td>
+          <td class="td-right" data-valor="{{ o.fecha.strftime('%d/%m/%Y') if o.fecha }}">{{ o.fecha.strftime('%d/%m/%Y') if o.fecha }}</td>
+          <td>{{ 'Anticipo' if o.clase == 'anticipo' else 'Comprobantes' }}</td>
+          <td class="td-recorte" title="{{ o.razon_social or '' }}">{{ o.razon_social or '—' }}</td>
+          <td class="td-mono">{{ o.cuit or '' }}</td>
+          <td class="td-right {{ 'td-muted' if not o.n_comp }}" data-num="{{ o.n_comp }}">{{ o.n_comp or '—' }}</td>
+          <td class="td-right td-mono" data-num="{{ o.importe_total }}">{{ (o.importe_total or 0) | miles }}</td>
+          <td>{{ ui.estado(estados_txt.get(o.estado, o.estado), estado_tipo.get(o.estado, 'neutro')) }}</td>
+          <td class="td-mono {{ 'td-muted' if not o.nro_pago }}">{{ o.nro_pago or '—' }}</td>
+          <td class="td-muted">{{ o.usuario or ('AEDA' if o.nro_orden.startswith('AEDA') else '') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="11" class="no-data">Todavía no hay órdenes.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fc = document.getElementById('f-clase'),
+      fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+  gestion_admTable('tbl-ordenes', {
+    pageSize: 50,
+    filtroExtra: function (tr) {
+      var e = tr.dataset.estado;
+      if (fe.value === 'sin_pago') { if (e === 'pagada' || e === 'anulada') return false; }
+      else if (fe.value && e !== fe.value) return false;
+      if (fc.value && tr.dataset.clase !== fc.value) return false;
+      if (fd.value && tr.dataset.fecha < fd.value) return false;
+      if (fh.value && tr.dataset.fecha > fh.value) return false;
+      return true;
+    }
+  });
+});
+</script>
+{% endblock %}

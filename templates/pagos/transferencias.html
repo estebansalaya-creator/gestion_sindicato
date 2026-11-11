@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Transferencias masivas{% endblock %}
+
+{#
+  Transferencias masivas (transferencias.index). Cuenta y fechas van al servidor
+  (GET); la grilla busca, ordena y exporta lo que trajo. Una fila por
+  instrumento de transferencia. La que no puede ir en el archivo (sin CBU, alias
+  en un formato que solo toma CBU) se ve apagada, sin casilla y con el motivo:
+  esconderla haría que la plata no se transfiera sin que nadie sepa por qué.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Transferencias masivas</h1>
+    <p>Los pagos por transferencia que todavía no salieron: elegilos y generá el archivo para el home banking.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' transferencias con estos filtros: se muestran las primeras. Acotá las fechas.', 'warning') }}{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('transferencias.index') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta de origen') %}<select name="cuenta" class="filtro" onchange="this.form.submit()">
+      <option value="">Todas</option>
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if f.cuenta == c.id }}>{{ c.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Pagos desde') %}<input type="date" name="desde" class="filtro" value="{{ f.desde.isoformat() if f.desde else '' }}">{% endcall %}
+    {% call ui.filtro('Pagos hasta') %}<input type="date" name="hasta" class="filtro" value="{{ f.hasta.isoformat() if f.hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('transferencias.index') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<form method="post" action="{{ url_for('transferencias.generar') }}" id="form-transf" data-proceso="Generando el archivo…">
+  <input type="hidden" name="cuenta" value="{{ f.cuenta or '' }}">
+  <input type="hidden" name="desde" value="{{ f.desde.isoformat() if f.desde else '' }}">
+  <input type="hidden" name="hasta" value="{{ f.hasta.isoformat() if f.hasta else '' }}">
+
+  <div class="card">
+    {{ ui.card_head('Archivo a generar') }}
+    <div class="card-body">
+      {% if not cuenta %}
+        {{ ui.aviso('Elegí la cuenta de origen: es la que ordena la transferencia y define el formato del archivo. Con «Todas» se ven los pagos pero no se genera.', 'info') }}
+      {% else %}
+      <div class="datos">
+        <div class="dato">
+          <div class="dato-lbl">Ordena</div>
+          <div class="dato-val">{{ cuenta.nombre }}</div>
+          <div class="dato-val mono">{{ cuenta.cbu or 'sin CBU cargado' }}</div>
+        </div>
+        <div class="dato">
+          <div class="dato-lbl">Formato</div>
+          {% if formato %}
+          <div class="dato-val">{{ formato.nombre }}</div>
+          <small class="campo-ayuda">{{ formato.descripcion }}.
+            {% if not cuenta.formato_transferencia %}La cuenta no tiene formato habitual: se usa el primero de su banco.{% endif %}
+            {% if puede_cuentas and formatos_banco|length > 1 %}<a href="{{ url_for('tesoreria.cuentas_fondos', edit=cuenta.id) }}">Cambiarlo en la cuenta</a>.{% endif %}
+          </small>
+          {% else %}
+          <div class="dato-val">—</div>
+          <small class="campo-ayuda error">No hay formato para {{ cuenta.banco_nombre or 'el banco de esta cuenta' }}.</small>
+          {% endif %}
+        </div>
+      </div>
+      {% if formato and not formato.acepta_alias %}
+      <div class="campos">
+        <div class="campo" style="--span:2;">
+          <label for="concepto">Concepto</label>
+          <input type="text" name="concepto" id="concepto" value="FAC" maxlength="3" class="mono">
+          <small class="campo-ayuda">Tres letras para el BNA: FAC facturas, VAR varios.</small>
+        </div>
+      </div>
+      {% endif %}
+      {% if cuenta and not cuenta.cbu %}{{ ui.aviso('La cuenta no tiene CBU: cargalo en Cuentas de Fondos antes de generar.', 'warning') }}{% endif %}
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.barra_filtros('Buscar por beneficiario, número de pago o CBU…', tam_pagina=9999) }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-transf" data-exportar="Transferencias a generar">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>
+            {% if cuenta and formato %}<input type="checkbox" id="chk-todos" title="Elegir todas las filtradas" onclick="marcarTodos(this)">{% endif %}
+          </th>
+          <th>Fecha</th><th>Pago</th><th>Clase</th>{% if not f.cuenta %}<th>Cuenta</th>{% endif %}
+          <th>Beneficiario</th><th>CUIT / CUIL</th><th>CBU / alias</th><th class="th-right">Importe</th>
+        </tr></thead>
+        <tbody>
+          {% for p in pagos %}
+          <tr class="{{ 'fila-apagada' if p.motivo_final }}">
+            <td><div class="acciones">
+              {% if cuenta and formato and not p.motivo_final %}
+              <input type="checkbox" class="chk-item" name="instrumento" value="{{ p.id_instrumento }}"
+                     data-importe="{{ '%.2f'|format(p.importe|float) }}" aria-label="Elegir el pago {{ p.numero }}" onchange="recalcularSel()">
+              {% endif %}
+              {% if puede_ordenes %}{{ ui.accion('ver', href=url_for('pagos.orden', id_orden=p.id_orden), titulo='Ver la orden de pago') }}{% endif %}
+            </div></td>
+            <td data-valor="{{ p.fecha_pago.isoformat() }}">{{ p.fecha_pago.strftime('%d/%m/%Y') }}</td>
+            <td class="td-mono">{{ p.numero }}</td>
+            <td class="td-muted">{{ p.clase_txt }}</td>
+            {% if not f.cuenta %}<td>{{ p.cuenta or '—' }}</td>{% endif %}
+            <td class="td-wrap td-fuerte">{{ p.beneficiario or '—' }}
+              {% if p.motivo_final %}<span class="td-motivo">{{ p.motivo_final }}</span>{% endif %}</td>
+            <td class="td-mono">{{ p.cuit or '—' }}</td>
+            <td class="td-mono" data-valor="{{ p.cbu or '' }}">{{ p.cbu or '—' }}
+              {% if p.cbu and p.cbu_origen == 'instrumento' %}<span class="chip" title="Cargado en el pago: no es el de la ficha">del pago</span>{% endif %}</td>
+            <td class="td-right td-fuerte" data-num="{{ p.importe }}">{{ (p.importe or 0) | miles }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">No hay pagos por transferencia pendientes con estos filtros.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if cuenta and formato and cant_listos %}
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Elegidas</div><div class="res-card-val"><span id="res-cant">0</span> <small class="muted">de {{ cant_listos }}</small></div></div>
+      <div><div class="res-card-lbl">Total a transferir</div><div class="res-card-val ok mono" id="res-total">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Disponible para transferir</div><div class="res-card-val mono">$ {{ total_listos | miles }}</div></div>
+    </div>
+    {{ ui.boton('Generar archivo', 'primary', submit=True, icono_='descargar', id='btn-generar', onclick='return confirmarGeneracion();') }}
+  </div>
+  {% endif %}
+</form>
+
+<div class="card">
+  {{ ui.card_head('Archivos generados', nota='Se vuelven a bajar tal como salieron. Uno que no se subió al banco se anula desde su ficha y libera sus pagos.') }}
+  {% call ui.barra_filtros('Buscar por archivo o cuenta…') %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado-lote">
+      <option value="">Todos</option><option value="vigente">Generados</option><option value="anulado">Anulados</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-lotes" data-exportar="Archivos de transferencias">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Generado</th><th>Archivo</th><th>Cuenta</th><th>Formato</th>
+        <th class="th-right">Transf.</th><th class="th-right">Excluidas</th><th class="th-right">Importe</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for l in lotes %}
+        <tr class="{{ 'fila-baja' if l.fecha_anulacion }}" data-estado="{{ 'anulado' if l.fecha_anulacion else 'vigente' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('transferencias.lote_ver', id_lote=l.id)) }}
+            {{ ui.accion('descargar', href=url_for('transferencias.lote_descargar', id_lote=l.id), titulo='Volver a bajar el archivo', deshabilitado=l.fecha_anulacion is not none) }}
+          </div></td>
+          <td data-valor="{{ l.creado.isoformat() }}">{{ l.creado.strftime('%d/%m/%Y %H:%M') }}</td>
+          <td class="td-mono">{{ l.nombre_archivo }}</td>
+          <td>{{ l.cuenta or '—' }}</td>
+          <td class="td-muted">{{ l.formato_txt }}</td>
+          <td class="td-right" data-num="{{ l.cantidad }}">{{ l.cantidad }}</td>
+          <td class="td-right" data-num="{{ l.excluidas }}">{{ l.excluidas or '—' }}</td>
+          <td class="td-right td-fuerte" data-num="{{ l.importe_total }}">{{ (l.importe_total or 0) | miles }}</td>
+          <td>{% if l.fecha_anulacion %}<span title="{{ l.motivo_anulacion or '' }}">{{ ui.estado('Anulado', 'danger') }}</span>{% else %}{{ ui.estado('Generado', 'ok') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no se generó ningún archivo.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+function items() { return Array.from(document.querySelectorAll('.chk-item')); }
+// Elige o suelta lo que pasó el filtro, no las filas escondidas.
+function marcarTodos(chk) {
+  var tbl = document.getElementById('tbl-transf');
+  var filas = tbl._grilla ? tbl._grilla.filas() : Array.from(tbl.tBodies[0].rows);
+  filas.forEach(function (tr) { var c = tr.querySelector('.chk-item'); if (c) c.checked = chk.checked; });
+  recalcularSel();
+}
+// Se recalcula sobre las tildadas, no con un acumulador por evento.
+function recalcularSel() {
+  var sel = items().filter(function (i) { return i.checked; });
+  var total = sel.reduce(function (a, i) { return a + (parseFloat(i.dataset.importe) || 0); }, 0);
+  if (!document.getElementById('res-cant')) return;
+  document.getElementById('res-cant').textContent = sel.length;
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('btn-generar').disabled = sel.length === 0;
+}
+function confirmarGeneracion() {
+  var sel = items().filter(function (i) { return i.checked; });
+  if (!sel.length) { alert('Elegí al menos una transferencia.'); return false; }
+  return confirm('Se genera el archivo con ' + sel.length + ' transferencia' + (sel.length === 1 ? '' : 's') + ' por '
+    + document.getElementById('res-total').textContent + ' desde {{ cuenta.nombre if cuenta else '' }}.'
+    + '\n\nDesde ese momento los pagos figuran transferidos y no se pueden anular: si el archivo no se sube al banco, '
+    + 'hay que anularlo desde su ficha. ¿Seguir?');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-transf', { pageSize: 9999 });
+  var fe = document.getElementById('f-estado-lote');
+  gestion_admTable('tbl-lotes', { pageSize: 20, filtroExtra: function (tr) {
+    return !fe.value || tr.dataset.estado === fe.value; } });
+  recalcularSel();
+});
+</script>
+{% endblock %}
