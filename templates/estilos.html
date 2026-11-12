@@ -39,7 +39,8 @@
   <div class="card-body">
     <div class="bloque-titulo">Marca</div>
     <div class="muestras">
-      {% for token, uso in [('--navy','títulos, cabecera de grilla'), ('--navy-mid','degradé del encabezado'),
+      {% for token, uso in [('--navy','títulos, cabecera de grilla'), ('--navy-mid','hover de la cabecera de grilla'),
+                            ('--header','barra superior y login (verde: los distingue de gestion_adm)'), ('--header-mid','degradé de la barra y del login'),
                             ('--blue','acción principal, enlaces'), ('--blue-hover','hover de la principal'),
                             ('--blue-light','fondo de selección'), ('--accent','realce puntual')] %}
       <div class="muestra"><div class="muestra-color" style="background:var({{ token }})"></div>

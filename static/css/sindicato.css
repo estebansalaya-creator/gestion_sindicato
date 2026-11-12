@@ -25,10 +25,15 @@
    Marca. Un azul más claro que el de gestion_adm, para distinguir las dos
    apps de un vistazo cuando están abiertas a la vez. --blue lleva texto
    blanco encima: #1a7ac2 da 4.56 de contraste, el mínimo de WCAG AA para
-   texto normal. Un tono más claro ya no pasa.                              */
+   texto normal. Un tono más claro ya no pasa.
+   La barra superior y el login van en verde oscuro (--header → --header-mid):
+   es lo primero que se ve y separa las dos apps aunque estén en pestañas vecinas.
+   El blanco sobre --header-mid da 6.5 de contraste.                        */
 :root {
   --navy:       #1c5a8f;
   --navy-mid:   #2a6ea8;
+  --header:     #0f4a2c;
+  --header-mid: #1b6b40;
   --blue:       #1a7ac2;
   --blue-hover: #14669f;
   --blue-light: #eaf4fc;
@@ -91,7 +96,7 @@ code, kbd { font-family: var(--mono); font-size: .9em; }
 
 /* ── 3. Estructura: encabezado, menú lateral, contenido ──────────────────── */
 .app-header {
-  background: linear-gradient(135deg, var(--navy) 0%, var(--navy-mid) 100%);
+  background: linear-gradient(135deg, var(--header) 0%, var(--header-mid) 100%);
   color: #fff; display: flex; align-items: center; gap: 14px;
   padding: 0 24px; height: 60px; flex-shrink: 0;
   box-shadow: 0 2px 16px rgba(0,0,0,.25);
@@ -1077,10 +1082,10 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
 /* ── 18. Login ───────────────────────────────────────────────────────────── */
 .login-page {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
-  background: linear-gradient(135deg, var(--navy) 0%, #1a4a8a 100%); padding: 20px;
+  background: linear-gradient(135deg, var(--header) 0%, var(--header-mid) 100%); padding: 20px;
 }
 .login-card { background: #fff; border-radius: 16px; box-shadow: var(--shadow-lg); width: 100%; max-width: 390px; overflow: hidden; }
-.login-top { background: linear-gradient(135deg, var(--navy), var(--navy-mid)); padding: 30px 32px 22px; text-align: center; color: #fff; }
+.login-top { background: linear-gradient(135deg, var(--header), var(--header-mid)); padding: 30px 32px 22px; text-align: center; color: #fff; }
 .login-top img { width: 60px; height: 60px; border-radius: 10px; margin-bottom: 12px; }
 .login-top h1 { font-size: 1.1rem; font-weight: 700; }
 .login-top p  { font-size: .78rem; opacity: .7; margin-top: 3px; }
@@ -1097,10 +1102,10 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
 .login-field input:focus { outline: none; border-color: var(--blue); box-shadow: var(--foco); }
 .login-submit {
   width: 100%; padding: 11px; margin-top: 6px; border: none; border-radius: 8px;
-  background: var(--blue); color: #fff; font-family: var(--font); font-size: .9rem; font-weight: 700;
+  background: var(--header-mid); color: #fff; font-family: var(--font); font-size: .9rem; font-weight: 700;
   cursor: pointer; transition: background .2s, box-shadow .2s;
 }
-.login-submit:hover { background: var(--navy); box-shadow: 0 4px 12px rgba(13,37,69,.3); }
+.login-submit:hover { background: var(--header); box-shadow: 0 4px 12px rgba(15,74,44,.3); }
 
 
 /* ── 18b. Aviso de pantalla completa (404, pantalla pendiente) ──────────── */
