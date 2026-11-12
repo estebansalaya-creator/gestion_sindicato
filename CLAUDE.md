@@ -404,6 +404,12 @@ la SSS; con afiliados por empleador, antigüedad en el gremio y controles del gr
   CUIL que no verifica (en Python, `cuit_valido`), sexo contra el prefijo del CUIL, sin nacimiento,
   domicilio incompleto, alta futura y bajas sin motivo. `?control=<clave>` abre la lista con enlace a
   la ficha (al ABM si tiene permiso, si no a la consulta). Para sumar uno, una línea en `CONTROLES`.
+- **Empleador distinto del último que lo declara** (`?control=ddjj_empleador`, pedido del 12/11/2026): titulares
+  activos cuyo empleador del padrón (sus relaciones vigentes o, sin ellas, el de la ficha) no es el último CUIT que
+  los declaró en la DDJJ de OSEDA, en toda la historia (`contable_oseda.declarantes_por_cuil`, en vivo a Railway).
+  Con dos empleos o dos declarantes en el último período alcanza con que uno coincida. Muestra el último período y
+  el último en que lo declaró su empleador («nunca»). No está en `CONTROLES`: se consulta solo al abrirlo; en la
+  tabla de controles sale con «—» y «Se consulta al abrirlo». Los que no figuran en ninguna DDJJ se cuentan aparte.
 - **Gráficos en HTML y CSS** (sindicato.css 15e: `.reparto`, `.evol`, `.piramide`, `.leyenda`), sin
   Chart.js: en la intranet el CDN no siempre responde. Colores `--serie-1/-2/-baja`, validados para
   daltonismo. Cada marca lleva su `title` y el mensual tiene su tabla exportable.

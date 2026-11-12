@@ -262,17 +262,19 @@
       </tr></thead>
       <tbody>
         {% for c in m.controles %}
-        <tr data-casos="{{ c.n }}" class="{{ 'fila-actual' if c.clave == control }}">
+        {# Un control con n = None se consulta recién al abrirlo (el de la DDJJ de OSEDA, en vivo a Railway). #}
+        <tr data-casos="{{ c.n if c.n is not none else '?' }}" class="{{ 'fila-actual' if c.clave == control }}">
           <td><div class="acciones">
-            {% if c.n %}{{ ui.accion('ver', href=url_for('padron_metricas.metricas', estado=estado, personas=personas, desde=desde.isoformat(), hasta=hasta.isoformat(), control=c.clave, _anchor='detalle'), titulo='Ver a quiénes') }}{% endif %}
+            {% if c.n or c.n is none %}{{ ui.accion('ver', href=url_for('padron_metricas.metricas', estado=estado, personas=personas, desde=desde.isoformat(), hasta=hasta.isoformat(), control=c.clave, _anchor='detalle'), titulo='Consultar la DDJJ de OSEDA' if c.n is none else 'Ver a quiénes') }}{% endif %}
           </div></td>
           <td class="td-fuerte">{{ c.que }}</td>
           <td class="td-wrap td-muted">{{ c.hacer }}</td>
-          <td class="td-right td-fuerte" data-num="{{ c.n }}">{{ entero(c.n) }}</td>
-          <td class="td-right td-muted" data-num="{{ c.pct }}">{{ decimal(c.pct) }}%</td>
-          <td class="td-muted">{{ entero(c.sobre) }} {{ 'activos' if c.universo == 'activos' else 'bajas' }}</td>
-          <td data-valor="{{ 'Bien' if not c.n else 'Revisar' }}">
-            {% if not c.n %}{{ ui.estado('Bien', 'ok') }}
+          <td class="td-right td-fuerte" data-num="{{ c.n if c.n is not none else -1 }}">{{ entero(c.n) if c.n is not none else '—' }}</td>
+          <td class="td-right td-muted" data-num="{{ c.pct }}">{{ (decimal(c.pct) ~ '%') if c.n is not none else '—' }}</td>
+          <td class="td-muted">{{ entero(c.sobre) }} {{ {'activos': 'activos', 'bajas': 'bajas', 'titulares': 'titulares activos'}[c.universo] }}</td>
+          <td data-valor="{{ 'Consultar' if c.n is none else ('Bien' if not c.n else 'Revisar') }}">
+            {% if c.n is none %}{{ ui.estado('Se consulta al abrirlo', 'info') }}
+            {% elif not c.n %}{{ ui.estado('Bien', 'ok') }}
             {% elif c.pct >= 5 %}{{ ui.estado('Revisar', 'danger') }}
             {% else %}{{ ui.estado('Revisar', 'warn') }}{% endif %}
           </td>
@@ -291,6 +293,35 @@
     {{ ui.boton('Cerrar', 'secondary', chico=True, icono_='cerrar',
                 href=url_for('padron_metricas.metricas', estado=estado, personas=personas, desde=desde.isoformat(), hasta=hasta.isoformat(), _anchor='controles')) }}
   {% endcall %}
+  {% if control == 'ddjj_empleador' %}
+  {% if ddjj_cuenta %}<div class="card-body">{{ ui.aviso('De ' ~ entero(ddjj_cuenta.titulares) ~ ' titulares activos: ' ~ entero(ddjj_cuenta.coinciden) ~ ' los declaró último su empleador del padrón, ' ~ entero(detalle | length) ~ ' los declaró último otro CUIT (esta lista), ' ~ entero(ddjj_cuenta.sin_ddjj) ~ ' no figuran en ninguna DDJJ de OSEDA y ' ~ entero(ddjj_cuenta.sin_empleador) ~ ' no tienen empleador en el padrón. La DDJJ es la de OSEDA en contable (Railway), en vivo.', 'info') }}</div>{% endif %}
+  {% call ui.barra_filtros('Filtrar por CUIL, apellido o CUIT…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-detalle" data-exportar="{{ c.que }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>CUIL</th><th>Apellido y nombres</th><th>Empleador en el padrón</th>
+        <th>Último que lo declaró</th><th data-orden="desc">Último período</th><th>Último período de su empleador</th>
+      </tr></thead>
+      <tbody>
+        {% for a in detalle %}
+        <tr>
+          <td><div class="acciones">
+            {% if puede_abm %}{{ ui.accion('editar', href=url_for('afiliados.abm_afiliados', edit=a.id_afiliado), titulo='Corregir en el ABM', blank=True) }}
+            {% else %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=a.id_afiliado), blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ a.cuil }}</td>
+          <td class="td-fuerte">{{ a.apellido_nombres }}</td>
+          <td class="td-wrap">{% for cuit, razon in a.propios_txt %}<div><span class="mono">{{ cuit }}</span> {{ razon or '' }}</div>{% endfor %}</td>
+          <td class="td-wrap">{% for cuit, razon in a.ultimos_txt %}<div><span class="mono">{{ cuit }}</span> {{ razon or '— no está en Empleadores —' }}</div>{% endfor %}</td>
+          <td class="td-mono" data-valor="{{ a.ultimo_periodo }}">{{ a.ultimo_periodo | periodo }}</td>
+          <td class="td-mono" data-valor="{{ a.periodo_padron or '' }}">{{ (a.periodo_padron | periodo) if a.periodo_padron else 'nunca' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
   {% call ui.barra_filtros('Filtrar por CUIL o apellido…') %}{% endcall %}
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-detalle" data-exportar="{{ c.que }}">
@@ -325,6 +356,7 @@
       </tbody>
     </table>
   </div>
+  {% endif %}
   {{ ui.paginacion() }}
 </div>
 {% endif %}

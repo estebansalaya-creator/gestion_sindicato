@@ -39,6 +39,7 @@ from datetime import date
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
+import contable_oseda
 from db import get_connection, puede, validasesion
 from empleadores import cuit_valido
 
@@ -99,6 +100,16 @@ CONTROLES = [
 ]
 UNIVERSO = {"activos": "a.activo = 1", "bajas": "a.activo = 0"}
 
+#: El control contra la DDJJ de OSEDA (pedido del 12/11/2026). No está en
+#: CONTROLES porque no es una condición sobre el padrón: se consulta en vivo a
+#: contable de Railway y solo cuando se abre, no en cada carga del tablero.
+DDJJ_EMPLEADOR = {
+    "clave": "ddjj_empleador", "universo": "titulares",
+    "que": "Empleador distinto del último que lo declara",
+    "hacer": "El último CUIT que lo declaró en la DDJJ de OSEDA no es su empleador del padrón: "
+             "revisar la relación laboral en la solapa Empleadores de la ficha.",
+}
+
 
 def _fecha(nombre, defecto: date) -> tuple[date, str | None]:
     v = (request.args.get(nombre) or "").strip()
@@ -136,6 +147,60 @@ def _controles(cur) -> list[dict]:
         salida.append({"clave": clave, "que": que, "hacer": hacer, "n": n, "sobre": sobre, "universo": universo,
                        "pct": round(100 * n / sobre, 1) if sobre else 0})
     return salida
+
+
+def _ddjj_empleador(cur) -> tuple[list[dict], dict]:
+    """Titulares activos cuyo empleador del padrón no es el último CUIT que los
+    declaró en la DDJJ de OSEDA (en toda la historia, no en una ventana).
+
+    El empleador del padrón son sus relaciones vigentes (la regla de la Nómina)
+    o, si no tiene, el de la ficha. Con dos empleos alcanza con que uno de los
+    dos sea el último declarante; si en el último período lo declararon dos
+    CUIT, alcanza con que uno sea el del padrón. El que no figura en ninguna
+    DDJJ de OSEDA no entra en la lista: se cuenta aparte.
+    """
+    cur.execute(f"""
+        SELECT a.id_afiliado, a.cuil, a.apellido_nombres, a.cuit_empleador,
+               GROUP_CONCAT(DISTINCT r.cuit_empleador) AS cuits_vigentes
+          FROM p_afiliados a
+          LEFT JOIN p_relaciones_laborales r ON r.cuil = a.cuil AND r.estado = 'activa'
+                AND (r.fecha_fin IS NULL OR r.fecha_fin >= CURDATE())
+         WHERE a.activo = 1 AND a.cod_parentesco = 0 AND a.cuil REGEXP '^[0-9]{{11}}$'
+         GROUP BY a.id_afiliado, a.cuil, a.apellido_nombres, a.cuit_empleador""")
+    padron = cur.fetchall()
+    decl = contable_oseda.declarantes_por_cuil(p["cuil"] for p in padron)
+    cuenta = {"titulares": len(padron), "sin_empleador": 0, "sin_ddjj": 0, "coinciden": 0}
+    filas = []
+    for p in padron:
+        propios = {c for c in (p["cuits_vigentes"] or "").split(",") if c} or (
+            {str(p["cuit_empleador"])} if p["cuit_empleador"] else set())
+        if not propios:
+            cuenta["sin_empleador"] += 1
+            continue
+        d = decl.get(p["cuil"])
+        if not d:
+            cuenta["sin_ddjj"] += 1
+            continue
+        ultimo = max(d.values())
+        ultimos = sorted(c for c, per in d.items() if per == ultimo)
+        if propios & set(ultimos):
+            cuenta["coinciden"] += 1
+            continue
+        del_padron = [d[c] for c in propios if c in d]
+        filas.append({**p, "propios": sorted(propios), "ultimos": ultimos, "ultimo_periodo": ultimo,
+                      "periodo_padron": max(del_padron) if del_padron else None})
+    # Las razones sociales, de Empleadores (el que no está, va con su CUIT).
+    cuits = {c for f in filas for c in f["propios"] + f["ultimos"] if c.isdigit()}
+    razones = {}
+    if cuits:
+        marcas = ",".join(["%s"] * len(cuits))
+        cur.execute(f"SELECT CUIT, razon_social FROM p_empresas WHERE CUIT IN ({marcas})", [int(c) for c in cuits])
+        razones = {str(r["CUIT"]): r["razon_social"] for r in cur.fetchall()}
+    for f in filas:
+        f["propios_txt"] = [(c, razones.get(c)) for c in f["propios"]]
+        f["ultimos_txt"] = [(c, razones.get(c)) for c in f["ultimos"]]
+    filas.sort(key=lambda f: (f["ultimo_periodo"], f["apellido_nombres"] or ""), reverse=True)
+    return filas, cuenta
 
 
 def _detalle(cur, clave) -> list[dict]:
@@ -303,12 +368,24 @@ def metricas():
             # ── Controles ──
             m["controles"] = _controles(cur)
             control = request.args.get("control") or ""
-            detalle = _detalle(cur, control) if control else []
+            ddjj = {**DDJJ_EMPLEADOR, "n": None, "pct": 0, "sobre": int(m["kpi"].get("titulares") or 0)}
+            ddjj_cuenta = None
+            if control == DDJJ_EMPLEADOR["clave"]:
+                detalle = []
+                try:
+                    detalle, ddjj_cuenta = _ddjj_empleador(cur)
+                    ddjj["n"] = len(detalle)
+                    ddjj["pct"] = round(100 * len(detalle) / ddjj_cuenta["titulares"], 1) if ddjj_cuenta["titulares"] else 0
+                except contable_oseda.ContableNoDisponible as e:
+                    errores.append(f"No se pudo consultar la DDJJ de OSEDA: {e}")
+            else:
+                detalle = _detalle(cur, control) if control else []
+            m["controles"].append(ddjj)
 
     if control and not any(c["clave"] == control for c in m["controles"]):
         control = ""
     puede_abm = puede(url_for("afiliados.abm_afiliados"))
     return render_template("afiliados/metricas.html", m=m, errores=errores, estado=estado, personas=personas,
                            desde=desde, hasta=hasta, defecto_desde=defecto_desde, hoy=hoy,
-                           control=control, detalle=detalle, puede_abm=puede_abm,
+                           control=control, detalle=detalle, puede_abm=puede_abm, ddjj_cuenta=ddjj_cuenta,
                            puede_empleadores=puede(url_for("empleadores.abm_empleadores")))

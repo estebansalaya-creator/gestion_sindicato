@@ -110,6 +110,37 @@ def ddjj_de_cuiles(periodos, cuiles) -> list[dict]:
         cn.close()
 
 
+def declarantes_por_cuil(cuiles) -> dict[str, dict[str, str]]:
+    """
+    Quién declaró a cada CUIL en la DDJJ de OSEDA y hasta cuándo, en toda la
+    historia: {cuil: {cuit: último período AAAAMM}}. El último declarante es el
+    CUIT del período más nuevo (dos si en ese período lo declararon dos).
+
+    De a 500 CUIL, por el índice (cuil, periodo): el padrón entero en un IN es
+    una sentencia de decenas de KB y Railway corta las que tardan.
+    """
+    cuiles = sorted({str(c) for c in cuiles if c})
+    salida: dict[str, dict[str, str]] = {}
+    if not cuiles:
+        return salida
+    cn = _conexion()
+    try:
+        with cn.cursor() as cur:
+            for i in range(0, len(cuiles), 500):
+                tanda = cuiles[i:i + 500]
+                marcas = ",".join(["%s"] * len(tanda))
+                cur.execute(f"""SELECT cuil, cuit, MAX(periodo) AS periodo FROM f_ddjj_procesada
+                                 WHERE codosoc = %s AND cuil IN ({marcas})
+                                 GROUP BY cuil, cuit""", [CODOSOC_OSEDA, *tanda])
+                for f in cur.fetchall():
+                    salida.setdefault(f["cuil"], {})[f["cuit"]] = f["periodo"]
+        return salida
+    except pymysql.MySQLError as e:
+        raise ContableNoDisponible(f"Error al leer las DDJJ en contable: {e}") from e
+    finally:
+        cn.close()
+
+
 def ddjj_del_periodo(periodo: str, cuiles) -> list[dict]:
     """Las DDJJ de OSEDA de un período: la usa la liquidación de cuota sindical."""
     return ddjj_de_cuiles([periodo], cuiles)
