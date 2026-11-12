@@ -62,6 +62,7 @@ USOS_CUENTA = [("c_movimientos_de_fondos", "c_cuentas_de_fondosId"),
                ("c_movimiento_entre_cuentas_det", "id_cuenta_fondos"),
                ("c_extractos_bancarios", "c_cuentas_de_fondos_id"),
                ("conciliacion_header", "id_cuenta"),
+               ("conc_reglas", "id_cuenta_destino"),
                ("c_inversiones", "c_cuentas_de_fondosId"),
                ("c_valores_de_terceros", "id_cuenta_fondos"),
                ("c_comprobantes_emitidos_cobranza", "id_cuenta_fondos")]

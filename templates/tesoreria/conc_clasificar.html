@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Clasificación de conceptos bancarios{% endblock %}
+
+{#
+  Clasificación de conceptos bancarios (conc.clasificar): cada concepto que
+  aparece en el extracto de una cuenta y período, con qué es. Guardar crea o
+  actualiza la regla (conc_reglas, patrón «contiene» = el concepto) y aplica a
+  todas las cuentas y períodos. La conciliación la usa al dibujarse: marca el
+  renglón y, si la regla genera, lo ofrece en «Generar comprobantes».
+  Se guarda fila por fila (fetch), sin recargar la página.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Clasificación de conceptos bancarios</h1>
+    <p>Qué es cada concepto que trae el banco: un gasto, un ingreso, un pase a otra cuenta propia o algo que se concilia a mano. Lo que se guarda vale para todas las cuentas.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Conciliación bancaria', 'secondary', href=url_for('conc.lista', cuenta=id_cuenta), icono_='aplicaciones') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+<div id="msg-clasif"></div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('conc.clasificar') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta') %}<select name="cuenta" class="filtro" onchange="this.form.desde.value='';this.form.hasta.value='';this.form.submit()">
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ desde.isoformat() if desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ hasta.isoformat() if hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('conc.clasificar', cuenta=id_cuenta) }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Conceptos del extracto', nota='Primero los que no tienen clasificación. «Genera» crea el comprobante desde la conciliación; «agrupa» hace uno por día en lugar de uno por renglón.') }}
+  {% call ui.barra_filtros('Buscar un concepto…', tam_pagina=50) %}
+    {% call ui.filtro('Clasificación') %}<select class="filtro" id="f-clasif">
+      <option value="">Todos</option><option value="no">Sin clasificar</option><option value="si">Clasificados</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-clasif" data-exportar="Conceptos bancarios">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Concepto</th><th class="th-right">Renglones</th><th class="th-right">Créditos</th><th class="th-right">Débitos</th>
+        <th data-no-sort>Es</th><th data-no-sort>Cuál</th><th data-no-sort>Genera</th><th data-no-sort>Agrupa</th><th>Ahora</th>
+      </tr></thead>
+      <tbody>
+        {% for c in conceptos %}
+        {% set r = c.regla if c.propia else None %}
+        <tr data-clasif="{{ 'si' if c.regla else 'no' }}" data-concepto="{{ c.base }}" data-tipo-mov="{{ c.tipo_mov }}"
+            data-id-regla="{{ r.id if r else '' }}">
+          <td><div class="acciones">
+            {{ ui.accion('editar', onclick='guardar(this)', titulo='Guardar la clasificación') }}
+            {{ ui.accion('baja', onclick='quitar(this)', titulo='Quitar la clasificación', deshabilitado=not r) }}
+          </div></td>
+          <td class="td-wrap td-fuerte" title="{{ c.ejemplo }}">{{ c.base or '(sin concepto)' }}</td>
+          <td class="td-right" data-num="{{ c.cant }}">{{ c.cant }}</td>
+          <td class="td-right importe-ok" data-num="{{ c.imp_cred }}">{{ (c.imp_cred | miles) if c.creditos else '' }}</td>
+          <td class="td-right importe-danger" data-num="{{ c.imp_deb }}">{{ (c.imp_deb | miles) if c.debitos else '' }}</td>
+          <td><select class="inp-celda sel-tipo" onchange="cambioTipo(this)" aria-label="Qué es">
+            <option value="">—</option>
+            {% for k, t in tipos.items() %}<option value="{{ k }}" {{ 'selected' if r and r.tipo_resultado == k }}>{{ t }}</option>{% endfor %}
+          </select></td>
+          <td>
+            <select class="inp-celda sel-cual" data-para="concepto_gasto" aria-label="Concepto de gasto">
+              {{ ui.opciones(gastos, r.id_concepto_gasto if r else None, clave='id', texto='descripcion', vacio='— concepto de gasto —') }}</select>
+            <select class="inp-celda sel-cual" data-para="motivo_ingreso" aria-label="Motivo de ingreso">
+              {{ ui.opciones(motivos, r.id_motivo_ingreso if r else None, clave='id', texto='descripcion', vacio='— motivo de ingreso —') }}</select>
+            <select class="inp-celda sel-cual" data-para="movimiento_cuentas" aria-label="La otra cuenta">
+              {{ ui.opciones(destinos, r.id_cuenta_destino if r else None, clave='id', texto='nombre', vacio='— la otra cuenta —') }}</select>
+          </td>
+          <td class="td-center"><input type="checkbox" class="chk-genera" aria-label="Genera comprobante" {{ 'checked' if r and r.genera_op }}></td>
+          <td class="td-center"><input type="checkbox" class="chk-agrupa" aria-label="Agrupa por fecha" {{ 'checked' if r and r.agrupa_por_fecha }}></td>
+          <td class="td-wrap chico celda-ahora">
+            {% if c.regla %}<span class="chip">{{ c.regla.clasif_txt }}{{ ' · genera' if c.regla.genera_op }}</span>
+              {% if not c.propia %}<div class="td-muted">por la regla «{{ c.regla.patron_texto }}»</div>{% endif %}
+            {% else %}<span class="td-muted">Sin clasificar</span>{% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">No hay renglones del extracto en estas fechas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Reglas guardadas', nota='Todas las activas, aparezcan o no en estas fechas. Ganan las de patrón más largo: «COMISION MANT» antes que «COMISION».') }}
+  {{ ui.barra_filtros('Buscar una regla…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-reglas" data-exportar="Reglas de conceptos bancarios">
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>El concepto contiene</th><th>Movimiento</th><th>Es</th>
+        <th>Genera</th><th>Agrupa</th><th class="th-right">Usada</th></tr></thead>
+      <tbody>
+        {% for r in reglas %}
+        <tr data-id-regla="{{ r.id }}">
+          <td><div class="acciones">{{ ui.accion('baja', onclick='quitar(this)', titulo='Quitar la regla') }}</div></td>
+          <td class="td-wrap td-fuerte">{{ r.patron_texto }}</td>
+          <td>{{ {'debito': 'Débitos', 'credito': 'Créditos', 'ambos': 'Los dos'}[r.tipo_movimiento] }}</td>
+          <td>{{ r.clasif_txt }}</td>
+          <td>{{ ui.si_no(r.genera_op) }}</td>
+          <td>{{ ui.si_no(r.agrupa_por_fecha) }}</td>
+          <td class="td-right" data-num="{{ r.usos }}">{{ r.usos }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">Todavía no hay reglas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+var URL_GUARDAR = "{{ url_for('conc.clasificar_guardar') }}", URL_QUITAR = "{{ url_for('conc.clasificar_quitar') }}";
+function aviso(texto, tipo) {
+  var c = document.getElementById('msg-clasif');
+  c.innerHTML = '';
+  var d = document.createElement('div');
+  d.className = 'alert alert-' + (tipo || 'ok');
+  d.textContent = texto;
+  c.appendChild(d);
+}
+function cambioTipo(sel) {
+  var tr = sel.closest('tr'), t = sel.value;
+  tr.querySelectorAll('.sel-cual').forEach(function (s) { s.classList.toggle('oculto', s.dataset.para !== t); });
+  var genera = tr.querySelector('.chk-genera'), agrupa = tr.querySelector('.chk-agrupa');
+  var puedeGenerar = ['concepto_gasto', 'motivo_ingreso', 'movimiento_cuentas'].indexOf(t) >= 0;
+  genera.disabled = !puedeGenerar; agrupa.disabled = !puedeGenerar;
+  if (!puedeGenerar) { genera.checked = false; agrupa.checked = false; }
+}
+function post(url, datos) {
+  return fetch(url, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(datos) })
+    .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error(j.error || r.statusText); return j; }); });
+}
+function guardar(b) {
+  var tr = b.closest('tr'), tipo = tr.querySelector('.sel-tipo').value;
+  if (!tipo) { aviso('Elegí qué es «' + tr.dataset.concepto + '».', 'warning'); return; }
+  var cual = tr.querySelector('.sel-cual[data-para="' + tipo + '"]');
+  var datos = { concepto: tr.dataset.concepto, tipo_mov: tr.dataset.tipoMov, tipo_resultado: tipo,
+                genera_op: tr.querySelector('.chk-genera').checked, agrupa_por_fecha: tr.querySelector('.chk-agrupa').checked };
+  if (cual) datos[{ concepto_gasto: 'id_concepto_gasto', motivo_ingreso: 'id_motivo_ingreso', movimiento_cuentas: 'id_cuenta_destino' }[tipo]] = cual.value;
+  post(URL_GUARDAR, datos).then(function (j) {
+    tr.dataset.idRegla = j.id_regla; tr.dataset.clasif = 'si';
+    tr.querySelector('.btn-accion.baja').disabled = false;
+    tr.querySelector('.celda-ahora').innerHTML = '';
+    var chip = document.createElement('span'); chip.className = 'chip';
+    chip.textContent = j.texto + (datos.genera_op ? ' · genera' : '');
+    tr.querySelector('.celda-ahora').appendChild(chip);
+    aviso('«' + tr.dataset.concepto + '»: ' + j.texto + '. Recargá para ver la lista de reglas al día.');
+  }).catch(function (e) { aviso(e.message, 'warning'); });
+}
+function quitar(b) {
+  var tr = b.closest('tr'), id = tr.dataset.idRegla;
+  if (!id) return;
+  post(URL_QUITAR, { id_regla: id }).then(function () {
+    if (tr.closest('#tbl-reglas')) { tr.classList.add('fila-baja'); b.disabled = true; aviso('Regla quitada.'); return; }
+    tr.dataset.idRegla = ''; tr.dataset.clasif = 'no'; b.disabled = true;
+    tr.querySelector('.celda-ahora').innerHTML = '<span class="td-muted">Sin clasificar</span>';
+    aviso('«' + tr.dataset.concepto + '» quedó sin clasificar. Si otra regla más general lo toma, se ve al recargar.');
+  }).catch(function (e) { aviso(e.message, 'warning'); });
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('#tbl-clasif .sel-tipo').forEach(cambioTipo);
+  var fc = document.getElementById('f-clasif');
+  gestion_admTable('tbl-clasif', { pageSize: 50, filtroExtra: function (tr) { return !fc.value || tr.dataset.clasif === fc.value; } });
+  gestion_admTable('tbl-reglas', { pageSize: 20 });
+});
+</script>
+{% endblock %}

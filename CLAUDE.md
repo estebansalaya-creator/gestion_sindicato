@@ -60,6 +60,9 @@ gestion_sindicato/
   tesoreria.py            tablas de tesorería: cuentas de fondos y chequeras, bancos BCRA, conceptos, motivos
   tesoreria_movimientos.py  subdiario, movimientos entre cuentas, depósitos, extracciones, órdenes de ingreso, anulaciones
   tesoreria_panel.py      Panel de Control de Tesorería: lo pendiente y los saldos de las cuentas
+  extractos.py            Extractos Bancarios: importar (BNA, ICBC), ver, borrar un renglón suelto
+  extractos_bancarios.py  los parsers de los extractos y el control de cuenta (de gestion_adm)
+  conciliacion.py         Conciliación Bancaria (extracto contra libro) y Clasificación de conceptos
   transferencias.py       transferencias masivas: elegir pagos, generar el archivo, lotes generados
   transferencias_lote.py  a quién y a qué CBU se transfiere; registro, exclusión y anulación de lotes
   transferencias_formatos.py  los archivos del home banking: BNA24, BNA Empresa, ICBC (Excel)
@@ -160,6 +163,11 @@ repetiría en la URL lo que dice el dominio.
 /tesoreria/nueva_orden_concepto   orden de ingreso       /tesoreria/ingreso/<id>  /tesoreria/movimiento/<id>  fichas
 /tesoreria/anulaciones      pagos, órdenes de ingreso y movimientos vigentes; /anular POST
 /tesoreria/rg830            escala RG 830; ?edit=ID, ?nuevo=1, ?clonar=ID (nueva vigencia)
+/tesoreria/extractos        extracto de una cuenta: ?cuenta, ?desde, ?hasta; /importar POST; /<id>/borrar POST
+/tesoreria/conc             conciliaciones: ?cuenta, ?cerradas=1; /nueva POST; /saldo_inicial (JSON)
+/tesoreria/conc/<id>        detalle (?anteriores=1); /vincular, /sugeridos, /desvincular, /excepcion,
+                            /excepcion/quitar, /generar, /saldo_inicial, /cerrar, /reabrir, /eliminar POST
+/tesoreria/conc/clasificar  conceptos del extracto: ?cuenta, ?desde, ?hasta; /guardar, /quitar POST (JSON)
 /contabilidad/plan          plan de cuentas, ?edit=ID, ?nuevo=1, ?madre=ID (subcuenta con el código sugerido)
 /contabilidad/plan/codigo   qué dice un código mientras se tipea (JSON: clase, tipo, nivel, madre, errores)
 /pagos/ordenes              órdenes de pago; /nueva (proveedores con saldo), /nueva/<id_proveedor>,
@@ -900,7 +908,7 @@ reintegros (pantalla de reintegros)                      ─┘     → «aproba
 - **Reintegros**: la orden la genera la pantalla de reintegros; aprobarla y pagarla es de esta
   ficha. Pagarla no cambia el estado del reintegro (`con_orden`), como en gestion_adm.
 - **Pendiente**: el mail de la orden (no hay SMTP configurado), SIRE/SICORE,
-  sueldos, inversiones, extractos y conciliación. Sus opciones de menú ya
+  sueldos e inversiones. Sus opciones de menú ya
   están y dan «pantalla pendiente».
 
 ## Tesorería: movimientos de fondos
@@ -995,6 +1003,54 @@ conciliaciones). Una foto de hoy, bloques uno debajo del otro:
   enlace al subdiario de la cuenta. Mientras el libro no tenga movimientos, un aviso dice que los ceros son
   porque falta el historial (no que no haya plata): se trae con `importar_aeda_fondos.py`.
 - Órdenes en curso por estado y estado de los extractos de cada banco (atrasado a los 7 días).
+
+## Tesorería: extractos y conciliación
+
+`extractos.py`, `extractos_bancarios.py` y `conciliacion.py` (11/11/2026), portados de
+`gestion_adm/extractos_bancarios*.py` y de los `conc_*` de `gestion_adm/tesoreria_routes.py`. Menú 71
+(Extractos Bancarios), 72 (Conciliación Bancaria), 73 (Clasificación Conceptos Bancarios). Esquema:
+`sql/conciliacion_bancaria_20261111.sql` (regla «pase a otra cuenta» con `conc_reglas.id_cuenta_destino` y
+`conciliacion_comprobantes.id_debito_credito`, con índice único).
+
+- **Extractos**: BNA (CSV clásico o `BEE_Reporte` de Banca Empresas) e ICBC (cuenta corriente o reporte de
+  recaudaciones, con la fecha al principio del nombre). Varios archivos o una carpeta. Duplicado = mismo número
+  de operación, fecha e importe (sin número, el concepto); los renglones idénticos se cuentan. **Control de
+  cuenta**: los últimos 5 dígitos del número que trae el archivo, contra el número del maestro o la parte de la
+  cuenta del CBU; si no coincide, no entra nada. El BNA clásico no trae cuenta: pasa con aviso. Un renglón que
+  entró en una conciliación no se borra.
+- **Los dos lados**: extracto (`c_extractos_bancarios`) contra libro (`c_debitos_creditos_bancarios`, un renglón
+  por cheque, transferencia o depósito, con la óptica del banco). No es el renglón de `c_movimientos_de_fondos`:
+  un pago de seis cheques se debita en seis días y cada cheque se concilia solo.
+- **Conciliar = un grupo** (`conciliacion_grupos`): N renglones del extracto (`conciliacion_items`, «conciliado»)
+  contra M del libro (`conciliacion_comprobantes.id_debito_credito`). Con diferencia de importe, solo con una
+  observación. **Excepción**: renglón del extracto explicado sin contraparte, con motivo. Desvincular borra el
+  grupo; un comprobante generado desde la conciliación sigue existiendo (se anula en Anulaciones).
+- **Desde cuándo**: desde el **01/11/2026** (`s_configuracion` tesoreria / `conc_fecha_corte`, decidido el
+  12/11/2026). Lo anterior del libro (el historial de AEDA) se da por conciliado y no se crean conciliaciones que
+  empiecen antes. El libro se mira desde el corte (o la primera conciliación de la cuenta, si es posterior) hasta
+  el fin del período, con arrastre; «Incluir anteriores» suma 60 días antes del corte.
+- **Sugerencias** (no vinculan solas): número de cheque, CUIT + fecha + importe, CUIT + importe, fecha + importe,
+  solo importe; siempre únicas de los dos lados, y las dos últimas descartan el par con CUIT o cheque distintos.
+  El CUIT del libro: el del beneficiario del pago, o el del empleador en la descripción de la orden de ingreso
+  de cuota sindical («(CUIT 30716707519)»). Sin las pasadas de la obra social (familia, nómina, Prisma).
+- **Clasificación** (`conc_reglas`, patrón «contiene» = el concepto sin lo que va después de « — »): gasto
+  (orden de pago por concepto), ingreso (orden de ingreso), pase a otra cuenta propia, o a mano. Se aplica al
+  dibujar la conciliación (no se graban ítems pendientes). Gana la de patrón más largo. Quitar desactiva.
+- **Generar comprobantes**: para lo clasificado con «genera»: gasto → orden `concepto` aprobada con todos los
+  niveles, pagada en el acto por transferencia desde la cuenta; ingreso → `ingreso_ordenes` clase `bancario`,
+  origen `conciliacion`; pase → movimiento entre cuentas (el sentido sale del extracto). Fecha y numeración
+  AAMM del banco; uno por renglón o por día si la regla agrupa. Cada grupo en su transacción; no en un período
+  contable cerrado. Si el libro ya tiene algo que coincide, el grupo viene destildado: el historial de AEDA
+  cargó los gastos bancarios de cada mes en una sola orden («Gastos Bancarios / IMPUESTO LEY…»), que se
+  concilia a mano contra los N débitos.
+- **Cerrar**: sin pendientes, con las anteriores de la cuenta cerradas, saldo inicial = cierre de la anterior y
+  saldo final calculado = saldo del banco (del último renglón con saldo, o escrito). Marca `conciliado` en el
+  extracto. **Reabrir** (Administrador, con motivo): si no hay una posterior cerrada.
+- **Anular**: `anulaciones.sql_conciliado_libro` — un comprobante con un instrumento vinculado no se anula
+  (aunque la conciliación siga abierta): primero se desvincula.
+- **Saldos**: `conciliacion_header.diferencia` es columna calculada (no se escribe). El saldo inicial de la
+  primera conciliación de una cuenta se carga a mano; el diálogo propone el que se deduce del extracto.
+- El bloque «El libro contra el banco» del detalle es informativo: AEDA no tiene saldos de apertura.
 
 ## Transferencias masivas
 

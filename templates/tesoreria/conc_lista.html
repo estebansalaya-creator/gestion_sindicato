@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Conciliación bancaria{% endblock %}
+
+{#
+  Conciliaciones bancarias (conc.lista): una por cuenta y período. Se ven las
+  que están sin cerrar, que son las que se trabajan; las cerradas, a un botón.
+  Los totales de las abiertas se calculan con el extracto de hoy (puede llegar
+  un renglón más); los de las cerradas, como quedaron al cerrar.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Conciliación bancaria</h1>
+    <p>Lo que informó el banco contra lo que dice el libro, por cuenta y por mes. El saldo final de una cerrada es el inicial de la siguiente.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Extractos', 'secondary', href=url_for('extractos.index', cuenta=f_cuenta), icono_='subir') }}
+    {{ ui.boton('Clasificación de conceptos', 'secondary', href=url_for('conc.clasificar', cuenta=f_cuenta), icono_='editar') }}
+    {{ ui.boton('Nueva conciliación', icono_='agregar', onclick="abrirNueva()") }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  <form method="get" action="{{ url_for('conc.lista') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta') %}<select name="cuenta" class="filtro" onchange="this.form.submit()">
+      <option value="">Todas las cuentas</option>
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if f_cuenta == c.id }}>{{ c.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    <label class="filtro-check"><input type="checkbox" name="cerradas" value="1" class="filtro" {{ 'checked' if ver_cerradas }} onchange="this.form.submit()">
+      Con las cerradas ({{ cerradas }})</label>
+    <a href="{{ url_for('conc.lista') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="card">
+  {{ ui.barra_filtros('Buscar por cuenta o período…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-conc" data-exportar="Conciliaciones bancarias">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Período</th><th>Cuenta</th><th>Fechas</th>
+        <th class="th-right">Saldo inicial</th><th class="th-right">Créditos</th><th class="th-right">Débitos</th>
+        <th class="th-right">Saldo final</th><th class="th-right">Saldo banco</th><th class="th-right">Diferencia</th>
+        <th class="th-right">Resueltos</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for c in filas %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('conc.detalle', id_conc=c.id), titulo='Abrir la conciliación') }}</div></td>
+          <td class="td-mono td-fuerte">{{ c.periodo | periodo }}</td>
+          <td>{{ c.cuenta }}</td>
+          <td class="td-muted" data-valor="{{ c.fecha_desde.isoformat() }}">{{ c.fecha_desde.strftime('%d/%m') }} al {{ c.fecha_hasta.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ c.saldo_inicial }}">{{ (c.saldo_inicial or 0) | miles }}{% if c.saldo_inicial_manual %}<div class="td-muted chico">a mano</div>{% endif %}</td>
+          <td class="td-right importe-ok" data-num="{{ c.creditos or 0 }}">{{ (c.creditos or 0) | miles }}</td>
+          <td class="td-right importe-danger" data-num="{{ c.debitos or 0 }}">{{ (c.debitos or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ c.final }}">{{ (c.final or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ c.banco or 0 }}">{{ (c.banco | miles) if c.banco is not none else '—' }}</td>
+          <td class="td-right td-fuerte {{ 'importe-danger' if c.diferencia and c.diferencia|abs > 0.005 else 'importe-ok' }}" data-num="{{ c.diferencia or 0 }}">
+            {{ (c.diferencia | miles) if c.diferencia is not none else '—' }}</td>
+          <td class="td-right" data-num="{{ c.resueltos or 0 }}">{{ c.resueltos or 0 }} de {{ c.renglones or 0 }}</td>
+          <td>{{ ui.estado(c.estado_txt, c.estado_tipo) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="12" class="no-data">{{ 'No hay conciliaciones con estos filtros.' if ver_cerradas else 'No hay conciliaciones abiertas. Creá la del mes con «Nueva conciliación».' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{# ── Nueva conciliación ── #}
+<div class="modal" id="modal-nueva">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Nueva conciliación</div>
+    <div class="modal-texto">Una por cuenta y por mes. Importá antes el extracto del período: el saldo de cierre del banco sale de ahí.
+      {% if corte %}Se concilia desde el {{ corte.strftime('%d/%m/%Y') }}: lo anterior del libro se da por conciliado.{% endif %}</div>
+    <form method="post" action="{{ url_for('conc.nueva') }}">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <label for="n-cuenta">Cuenta bancaria <span class="req">*</span></label>
+          <select name="id_cuenta" id="n-cuenta" required onchange="consultarSaldo()">
+            {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if f_cuenta == c.id }}>{{ c.nombre }}</option>{% endfor %}
+          </select>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label for="n-periodo">Período <span class="req">*</span></label>
+          <input type="month" name="periodo" id="n-periodo" value="{{ periodo_sugerido }}" required onchange="ponerFechas()"
+                 {% if corte %}min="{{ corte.strftime('%Y-%m') }}"{% endif %}>
+        </div>
+        <div class="campo" style="--span:4;">
+          <label for="n-desde">Desde</label>
+          <input type="date" name="fecha_desde" id="n-desde" onchange="consultarSaldo()">
+        </div>
+        <div class="campo" style="--span:4;">
+          <label for="n-hasta">Hasta</label>
+          <input type="date" name="fecha_hasta" id="n-hasta" onchange="consultarSaldo()">
+        </div>
+        <div class="campo" style="--span:6;">
+          <label for="n-saldo">Saldo inicial</label>
+          {# Sin .inp-importe: la máscara saca el signo, y una cuenta corriente puede arrancar en descubierto. #}
+          <input type="text" name="saldo_inicial" id="n-saldo" class="mono" inputmode="decimal" placeholder="0,00">
+          <small class="campo-ayuda" id="n-saldo-ayuda"></small>
+        </div>
+        <div class="campo" style="--span:6;">
+          <span class="campo-label">Extracto del período</span>
+          <div class="dato-val mono" id="n-extracto">—</div>
+          <small class="campo-ayuda" id="n-extracto-ayuda"></small>
+        </div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-nueva')") }}
+        {{ ui.boton('Crear', icono_='agregar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+var URL_SALDO = "{{ url_for('conc.saldo_inicial_json') }}";
+function iso(d) { return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+function ponerFechas() {
+  var p = document.getElementById('n-periodo').value;
+  if (!/^\d{4}-\d{2}$/.test(p)) return;
+  var a = parseInt(p.slice(0, 4), 10), m = parseInt(p.slice(5), 10);
+  document.getElementById('n-desde').value = iso(new Date(a, m - 1, 1));
+  document.getElementById('n-hasta').value = iso(new Date(a, m, 0));
+  consultarSaldo();
+}
+function consultarSaldo() {
+  var q = new URLSearchParams({ cuenta: document.getElementById('n-cuenta').value,
+    desde: document.getElementById('n-desde').value, hasta: document.getElementById('n-hasta').value });
+  var inp = document.getElementById('n-saldo'), ayuda = document.getElementById('n-saldo-ayuda');
+  fetch(URL_SALDO + '?' + q, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (d) {
+    if (d.anterior) {
+      inp.value = numeroAR(d.anterior.saldo); inp.readOnly = true;
+      ayuda.className = 'campo-ayuda'; ayuda.textContent = 'El saldo final de la conciliación ' + d.anterior.periodo + ', cerrada.';
+    } else {
+      inp.readOnly = false;
+      if (d.extracto !== null && d.extracto !== undefined) { inp.value = numeroAR(d.extracto); }
+      ayuda.className = 'campo-ayuda';
+      ayuda.textContent = 'Es la primera conciliación de la cuenta: el saldo del banco al empezar el período. '
+        + (d.extracto !== null && d.extracto !== undefined ? 'Se propone el que se deduce del extracto; controlalo contra el resumen.' : 'El extracto no trae saldos para deducirlo.');
+    }
+    document.getElementById('n-extracto').textContent = d.renglones ? d.renglones + ' renglones' : 'sin renglones';
+    document.getElementById('n-extracto-ayuda').textContent = d.renglones
+      ? (d.cierre !== null && d.cierre !== undefined ? 'Saldo de cierre según el banco: ' + pesos(d.cierre) : 'El archivo no trae saldo de cierre.')
+      : 'Importá el extracto antes de conciliar.';
+  }).catch(function (e) { console.error(e); ayuda.textContent = 'No se pudo consultar el saldo.'; });
+}
+function abrirNueva() { abrirModal('modal-nueva'); ponerFechas(); }
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-conc', { pageSize: 20 }); });
+</script>
+{% endblock %}

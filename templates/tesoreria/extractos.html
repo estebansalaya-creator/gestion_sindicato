@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Extractos bancarios{% endblock %}
+
+{#
+  Extractos bancarios (extractos.index): lo que el banco informó de una cuenta.
+  Cuenta y fechas van al servidor (GET); la grilla busca, ordena y exporta lo
+  que trajo. Importar es un diálogo: BNA (clásico o Banca Empresas) e ICBC
+  (cuenta corriente o recaudaciones), uno o varios archivos o una carpeta.
+#}
+
+{% macro tarjeta(icono, tipo, rotulo, valor, sub='', monto=True) -%}
+<div class="kpi-card">
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val{{ ' monto' if monto }}">{{ valor }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Extractos bancarios</h1>
+    <p>Los movimientos que informa el banco, tal como vinieron en el archivo. Se concilian contra el libro en Conciliación Bancaria.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_conc %}{{ ui.boton('Conciliación bancaria', 'secondary', href=url_for('conc.lista', cuenta=id_cuenta), icono_='aplicaciones') }}{% endif %}
+    {{ ui.boton('Importar extracto', icono_='subir', onclick="abrirModal('modal-importar')") }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if not cuentas %}{{ ui.aviso('No hay cuentas bancarias habilitadas: se cargan en Tesorería → Tablas → Cuentas de Fondos.', 'warning') }}{% endif %}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' movimientos en estas fechas: se muestran los primeros. Acotá el rango.', 'warning') }}{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('extractos.index') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta') %}<select name="cuenta" class="filtro" onchange="this.form.desde.value='';this.form.hasta.value='';this.form.submit()">
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.nombre }}{% if c.numero_de_cuenta %} — {{ c.numero_de_cuenta }}{% endif %}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ desde.isoformat() if desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ hasta.isoformat() if hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('extractos.index', cuenta=id_cuenta) }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+{% if cuenta %}
+<div class="kpi-row">
+  {{ tarjeta('dinero', 'ok', 'Créditos', '$ ' ~ ((resumen.creditos or 0) | miles), 'lo que entró') }}
+  {{ tarjeta('dinero', 'danger', 'Débitos', '$ ' ~ ((resumen.debitos or 0) | miles), 'lo que salió') }}
+  {{ tarjeta('info', '', 'Neto del período', '$ ' ~ (((resumen.creditos or 0) - (resumen.debitos or 0)) | miles), (resumen.cant or 0) ~ ' movimientos') }}
+  {{ tarjeta('calendario', '', 'Saldo según el banco', ('$ ' ~ (resumen.saldo_banco | miles)) if resumen.saldo_banco is not none else '—',
+             'al último día con saldo informado' if resumen.saldo_banco is not none else 'el archivo no trae saldo en estas fechas') }}
+</div>
+{% if resumen.conciliaciones %}
+<div class="alert alert-info">{{ ui.icono('aplicaciones', 16) }}<div>
+  Conciliaciones de estas fechas:
+  {% for c in resumen.conciliaciones %}{% if puede_conc %}<a href="{{ url_for('conc.detalle', id_conc=c.id) }}">{{ c.periodo | periodo }}</a>{% else %}{{ c.periodo | periodo }}{% endif %}
+    ({{ {'abierto': 'abierta', 'en_proceso': 'en proceso', 'cerrado': 'cerrada'}[c.estado] }}){{ ', ' if not loop.last }}{% endfor %}.
+  {% if resumen.ultimo_import %}Último archivo importado el {{ resumen.ultimo_import.strftime('%d/%m/%Y %H:%M') }}.{% endif %}
+</div></div>
+{% endif %}
+{% endif %}
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar en el concepto, la referencia o el CUIT…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="">Todos</option><option value="pendiente">Pendientes</option>
+      <option value="conciliacion">En una conciliación</option><option value="conciliado">Conciliados</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Movimiento') %}<select class="filtro" id="f-signo">
+      <option value="">Todos</option><option value="C">Créditos</option><option value="D">Débitos</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-extracto" data-exportar="Extracto {{ cuenta.nombre if cuenta else '' }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="asc">Fecha</th><th>Referencia</th><th>Concepto</th><th>CUIT</th>
+        <th class="th-right">Crédito</th><th class="th-right">Débito</th><th class="th-right">Saldo</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for m in filas %}
+        <tr data-estado="{{ 'conciliado' if m.estado_tipo == 'ok' else ('conciliacion' if m.id_conc else 'pendiente') }}"
+            data-signo="{{ 'C' if m.credito else 'D' }}">
+          <td><div class="acciones">
+            {% if not m.id_conc and not m.conciliado %}
+            {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': m.id, 'texto': m.fecham.strftime('%d/%m/%Y') ~ ' · ' ~ (m.concepto or '') ~ ' · $ ' ~ ((m.credito or m.debito or 0) | miles)}) }}
+            {% endif %}
+          </div></td>
+          <td data-valor="{{ m.fecham.isoformat() }}">{{ m.fecham.strftime('%d/%m/%Y') }}
+            {% if m.fechav and m.fechav != m.fecham %}<div class="td-muted chico" title="Fecha valor">valor {{ m.fechav.strftime('%d/%m/%Y') }}</div>{% endif %}</td>
+          <td class="td-mono td-muted">{{ m.ref_nro or '—' }}</td>
+          <td class="td-wrap">{{ m.concepto or '—' }}</td>
+          <td class="td-mono">{{ m.cuit or '' }}</td>
+          <td class="td-right importe-ok td-fuerte" data-num="{{ m.credito or 0 }}">{{ (m.credito or 0) | miles if m.credito else '' }}</td>
+          <td class="td-right importe-danger td-fuerte" data-num="{{ m.debito or 0 }}">{{ (m.debito or 0) | miles if m.debito else '' }}</td>
+          <td class="td-right td-muted" data-num="{{ m.saldo or 0 }}">{{ (m.saldo or 0) | miles if m.saldo is not none else '' }}</td>
+          <td>{% if m.id_conc and puede_conc %}<a href="{{ url_for('conc.detalle', id_conc=m.id_conc) }}" title="Conciliación {{ m.periodo | periodo }}">{{ ui.estado(m.estado_txt, m.estado_tipo) }}</a>
+              {% else %}{{ ui.estado(m.estado_txt, m.estado_tipo) }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">{{ 'No hay movimientos del banco en estas fechas: importá el extracto.' if cuenta else 'Elegí una cuenta.' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{# ── Importar ── #}
+<div class="modal" id="modal-importar">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Importar extracto</div>
+    <div class="modal-texto">Se puede reimportar cualquier período: lo que ya está cargado se reconoce por número de operación, fecha e importe y no se repite.</div>
+    <form method="post" action="{{ url_for('extractos.importar') }}" enctype="multipart/form-data"
+          data-proceso="Importando el extracto…" data-proceso-detalle="Se leen los archivos y se graban los movimientos.">
+      <div class="campos">
+        <div class="campo" style="--span:12;">
+          <label for="imp-cuenta">Cuenta bancaria <span class="req">*</span></label>
+          <select name="id_cuenta" id="imp-cuenta" required>
+            {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.nombre }}{% if c.numero_de_cuenta %} — {{ c.numero_de_cuenta }}{% endif %}</option>{% endfor %}
+          </select>
+          <small class="campo-ayuda">Se controla contra el número de cuenta que trae el archivo: si es de otra cuenta, no se importa nada.</small>
+        </div>
+        <div class="campo" style="--span:12;">
+          <label for="imp-banco">Banco / formato</label>
+          <select name="banco" id="imp-banco">
+            <option value="">Detectarlo solo</option>
+            {% for cod, txt in bancos.items() %}<option value="{{ cod }}">{{ txt }}</option>{% endfor %}
+          </select>
+          <small class="campo-ayuda">BNA: CSV separado por punto y coma (clásico o BEE_Reporte de Banca Empresas). ICBC: extracto de cuenta corriente o reporte de recaudaciones (la fecha va al principio del nombre: «05.11.26 …»).</small>
+        </div>
+        <div class="campo" style="--span:12;">
+          <span class="campo-label">Origen</span>
+          <div class="fila">
+            <label class="campo-check"><input type="radio" name="modo" value="archivo" checked onchange="cambiarOrigen(this.value)"> Archivos</label>
+            <label class="campo-check"><input type="radio" name="modo" value="carpeta" onchange="cambiarOrigen(this.value)"> Una carpeta entera</label>
+          </div>
+          {# Dos inputs: webkitdirectory no se puede sacar por JS una vez puesto. Solo el visible lleva name. #}
+          <input type="file" id="inp-archivo" name="archivo" multiple accept=".csv,.txt" onchange="contarSel(this)">
+          <input type="file" id="inp-carpeta" class="oculto" webkitdirectory directory multiple onchange="contarSel(this)">
+          <small class="campo-ayuda ok" id="resumen-sel"></small>
+        </div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-importar')") }}
+        {{ ui.boton('Importar', icono_='subir', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Borrar un renglón ── #}
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar el renglón del extracto?</div>
+    <div class="modal-texto" id="borrar-texto"></div>
+    <div class="modal-texto">Sirve para un renglón importado de más. Si se vuelve a importar el archivo, entra de nuevo.</div>
+    <form method="post" id="form-borrar">
+      <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+      <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+        {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+var URL_BORRAR = "{{ url_for('extractos.borrar', id_extracto=0) }}";
+function confirmarBorrar(b) {
+  document.getElementById('borrar-texto').textContent = b.dataset.texto;
+  document.getElementById('form-borrar').action = URL_BORRAR.replace(/0\/borrar$/, b.dataset.id + '/borrar');
+  abrirModal('modal-borrar');
+}
+function cambiarOrigen(modo) {
+  var arch = document.getElementById('inp-archivo'), carp = document.getElementById('inp-carpeta');
+  var carpeta = modo === 'carpeta';
+  arch.classList.toggle('oculto', carpeta); carp.classList.toggle('oculto', !carpeta);
+  if (carpeta) { arch.removeAttribute('name'); arch.value = ''; carp.setAttribute('name', 'archivo'); }
+  else { carp.removeAttribute('name'); carp.value = ''; arch.setAttribute('name', 'archivo'); }
+  document.getElementById('resumen-sel').textContent = '';
+}
+function contarSel(inp) {
+  var todos = Array.from(inp.files || []);
+  var sirven = todos.filter(function (f) { return /\.(csv|txt)$/i.test(f.name); }).length;
+  document.getElementById('resumen-sel').textContent = todos.length
+    ? sirven + ' archivo(s) para importar' + (todos.length > sirven ? ' · ' + (todos.length - sirven) + ' se ignoran (no son .csv ni .txt)' : '')
+    : '';
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fs = document.getElementById('f-signo');
+  gestion_admTable('tbl-extracto', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value && tr.dataset.estado !== fe.value) return false;
+    if (fs.value && tr.dataset.signo !== fs.value) return false;
+    return true;
+  }});
+});
+</script>
+{% endblock %}

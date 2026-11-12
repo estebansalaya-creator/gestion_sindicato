@@ -1,0 +1,492 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Conciliación {{ conc.periodo | periodo }} · {{ conc.cuenta }}{% endblock %}
+
+{#
+  Detalle de una conciliación (conc.detalle). Arriba el extracto del banco del
+  período; abajo lo del libro que falta conciliar (c_debitos_creditos_bancarios:
+  un renglón por cheque, transferencia o depósito, con la óptica del banco).
+  Se tildan renglones de los dos lados y «Vincular» los ata en un grupo: uno
+  contra uno o varios contra varios. Las casillas pertenecen a #form-sel aunque
+  estén en dos tarjetas distintas (atributo form).
+  Las sugerencias no vinculan solas: se aceptan de a una o todas juntas.
+#}
+
+{% macro kpi(icono, tipo, rotulo, valor, sub='') -%}
+<div class="kpi-card">
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val monto">{{ valor }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% macro comprobante(c) -%}
+{%- if c.url %}<a href="{{ c.url }}" target="_blank" rel="noopener">{{ c.comprobante }}</a>{% else %}{{ c.comprobante }}{% endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Conciliación {{ conc.periodo | periodo }} · {{ conc.cuenta }}</h1>
+    <p>Del {{ conc.fecha_desde.strftime('%d/%m/%Y') }} al {{ conc.fecha_hasta.strftime('%d/%m/%Y') }} · {{ ui.estado(conc.estado_txt, conc.estado_tipo) }}
+      {% if conc.estado == 'cerrado' and conc.fecha_cierre %} el {{ conc.fecha_cierre.strftime('%d/%m/%Y %H:%M') }}{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Lista', 'ghost', href=url_for('conc.lista', cuenta=conc.id_cuenta), icono_='volver') }}
+    {% if puede_extractos %}{{ ui.boton('Extracto', 'secondary', href=url_for('extractos.index', cuenta=conc.id_cuenta, desde=conc.fecha_desde.isoformat(), hasta=conc.fecha_hasta.isoformat()), icono_='subir') }}{% endif %}
+    {% if abierta %}
+      {% if puede_clasif %}{{ ui.boton('Clasificar conceptos', 'secondary', href=url_for('conc.clasificar', cuenta=conc.id_cuenta, desde=conc.fecha_desde.isoformat(), hasta=conc.fecha_hasta.isoformat()), icono_='editar') }}{% endif %}
+      {% if grupos %}{{ ui.boton('Generar comprobantes (' ~ grupos|length ~ ')', 'secondary', icono_='agregar', onclick="abrirModal('modal-generar')") }}{% endif %}
+      {% if n_sugeridos %}{{ ui.boton('Conciliar sugeridos (' ~ n_sugeridos ~ ')', 'ok', icono_='aplicaciones', onclick="abrirModal('modal-sugeridos')") }}{% endif %}
+      {{ ui.boton('Cerrar conciliación', icono_='guardar', onclick="abrirModal('modal-cerrar')") }}
+      {% if tot.conciliados == 0 and tot.excepciones == 0 %}{{ ui.boton('Eliminar', 'danger', icono_='borrar', onclick="abrirModal('modal-eliminar')") }}{% endif %}
+    {% elif es_admin and not posterior_cerrada %}
+      {{ ui.boton('Reabrir', 'secondary', icono_='reactivar', onclick="abrirModal('modal-reabrir')") }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo inicial</div><div class="kpi-val monto">{{ ((tot.inicial) | miles) }}</div>
+      <div class="kpi-sub">{% if anterior %}cierre de {{ anterior.periodo | periodo }}{% elif conc.saldo_inicial_manual %}cargado a mano{% endif %}
+        {% if abierta %} · <a href="#" onclick="abrirModal('modal-saldo');return false;">{{ 'actualizar' if anterior else 'cambiar' }}</a>{% endif %}</div></div>
+  </div>
+  {{ kpi('dinero', 'ok', 'Créditos del extracto', tot.creditos | miles) }}
+  {{ kpi('dinero', 'danger', 'Débitos del extracto', tot.debitos | miles) }}
+  {{ kpi('info', '', 'Saldo final calculado', tot.final | miles, 'inicial + créditos − débitos') }}
+  {{ kpi('calendario', '', 'Saldo según el banco', (tot.banco | miles) if tot.banco is not none else '—',
+         'último saldo del extracto' if tot.banco is not none else 'el extracto no trae saldo') }}
+  {{ kpi('ok' if tot.diferencia is not none and tot.diferencia|abs < 0.005 else 'alerta',
+         'ok' if tot.diferencia is not none and tot.diferencia|abs < 0.005 else 'warn', 'Diferencia',
+         (tot.diferencia | miles) if tot.diferencia is not none else '—', 'calculado − banco') }}
+</div>
+
+{% if tot.renglones == 0 %}
+  {{ ui.aviso('No hay renglones del extracto en estas fechas: importalo en Extractos bancarios.', 'warning') }}
+{% elif abierta %}
+<div class="alert {{ 'alert-ok' if not tot.pendientes else 'alert-info' }}">{{ ui.icono('ok' if not tot.pendientes else 'info', 16) }}<div>
+  {{ tot.conciliados }} conciliados · {{ tot.excepciones }} excepciones · <strong>{{ tot.pendientes }} pendientes</strong>{% if tot.pendientes %} por $ {{ tot.pendiente_importe | miles }}{% endif %}
+  de {{ tot.renglones }} renglones del extracto.
+  {% if motivos_cierre %}Para cerrar: {{ motivos_cierre | join('; ') }}.{% endif %}
+</div></div>
+{% endif %}
+
+{# ── El extracto ── #}
+<div class="card">
+  {{ ui.card_head('Extracto del banco', nota='Lo que informó el banco en el período. Tildá los pendientes y su contraparte en el libro.') }}
+  {% call ui.barra_filtros('Buscar en el concepto, la referencia, el CUIT…', tam_pagina=50) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="fe-estado">
+      <option value="">Todos</option>
+      <option value="pend">Pendientes (todos)</option>
+      <option value="sugerido">Con sugerencia</option>
+      <option value="clasificado">Clasificados</option>
+      <option value="pendiente">Sin clasificar ni sugerencia</option>
+      <option value="conciliado">Conciliados</option>
+      <option value="excepcion">Excepciones</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Movimiento') %}<select class="filtro" id="fe-signo">
+      <option value="">Todos</option><option value="C">Créditos</option><option value="D">Débitos</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-ext" data-exportar="Conciliación {{ conc.periodo | periodo }} - extracto">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="asc">Fecha</th><th>Referencia</th><th>Concepto</th><th>CUIT</th>
+        <th class="th-right">Crédito</th><th class="th-right">Débito</th><th>Conciliación</th>
+      </tr></thead>
+      <tbody>
+        {% for m in extracto %}
+        <tr data-estado="{{ m.filtro }}" data-pend="{{ 1 if m.pendiente else 0 }}" data-signo="{{ m.tipo }}"
+            class="{{ 'fila-apagada' if m.estado_item == 'excepcion' }}">
+          <td><div class="acciones">
+            {% if abierta and m.pendiente %}
+              <input type="checkbox" class="chk-ext" name="ext" value="{{ m.id }}" form="form-sel" data-neto="{{ m.neto }}"
+                     aria-label="Elegir el renglón del {{ m.fecham.strftime('%d/%m') }}" onchange="recalcular()">
+              {% if m.sugerido %}{{ ui.accion('aplicaciones', onclick='aceptarSugerido(this)', titulo='Conciliar con lo sugerido', datos={'par': m.id ~ ':' ~ m.sugerido[0].id_dc}) }}{% endif %}
+            {% elif abierta and m.estado_item == 'conciliado' %}
+              {{ ui.accion('desaplicar', onclick='desvincular(this)', titulo='Deshacer el vínculo', datos={'grupo': m.id_grupo}) }}
+            {% elif abierta and m.estado_item == 'excepcion' %}
+              {{ ui.accion('reactivar', onclick='quitarExcepcion(this)', titulo='Quitar la excepción', datos={'item': m.id_item}) }}
+            {% endif %}
+          </div></td>
+          <td data-valor="{{ m.fecham.isoformat() }}">{{ m.fecham.strftime('%d/%m/%Y') }}</td>
+          <td class="td-mono td-muted">{{ m.ref_nro or '—' }}</td>
+          <td class="td-wrap">{{ m.concepto or '—' }}
+            {% if m.regla %}<div><span class="chip" title="Clasificado por la regla «{{ m.regla.patron_texto }}»{{ ' · genera comprobante' if m.regla.genera_op }}">{{ m.regla.clasif_txt }}{{ ' · genera' if m.regla.genera_op }}</span></div>{% endif %}</td>
+          <td class="td-mono">{{ m.cuit or '' }}</td>
+          <td class="td-right importe-ok td-fuerte" data-num="{{ m.credito or 0 }}">{{ (m.credito or 0) | miles if m.credito else '' }}</td>
+          <td class="td-right importe-danger td-fuerte" data-num="{{ m.debito or 0 }}">{{ (m.debito or 0) | miles if m.debito else '' }}</td>
+          <td class="td-wrap">
+            {% if m.estado_item == 'conciliado' %}
+              {{ ui.estado('Conciliado', 'ok') }}
+              {% for c in m.grupo %}<div class="chico">{{ comprobante(c) }} · {{ c.instrumento_txt }} · $ {{ c.importe | miles }}</div>{% endfor %}
+              {% if m.dif_grupo and m.dif_grupo|abs > 0.005 %}<div class="chico importe-danger">con $ {{ m.dif_grupo | miles }} de diferencia</div>{% endif %}
+              {% if m.obs_grupo %}<div class="chico td-muted">{{ m.obs_grupo }}</div>{% endif %}
+              {% if m.origen_item == 'automatico' %}<div class="chico td-muted">generado desde la conciliación</div>{% endif %}
+            {% elif m.estado_item == 'excepcion' %}
+              {{ ui.estado('Excepción', 'warn') }}<div class="chico">{{ m.obs_item }}</div>
+              {% if m.usuario_item %}<div class="chico td-muted">{{ m.usuario_item }}</div>{% endif %}
+            {% elif m.sugerido %}
+              {% set c, regla = m.sugerido %}
+              {{ ui.estado('Sugerido', 'info') }}
+              <div class="chico">{{ comprobante(c) }} · {{ c.fecha.strftime('%d/%m') }} · $ {{ c.importe | miles }}</div>
+              <div class="chico td-muted" title="{{ reglas_sug[regla][1] }}">por {{ reglas_sug[regla][0] | lower }}</div>
+            {% else %}
+              {{ ui.estado('Pendiente', 'neutro') }}
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay renglones del extracto en estas fechas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% if abierta %}
+{# ── El libro ── #}
+<div class="card">
+  {% call ui.card_head('Libro: lo que falta conciliar', nota='Cheques, transferencias y depósitos de la cuenta hasta el ' ~ conc.fecha_hasta.strftime('%d/%m/%Y') ~ ', desde el ' ~ (corte.strftime('%d/%m/%Y') if corte else conc.fecha_desde.strftime('%d/%m/%Y')) ~ ': lo anterior se da por conciliado.') %}
+    {% if anteriores %}{{ ui.boton('Sin los anteriores al inicio', 'ghost', chico=True, href=url_for('conc.detalle', id_conc=conc.id)) }}
+    {% else %}{{ ui.boton('Incluir ' ~ dias_anteriores ~ ' días anteriores', 'ghost', chico=True, href=url_for('conc.detalle', id_conc=conc.id, anteriores=1)) }}{% endif %}
+  {% endcall %}
+  {% call ui.barra_filtros('Buscar por comprobante, beneficiario, CUIT, cheque…', tam_pagina=50) %}
+    {% call ui.filtro('Movimiento') %}<select class="filtro" id="fl-signo">
+      <option value="">Todos</option><option value="C">Créditos</option><option value="D">Débitos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Origen') %}<select class="filtro" id="fl-origen">
+      <option value="">Todos</option><option value="pago">Pagos</option><option value="ingreso">Órdenes de ingreso</option>
+      <option value="movimiento">Entre cuentas</option>
+    </select>{% endcall %}
+    <label class="filtro-check"><input type="checkbox" class="filtro" id="fl-sug"> Solo con sugerencia</label>
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-libro" data-exportar="Conciliación {{ conc.periodo | periodo }} - libro pendiente">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Elegir</th>
+        <th data-orden="asc">Fecha</th><th>Comprobante</th><th>Instrumento</th><th>Detalle</th><th>CUIT</th>
+        <th class="th-right">Crédito</th><th class="th-right">Débito</th><th>Sugerido</th>
+      </tr></thead>
+      <tbody>
+        {% for c in libro %}
+        <tr data-signo="{{ c.tipo }}" data-origen="{{ c.origen }}" data-sug="{{ 1 if c.sugerido_para else 0 }}">
+          <td><div class="acciones">
+            <input type="checkbox" class="chk-lib" name="dc" value="{{ c.id_dc }}" form="form-sel" data-neto="{{ c.neto }}"
+                   aria-label="Elegir {{ c.comprobante }}" onchange="recalcular()">
+          </div></td>
+          <td data-valor="{{ c.fecha.isoformat() }}">{{ c.fecha.strftime('%d/%m/%Y') }}
+            {% if c.anterior %}<div><span class="chip chip-alerta" title="Anterior al inicio de la conciliación">anterior</span></div>{% endif %}</td>
+          <td class="td-mono">{{ comprobante(c) }}</td>
+          <td class="td-muted">{{ c.instrumento_txt }}</td>
+          <td class="td-wrap">{{ c.detalle or '' }}</td>
+          <td class="td-mono">{{ c.cuit or '' }}</td>
+          <td class="td-right importe-ok td-fuerte" data-num="{{ c.credito or 0 }}">{{ (c.credito or 0) | miles if c.credito else '' }}</td>
+          <td class="td-right importe-danger td-fuerte" data-num="{{ c.debito or 0 }}">{{ (c.debito or 0) | miles if c.debito else '' }}</td>
+          <td class="chico">{% if c.sugerido_para %}{{ reglas_sug[c.sugerido_para[1]][0] }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No queda nada del libro sin conciliar en estas fechas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<form method="post" id="form-sel" action="{{ url_for('conc.vincular', id_conc=conc.id) }}" data-proceso="Guardando…">
+  <input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+  <input type="hidden" name="observaciones" id="sel-obs">
+</form>
+
+<div class="barra-accion" id="barra-sel">
+  <div class="barra-accion-datos">
+    <div><div class="res-card-lbl">Extracto elegido</div><div class="res-card-val mono"><span id="s-ext-n">0</span> · <span id="s-ext">$ 0,00</span></div></div>
+    <div><div class="res-card-lbl">Libro elegido</div><div class="res-card-val mono"><span id="s-lib-n">0</span> · <span id="s-lib">$ 0,00</span></div></div>
+    <div><div class="res-card-lbl">Diferencia</div><div class="res-card-val mono" id="s-dif">$ 0,00</div></div>
+  </div>
+  <div class="resumen-botones">
+    {{ ui.boton('Limpiar', 'ghost', onclick='limpiar()', id='btn-limpiar') }}
+    {{ ui.boton('Excepción', 'secondary', icono_='alerta', onclick="abrirModal('modal-excepcion')", id='btn-excepcion') }}
+    {{ ui.boton('Vincular', 'primary', icono_='aplicaciones', onclick='pedirVincular()', id='btn-vincular') }}
+  </div>
+</div>
+{% endif %}
+
+{% if abierta %}
+<div class="card resumen">
+  {{ ui.card_head('El libro contra el banco', nota='Informativo: el libro de AEDA no tiene saldo de apertura, así que hasta cargar un ajuste no va a coincidir. No impide cerrar.') }}
+  <div class="card-body">
+    <div class="resumen-fila"><span>Saldo del libro al {{ conc.fecha_hasta.strftime('%d/%m/%Y') }}</span><strong class="mono">$ {{ tot.libro | miles }}</strong></div>
+    <div class="resumen-fila"><span>Menos créditos del libro que el banco no acreditó</span><strong class="mono">$ {{ tot.libro_pend_cred | miles }}</strong></div>
+    <div class="resumen-fila"><span>Más débitos del libro que el banco no debitó</span><strong class="mono">$ {{ tot.libro_pend_deb | miles }}</strong></div>
+    <div class="resumen-fila resumen-total"><span>Libro ajustado</span><strong class="mono">$ {{ tot.libro_ajustado | miles }}</strong></div>
+    <div class="resumen-fila"><span>Saldo según el banco</span><strong class="mono">{{ ('$ ' ~ (tot.banco | miles)) if tot.banco is not none else '—' }}</strong></div>
+  </div>
+</div>
+{% endif %}
+
+{% if conc.observaciones %}{{ ui.aviso(conc.observaciones, 'info') }}{% endif %}
+
+{# ── Diálogos ── #}
+{% if abierta %}
+<div class="modal" id="modal-vincular">
+  <div class="modal-caja">
+    <div class="modal-titulo">Vincular con diferencia</div>
+    <div class="modal-texto" id="vinc-texto"></div>
+    <div class="campo separado">
+      <label for="vinc-obs">Por qué <span class="req">*</span></label>
+      <textarea id="vinc-obs" rows="3" maxlength="300"></textarea>
+      <small class="campo-ayuda">Queda en el vínculo. Ejemplo: «el banco descontó la comisión de la transferencia».</small>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-vincular')") }}
+      {{ ui.boton('Vincular', icono_='aplicaciones', onclick='vincularConObs()') }}
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-excepcion">
+  <div class="modal-caja">
+    <div class="modal-titulo">Marcar como excepción</div>
+    <div class="modal-texto">Para un renglón del extracto que se da por explicado sin contraparte en el libro (lo que no corresponde registrar, un error del banco que después revierte). Lo tildado en el libro no se toca.</div>
+    <div class="campo separado">
+      <label for="exc-obs">Motivo <span class="req">*</span></label>
+      <textarea id="exc-obs" rows="3" maxlength="300"></textarea>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-excepcion')") }}
+      {{ ui.boton('Marcar', icono_='alerta', onclick='marcarExcepcion()') }}
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-sugeridos">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Conciliar las {{ n_sugeridos }} sugerencias</div>
+    <div class="modal-texto">Cada una es un renglón del extracto contra uno del libro, por la regla que se muestra. Destildá las que no quieras conciliar. Las de «solo el importe» son las más débiles: miralas.</div>
+    <form method="post" action="{{ url_for('conc.aceptar_sugeridos', id_conc=conc.id) }}" data-proceso="Conciliando…">
+      <input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+      <div class="modal-cuerpo alto">
+        <table class="data-table compacta">
+          <thead><tr><th data-no-sort></th><th>Extracto</th><th>Libro</th><th class="th-right">Importe</th><th>Por</th></tr></thead>
+          <tbody>
+            {% for m in extracto if m.sugerido %}{% set c, regla = m.sugerido %}
+            <tr>
+              <td><input type="checkbox" name="par" value="{{ m.id }}:{{ c.id_dc }}" {{ 'checked' if regla != 'importe' }}></td>
+              <td class="td-wrap chico">{{ m.fecham.strftime('%d/%m') }} · {{ m.concepto }}</td>
+              <td class="td-wrap chico">{{ c.fecha.strftime('%d/%m') }} · {{ c.comprobante }} · {{ c.detalle }}</td>
+              <td class="td-right mono">{{ m.importe | miles }}</td>
+              <td class="chico">{{ reglas_sug[regla][0] }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-sugeridos')") }}
+        {{ ui.boton('Conciliar las tildadas', 'ok', icono_='aplicaciones', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-generar">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Generar comprobantes</div>
+    <div class="modal-texto">Para los conceptos clasificados que generan comprobante: una orden de pago por concepto (aprobada y pagada desde esta cuenta), una orden de ingreso o un movimiento entre cuentas, con la fecha del banco. Cada uno queda conciliado con sus renglones del extracto.</div>
+    <form method="post" action="{{ url_for('conc.generar', id_conc=conc.id) }}" data-proceso="Generando los comprobantes…">
+      <input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+      <div class="modal-cuerpo alto">
+        <table class="data-table compacta">
+          <thead><tr><th data-no-sort></th><th>Fecha</th><th>Qué se genera</th><th>Concepto del banco</th><th class="th-right">Renglones</th><th class="th-right">Total</th></tr></thead>
+          <tbody>
+            {% for g in grupos %}
+            <tr>
+              <td><input type="checkbox" name="clave" value="{{ g.clave }}" {{ 'checked' if not g.aviso }}></td>
+              <td>{{ g.fecha.strftime('%d/%m/%Y') }}</td>
+              <td class="td-wrap">{{ g.que }}{% if g.aviso %}<span class="td-motivo">{{ g.aviso }}</span>{% endif %}</td>
+              <td class="td-wrap chico">{{ g.nombre }}</td>
+              <td class="td-right">{{ g.filas | length }}</td>
+              <td class="td-right mono">{{ g.total | miles }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-generar')") }}
+        {{ ui.boton('Generar los tildados', icono_='agregar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-cerrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">Cerrar la conciliación</div>
+    {% if motivos_cierre %}
+      {{ ui.aviso('Todavía no se puede cerrar: ' ~ (motivos_cierre | join('; ')) ~ '.', 'warning') }}
+    {% else %}
+      <div class="modal-texto">Todos los renglones del extracto están conciliados o explicados. Al cerrar, el saldo final calculado (<strong>$ {{ tot.final | miles }}</strong>) tiene que ser el que informa el banco, y pasa a ser el saldo inicial del período siguiente.</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('conc.cerrar', id_conc=conc.id) }}">
+      <div class="campo separado">
+        <label for="c-banco">Saldo final según el banco <span class="req">*</span></label>
+        <input type="text" name="saldo_banco" id="c-banco" class="mono" inputmode="decimal"
+               value="{{ (tot.banco | miles) if tot.banco is not none else '' }}">
+        <small class="campo-ayuda">{{ 'El del último renglón del extracto con saldo: controlalo contra el resumen del banco.' if tot.banco is not none else 'El extracto no trae saldo: copialo del resumen del banco.' }}</small>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-cerrar')") }}
+        {{ ui.boton('Cerrar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-saldo">
+  <div class="modal-caja">
+    <div class="modal-titulo">Saldo inicial</div>
+    <form method="post" action="{{ url_for('conc.cambiar_saldo_inicial', id_conc=conc.id) }}">
+      {% if anterior %}
+        <div class="modal-texto">Se toma el saldo final de la conciliación {{ anterior.periodo | periodo }}, cerrada: <strong>$ {{ anterior.saldo_final | miles }}</strong>.</div>
+      {% else %}
+        <div class="modal-texto">Es la primera conciliación de la cuenta: el saldo del banco al empezar el período, del resumen.</div>
+        <div class="campo separado">
+          <label for="s-inicial">Saldo inicial <span class="req">*</span></label>
+          <input type="text" name="saldo_inicial" id="s-inicial" class="mono" inputmode="decimal" value="{{ tot.inicial | miles }}" required>
+        </div>
+      {% endif %}
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-saldo')") }}
+        {{ ui.boton('Guardar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-eliminar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar la conciliación?</div>
+    <div class="modal-texto">No tiene nada conciliado. El extracto y el libro no se tocan.</div>
+    <form method="post" action="{{ url_for('conc.eliminar', id_conc=conc.id) }}">
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-eliminar')") }}
+        {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<form method="post" id="form-desvincular" action="{{ url_for('conc.desvincular', id_conc=conc.id) }}">
+  <input type="hidden" name="grupo" id="desv-grupo"><input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+</form>
+<form method="post" id="form-quitar-exc" action="{{ url_for('conc.excepcion_quitar', id_conc=conc.id) }}">
+  <input type="hidden" name="item" id="exc-item"><input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+</form>
+<form method="post" id="form-sugerido" action="{{ url_for('conc.aceptar_sugeridos', id_conc=conc.id) }}">
+  <input type="hidden" name="par" id="sug-par"><input type="hidden" name="anteriores" value="{{ 1 if anteriores else '' }}">
+</form>
+{% elif es_admin and not posterior_cerrada %}
+<div class="modal" id="modal-reabrir">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Reabrir la conciliación?</div>
+    <div class="modal-texto">Vuelve a «en proceso» y se puede cambiar. El motivo queda en sus observaciones.</div>
+    <form method="post" action="{{ url_for('conc.reabrir', id_conc=conc.id) }}">
+      <div class="campo separado">
+        <label for="r-motivo">Motivo <span class="req">*</span></label>
+        <textarea name="motivo" id="r-motivo" rows="3" maxlength="250" required></textarea>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-reabrir')") }}
+        {{ ui.boton('Reabrir', icono_='reactivar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<script>
+var URL_VINCULAR = "{{ url_for('conc.vincular', id_conc=conc.id) }}";
+var URL_EXCEPCION = "{{ url_for('conc.excepcion', id_conc=conc.id) }}";
+
+function sumar(sel) {
+  var n = 0, t = 0;
+  document.querySelectorAll(sel + ':checked').forEach(function (c) { n++; t += parseFloat(c.dataset.neto) || 0; });
+  return { n: n, t: Math.round(t * 100) / 100 };
+}
+function recalcular() {
+  var e = sumar('.chk-ext'), l = sumar('.chk-lib'), d = Math.round((e.t - l.t) * 100) / 100;
+  var el = function (id) { return document.getElementById(id); };
+  if (!el('s-ext')) return;
+  el('s-ext-n').textContent = e.n; el('s-ext').textContent = pesos(e.t);
+  el('s-lib-n').textContent = l.n; el('s-lib').textContent = pesos(l.t);
+  el('s-dif').textContent = pesos(d);
+  el('s-dif').className = 'res-card-val mono ' + (e.n && l.n ? (Math.abs(d) < 0.005 ? 'ok' : 'importe-danger') : '');
+  el('btn-vincular').disabled = !(e.n && l.n);
+  el('btn-excepcion').disabled = !(e.n && !l.n);
+  el('btn-limpiar').disabled = !(e.n || l.n);
+  return { e: e, l: l, d: d };
+}
+function limpiar() {
+  document.querySelectorAll('.chk-ext:checked, .chk-lib:checked').forEach(function (c) { c.checked = false; });
+  recalcular();
+}
+function enviarSel(url, obs) {
+  var f = document.getElementById('form-sel');
+  f.action = url; document.getElementById('sel-obs').value = obs || '';
+  f.requestSubmit ? f.requestSubmit() : f.submit();
+}
+function pedirVincular() {
+  var r = recalcular();
+  if (Math.abs(r.d) < 0.005) { enviarSel(URL_VINCULAR, ''); return; }
+  document.getElementById('vinc-texto').textContent = 'El extracto elegido suma ' + pesos(r.e.t) + ' y el libro ' + pesos(r.l.t)
+    + ': hay ' + pesos(r.d) + ' de diferencia. Se puede vincular igual, diciendo por qué.';
+  abrirModal('modal-vincular');
+}
+function vincularConObs() {
+  var o = document.getElementById('vinc-obs').value.trim();
+  if (!o) { document.getElementById('vinc-obs').focus(); return; }
+  cerrarModal('modal-vincular'); enviarSel(URL_VINCULAR, o);
+}
+function marcarExcepcion() {
+  var o = document.getElementById('exc-obs').value.trim();
+  if (!o) { document.getElementById('exc-obs').focus(); return; }
+  cerrarModal('modal-excepcion'); enviarSel(URL_EXCEPCION, o);
+}
+function desvincular(b) {
+  if (!confirm('¿Deshacer este vínculo? Los dos lados vuelven a pendientes.')) return;
+  document.getElementById('desv-grupo').value = b.dataset.grupo; document.getElementById('form-desvincular').submit();
+}
+function quitarExcepcion(b) {
+  document.getElementById('exc-item').value = b.dataset.item; document.getElementById('form-quitar-exc').submit();
+}
+function aceptarSugerido(b) {
+  document.getElementById('sug-par').value = b.dataset.par; document.getElementById('form-sugerido').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('fe-estado'), fs = document.getElementById('fe-signo');
+  gestion_admTable('tbl-ext', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value === 'pend' && tr.dataset.pend !== '1') return false;
+    if (fe.value && fe.value !== 'pend' && tr.dataset.estado !== fe.value) return false;
+    if (fs.value && tr.dataset.signo !== fs.value) return false;
+    return true;
+  }});
+  var ls = document.getElementById('fl-signo'), lo = document.getElementById('fl-origen'), lg = document.getElementById('fl-sug');
+  if (ls) gestion_admTable('tbl-libro', { pageSize: 50, filtroExtra: function (tr) {
+    if (ls.value && tr.dataset.signo !== ls.value) return false;
+    if (lo.value && tr.dataset.origen !== lo.value) return false;
+    if (lg.checked && tr.dataset.sug !== '1') return false;
+    return true;
+  }});
+  recalcular();
+});
+</script>
+{% endblock %}

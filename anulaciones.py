@@ -58,7 +58,26 @@ def sql_pago_conciliado(p: str = "p") -> str:
                      JOIN c_movimientos_de_fondos mf ON mf.id = cc.id_movimiento
                      LEFT JOIN conciliacion_items ci ON ci.id = cc.id_item
                      LEFT JOIN conciliacion_header ch ON ch.id = ci.id_conciliacion
-                    WHERE mf.pago_pagosId = {p}.id AND (ci.id IS NULL OR {_CONCILIADO})))"""
+                    WHERE mf.pago_pagosId = {p}.id AND (ci.id IS NULL OR {_CONCILIADO}))
+        OR {sql_conciliado_libro("pago", f"{p}.id")})"""
+
+
+def sql_conciliado_libro(origen: str, id_sql: str) -> str:
+    """¿Algún instrumento del comprobante está en un vínculo de la conciliación
+    (conciliacion.py)? Ahí el lado libro es `c_debitos_creditos_bancarios` y el
+    vínculo vale apenas se hace, aunque la conciliación siga abierta: para anular
+    hay que desvincular primero, que es lo que avisa el impedimento."""
+    col = {"pago": "pago_pagosId", "ingreso": "ingreso_ordenesId",
+           "movimiento": "c_movimiento_entre_cuentasId"}[origen]
+    return f"""EXISTS (SELECT 1 FROM c_movimientos_de_fondos mfl
+                     JOIN c_debitos_creditos_bancarios dcl ON dcl.c_movimientos_de_fondosId = mfl.id
+                     JOIN conciliacion_comprobantes ccl ON ccl.id_debito_credito = dcl.id
+                    WHERE mfl.{col} = {id_sql})"""
+
+
+def _conciliado_libro(cur, origen: str, id_comprobante: int) -> bool:
+    cur.execute(f"SELECT {sql_conciliado_libro(origen, '%s')} AS c", (id_comprobante,))
+    return bool((cur.fetchone() or {}).get("c"))
 
 
 def _conciliado_pago(cur, id_pago: int) -> bool:
@@ -109,9 +128,11 @@ def motivos_para_no_anular(cur, origen: str, id_comprobante: int, fecha=None) ->
                 motivos.append("está conciliado con el extracto bancario")
             if ya_transferido(cur, id_comprobante):
                 motivos.append("ya salió en un archivo de transferencias")
-        elif origen == "ingreso" and _conciliado_ingreso(cur, id_comprobante):
+        elif origen == "ingreso" and (_conciliado_ingreso(cur, id_comprobante)
+                                      or _conciliado_libro(cur, "ingreso", id_comprobante)):
             motivos.append("está conciliado con el extracto bancario")
-        elif origen == "movimiento" and _conciliado_movimiento(cur, id_comprobante):
+        elif origen == "movimiento" and (_conciliado_movimiento(cur, id_comprobante)
+                                         or _conciliado_libro(cur, "movimiento", id_comprobante)):
             motivos.append("está conciliado con el extracto bancario")
     except Exception as e:                                  # noqa: BLE001 — ante la duda, no se anula
         motivos.append(f"no se pudo verificar la conciliación ({e})")

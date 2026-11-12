@@ -54,6 +54,8 @@ from admin import admin_bp                                      # noqa: E402
 from talonarios import talonarios_bp                            # noqa: E402
 from fisca_liquidacion import fisca_liq_bp                      # noqa: E402
 from cc_proveedores import cc_prov_bp                           # noqa: E402
+from extractos import extractos_bp                              # noqa: E402
+from conciliacion import conc_bp                                # noqa: E402
 
 
 def _secret_key() -> str:
@@ -418,6 +420,8 @@ app.register_blueprint(admin_bp)
 app.register_blueprint(talonarios_bp)
 app.register_blueprint(fisca_liq_bp)
 app.register_blueprint(cc_prov_bp)
+app.register_blueprint(extractos_bp)
+app.register_blueprint(conc_bp)
 
 
 if __name__ == "__main__":
