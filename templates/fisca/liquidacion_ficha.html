@@ -4,8 +4,9 @@
 
 {#
   Ficha de una liquidación de cuota sindical (fisca_liq.liquidacion_ficha): la
-  cabecera del empleador y el período, y un renglón por afiliado con su
-  remuneración, la cuota y de dónde salió (nómina, DDJJ de OSEDA o AEDA).
+  cabecera del empleador y el período, cuántos de sus titulares activos están en
+  su DDJJ, y un renglón por afiliado: los declarados con su remuneración y su
+  cuota, y los activos que no declaró, en cero.
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -35,10 +36,15 @@
       {{ dato('Período', liq.periodo | periodo, mono=True) }}
       {{ dato('Empleador', liq.razon_social) }}
       {{ dato('CUIT', liq.cuit, mono=True) }}
-      {{ dato('Afiliados', liq.afiliados) }}
+      {{ dato('CUIL activos', liq.afiliados_activos) }}
+      {{ dato('Con DDJJ', liq.activos_con_ddjj) }}
+      {{ dato('Sin DDJJ', liq.activos_sin_ddjj) }}
+      {{ dato('% con DDJJ', (('%.2f'|format(liq.porc_ddjj|float)).replace('.', ',') ~ ' %') if liq.porc_ddjj is not none else 'Sin activos') }}
+      {{ dato('Afiliados liquidados', liq.afiliados) }}
       {{ dato('Remuneración', '$ ' ~ ((liq.remuneracion or 0) | miles), mono=True) }}
       {{ dato('Alícuota', ('%.2f'|format(liq.alicuota|float)).replace('.', ',') ~ ' %') }}
       {{ dato('Cuota a pagar', '$ ' ~ ((liq.importe or 0) | miles), mono=True) }}
+      {% if liq.aeda_importe is not none %}{{ dato('Liquidado por AEDA', '$ ' ~ (liq.aeda_importe | miles) ~ ' · ' ~ liq.aeda_afiliados ~ ' afiliado(s)', mono=True) }}{% endif %}
       {{ dato('Vencimiento', liq.vencimiento.strftime('%d/%m/%Y')) }}
       {{ dato('Liquidada', liq.fecha.strftime('%d/%m/%Y') ~ (' · ' ~ liq.usuario if liq.usuario else '')) }}
       {{ dato('Estado', 'Anulada' if liq.estado == 'anulada' else 'Vigente') }}
@@ -48,28 +54,39 @@
 
 <div class="card">
   {{ ui.card_head('Afiliados', nota=detalle | length ~ ' renglón(es)') }}
-  {% call ui.barra_filtros('Buscar por CUIL o nombre…', tam_pagina=50) %}{% endcall %}
+  {% call ui.barra_filtros('Buscar por CUIL o nombre…', tam_pagina=50) %}
+    {% call ui.filtro('DDJJ') %}<select class="filtro" id="f-fuente">
+      <option value="">Todos</option>
+      {% for k, t in fuentes.items() if k in detalle | map(attribute='fuente') | list %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Del empleador') %}<select class="filtro" id="f-activo">
+      <option value="">Todos</option>
+      <option value="1">Activos del empleador</option>
+      <option value="0">Sin relación laboral con él</option>
+    </select>{% endcall %}
+  {% endcall %}
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-detalle" data-exportar="Cuota sindical {{ liq.periodo | periodo }} {{ liq.cuit }}">
       <thead><tr>
         <th class="col-acciones" data-no-sort>Acciones</th>
-        <th>CUIL</th><th>Apellido y nombres</th><th>Fuente</th>
+        <th>CUIL</th><th>Apellido y nombres</th><th>DDJJ</th><th>Activo del empleador</th>
         <th class="th-right">Remuneración</th><th class="th-right">Cuota</th>
       </tr></thead>
       <tbody>
         {% for d in detalle %}
-        <tr>
+        <tr data-fuente="{{ d.fuente }}" data-activo="{{ d.activo }}">
           <td><div class="acciones">
             {% if d.id_afiliado %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=d.id_afiliado), titulo='Ver el afiliado', blank=True) }}{% endif %}
           </div></td>
           <td class="td-mono">{{ d.cuil }}</td>
           <td>{{ d.nombre or '' }}{% if not d.id_afiliado %} {{ ui.estado('No está en el padrón', 'warn') }}{% endif %}</td>
-          <td>{{ ui.estado(origenes[d.fuente], origen_tipo[d.fuente]) }}</td>
+          <td>{{ ui.estado(fuentes[d.fuente], fuente_tipo[d.fuente]) }}</td>
+          <td>{% if d.fuente == 'aeda' %}<span class="muted">—</span>{% else %}{{ ui.si_no(d.activo) }}{% endif %}</td>
           <td class="td-right" data-num="{{ d.remuneracion }}">{{ (d.remuneracion or 0) | miles }}</td>
           <td class="td-right td-fuerte" data-num="{{ d.cuota }}">{{ (d.cuota or 0) | miles }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="6" class="no-data">Sin renglones.</td></tr>
+        <tr class="no-data-row"><td colspan="7" class="no-data">Sin renglones.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -78,6 +95,12 @@
 </div>
 
 <script>
-document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-detalle', { pageSize: 50 }); });
+document.addEventListener('DOMContentLoaded', function () {
+  var fFuente = document.getElementById('f-fuente'), fActivo = document.getElementById('f-activo');
+  gestion_admTable('tbl-detalle', { pageSize: 50, filtroExtra: function (tr) {
+    if (fFuente.value && tr.dataset.fuente !== fFuente.value) return false;
+    if (fActivo.value && tr.dataset.activo !== fActivo.value) return false;
+    return true; } });
+});
 </script>
 {% endblock %}

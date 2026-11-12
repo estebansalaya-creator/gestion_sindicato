@@ -26,7 +26,9 @@ Decisiones
   correr. Si AEDA cambió el importe o los renglones, se rehace el detalle; si la
   anuló (estado X), se anula.
 - Un empleador y período que ya se liquidó en el sindicato (origen nómina o
-  DDJJ) no se pisa: sale en el informe.
+  DDJJ) no se pisa: sale en el informe. Tampoco una de AEDA que ya se
+  reliquidó por DDJJ (12/11/2026): pasó a origen «ddjj» y su importe de AEDA
+  quedó en `aeda_importe`.
 - El afiliado se busca por CUIL en el padrón; uno que no está entra igual, sin
   id_afiliado.
 """
@@ -86,8 +88,10 @@ def leer_destino(cur, email_usuario):
     d["por_clave"], d["por_marca"] = {}, {}
     for f in cur.fetchall():
         d["por_clave"][(f["cuit"], f["periodo"])] = f
+        # Solo las que siguen siendo de AEDA: una reliquidada por DDJJ (12/11/2026) es del
+        # sindicato y queda en por_clave, así no se pisa.
         m = RE_MARCA.match(f["observaciones"] or "")
-        if m:
+        if m and f["origen"] == "aeda":
             d["por_marca"][int(m.group(1))] = f
     cur.execute("SELECT cuil, id_afiliado, apellido_nombres FROM p_afiliados WHERE cuil REGEXP '^[0-9]{11}$'")
     d["padron"] = {f["cuil"]: f for f in cur.fetchall()}

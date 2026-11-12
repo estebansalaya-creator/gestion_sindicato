@@ -4,50 +4,71 @@
 
 {#
   Liquidación de cuota sindical (fisca_liq.liquidacion): una por empleador y
-  período. Liquidar toma la nómina del empleador si la cargó y, si no, sus
-  afiliados con la DDJJ de OSEDA; volver a liquidar el mismo período lo
-  rehace. Lo que vino de AEDA no se toca.
+  período, con la DDJJ de OSEDA. Cada una dice cuántos de los titulares
+  activos del empleador están en su DDJJ (total, con, sin y %). Se liquida un
+  período o un rango; volver a liquidar lo rehace, también lo de AEDA (sus
+  cifras quedan para comparar).
 #}
+
+{# % con DDJJ con el color del tramo: 100 verde, 50-99 azul, 1-49 amarillo, 0 rojo. #}
+{% macro porc(v, t=None) -%}
+{%- if v is none -%}<span class="muted">—</span>
+{%- else -%}{% set t = t or ('100' if v >= 100 else '50' if v >= 50 else '1' if v > 0 else '0') %}
+{{- ui.estado(('%.2f'|format(v|float)).replace('.', ',') ~ ' %', {'100': 'ok', '50': 'info', '1': 'warn', '0': 'danger'}[t]) -}}
+{%- endif -%}
+{%- endmacro %}
 
 {% block content %}
 <div class="page-header">
   <div>
     <h1>Liquidación de cuota sindical</h1>
     <p>Lo que cada empleador tiene que pagar por período: {{ '%.2f'|format(par.alicuota|float) | replace('.', ',') }} % de la
-       remuneración de sus afiliados, con vencimiento el día {{ par.dia_vto }} del mes siguiente. La remuneración sale de la
-       nómina que cargó el empleador y, si no la cargó, de la DDJJ de OSEDA (remuneración imponible 5).</p>
+       remuneración de sus afiliados, con vencimiento el día {{ par.dia_vto }} del mes siguiente. La remuneración es la
+       imponible 5 de la DDJJ de OSEDA. Cada liquidación lleva a todos los titulares activos del empleador en el período,
+       estén o no en su DDJJ.</p>
   </div>
 </div>
 
 {{ ui.mensajes() }}
 
+{% if not falta_esquema %}
 <form method="post" action="{{ url_for('fisca_liq.liquidacion_generar') }}" class="card" data-proceso="Liquidando…">
   <div class="bloque">
-    <div class="bloque-titulo">Liquidar un período</div>
+    <div class="bloque-titulo">Liquidar por DDJJ de OSEDA</div>
     <div class="campos">
       <div class="campo" style="--span:3;">
-        <label for="periodo">Período <span class="req">*</span></label>
-        <input type="month" name="periodo" id="periodo" required
-               value="{{ (periodo or sugerido) | periodo }}">
+        <label for="desde">Desde el período <span class="req">*</span></label>
+        <input type="month" name="desde" id="desde" required value="{{ (periodo or sugerido) | periodo }}">
+      </div>
+      <div class="campo" style="--span:3;">
+        <label for="hasta">Hasta el período <span class="req">*</span></label>
+        <input type="month" name="hasta" id="hasta" required value="{{ (periodo or sugerido) | periodo }}">
       </div>
     </div>
-    <p class="campo-ayuda">Un período ya liquidado se vuelve a liquidar con lo que hay hoy: una nómina cargada después o una
-       DDJJ rectificada cambian lo liquidado, y un empleador que se quedó sin base se anula. Lo que vino de AEDA no se toca.
+    <p class="campo-ayuda">Para un solo período, el mismo en los dos. Un período ya liquidado se vuelve a liquidar con lo que
+       hay hoy (una DDJJ rectificada, un cambio en el padrón), también el que vino de AEDA: lo que había liquidado AEDA queda
+       a la vista para comparar. Un empleador que se quedó sin base se anula. Hasta 48 períodos de una vez; para más, o si
+       el sitio corta por tiempo, desde la consola: <code>python fisca_liquidacion.py 202401 202609</code> (con <code>--simular</code> no graba).
        La alícuota y el día de vencimiento se cambian en Datos del Sindicato.</p>
   </div>
   <div class="form-acciones">
     {% if periodo %}{{ ui.boton('Ver otro período', 'secondary', href=url_for('fisca_liq.liquidacion')) }}{% endif %}
-    {{ ui.boton('Liquidar el período', submit=True, icono_='agregar') }}
+    {{ ui.boton('Liquidar', submit=True, icono_='agregar') }}
   </div>
 </form>
+{% endif %}
 
 {% if periodo %}
 <div class="card">
-  {{ ui.card_head('Período ' ~ (periodo | periodo), nota=n_vigentes ~ ' empleador(es) con cuota a pagar') }}
+  {{ ui.card_head('Período ' ~ (periodo | periodo), nota=n_vigentes ~ ' empleador(es) liquidados') }}
   {% call ui.barra_filtros('Buscar por CUIT o razón social…', tam_pagina=50) %}
     {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
       <option value="">Todos</option>
       {% for k, t in origenes.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Activos con DDJJ') %}<select class="filtro" id="f-tramo">
+      <option value="">Todos</option>
+      {% for k, t in tramos.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
     </select>{% endcall %}
     {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
       <option value="vigente">Vigentes</option>
@@ -60,25 +81,33 @@
       <thead><tr>
         <th class="col-acciones" data-no-sort>Acciones</th>
         <th>CUIT</th><th>Empleador</th><th>Origen</th>
-        <th class="th-right">Afiliados</th><th class="th-right">Remuneración</th>
-        <th class="th-right">Cuota a pagar</th><th>Vencimiento</th><th>Liquidada</th><th>Estado</th>
+        <th class="th-right">CUIL activos</th><th class="th-right">Con DDJJ</th><th class="th-right">Sin DDJJ</th>
+        <th class="th-right">% con DDJJ</th><th class="th-right">Liquidados</th><th class="th-right">Remuneración</th>
+        <th class="th-right">Cuota a pagar</th>{% if con_aeda %}<th class="th-right">Liquidado AEDA</th>{% endif %}
+        <th>Vencimiento</th><th>Liquidada</th><th>Estado</th>
       </tr></thead>
       <tbody>
         {% for l in filas %}
-        <tr data-origen="{{ l.origen }}" data-estado="{{ l.estado }}" class="{{ 'fila-baja' if l.estado == 'anulada' }}">
+        <tr data-origen="{{ l.origen }}" data-estado="{{ l.estado }}" data-tramo="{{ l.tramo }}" class="{{ 'fila-baja' if l.estado == 'anulada' }}">
           <td><div class="acciones">{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion_ficha', id_liq=l.id)) }}</div></td>
           <td class="td-mono">{{ l.cuit }}</td>
           <td class="td-wrap">{{ l.razon_social or '— no está en Empleadores —' }}</td>
           <td>{{ ui.estado(origenes[l.origen], origen_tipo[l.origen]) }}</td>
+          <td class="td-right" data-num="{{ l.afiliados_activos }}">{{ l.afiliados_activos }}</td>
+          <td class="td-right" data-num="{{ l.activos_con_ddjj }}">{{ l.activos_con_ddjj }}</td>
+          <td class="td-right" data-num="{{ l.activos_sin_ddjj }}">{{ l.activos_sin_ddjj }}</td>
+          <td class="td-right" data-num="{{ l.porc_ddjj if l.porc_ddjj is not none else -1 }}">{{ porc(l.porc_ddjj, l.tramo) }}</td>
           <td class="td-right" data-num="{{ l.afiliados }}">{{ l.afiliados }}</td>
           <td class="td-right" data-num="{{ l.remuneracion }}">{{ (l.remuneracion or 0) | miles }}</td>
           <td class="td-right td-fuerte" data-num="{{ l.importe }}">{{ (l.importe or 0) | miles }}</td>
+          {% if con_aeda %}{% set aeda = l.aeda_importe if l.aeda_importe is not none else (l.importe if l.origen == 'aeda' else none) %}
+          <td class="td-right" data-num="{{ aeda if aeda is not none else '' }}">{{ (aeda | miles) if aeda is not none else '—' }}</td>{% endif %}
           <td data-orden="{{ l.vencimiento.isoformat() }}">{{ l.vencimiento.strftime('%d/%m/%Y') }}</td>
           <td data-orden="{{ l.fecha.isoformat() }}">{{ l.fecha.strftime('%d/%m/%Y') }}{% if l.usuario %} <span class="muted chico">{{ l.usuario }}</span>{% endif %}</td>
           <td>{% if l.estado == 'anulada' %}<span title="{{ l.observaciones or '' }}">{{ ui.estado('Anulada', 'danger') }}</span>{% else %}{{ ui.estado('Vigente', 'ok') }}{% endif %}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="10" class="no-data">Este período no está liquidado. Liquidalo con el botón de arriba.</td></tr>
+        <tr class="no-data-row"><td colspan="{{ 16 if con_aeda else 15 }}" class="no-data">Este período no está liquidado. Liquidalo con el botón de arriba.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -90,9 +119,14 @@
   {{ ui.card_head('Resumen del período', nota='Solo las vigentes') }}
   <div class="card-body">
     <div class="resumen-fila"><span>Empleadores</span><strong class="mono">{{ n_vigentes }}</strong></div>
-    <div class="resumen-fila"><span>Afiliados</span><strong class="mono">{{ total_afil }}</strong></div>
-    <div class="resumen-fila"><span>Remuneración</span><strong class="mono">$ {{ (total_remu or 0) | miles }}</strong></div>
-    <div class="resumen-fila resumen-total"><span>Cuota a pagar</span><strong class="mono">$ {{ (total or 0) | miles }}</strong></div>
+    <div class="resumen-fila"><span>CUIL activos</span><strong class="mono">{{ tot.afiliados_activos }}</strong></div>
+    <div class="resumen-fila"><span>Con DDJJ</span><strong class="mono">{{ tot.activos_con_ddjj }}</strong></div>
+    <div class="resumen-fila"><span>Sin DDJJ</span><strong class="mono">{{ tot.activos_sin_ddjj }}</strong></div>
+    <div class="resumen-fila"><span>% con DDJJ</span><strong class="mono">{{ porc(tot.porc) }}</strong></div>
+    <div class="resumen-fila"><span>Afiliados liquidados</span><strong class="mono">{{ tot.afiliados }}</strong></div>
+    <div class="resumen-fila"><span>Remuneración</span><strong class="mono">$ {{ (tot.remuneracion or 0) | miles }}</strong></div>
+    {% if con_aeda %}<div class="resumen-fila"><span>Liquidado por AEDA</span><strong class="mono">$ {{ (tot.aeda or 0) | miles }}</strong></div>{% endif %}
+    <div class="resumen-fila resumen-total"><span>Cuota a pagar</span><strong class="mono">$ {{ (tot.importe or 0) | miles }}</strong></div>
   </div>
 </div>
 {% endif %}
@@ -105,9 +139,10 @@
       <thead><tr>
         <th class="col-acciones" data-no-sort>Acciones</th>
         <th data-orden="desc">Período</th>
-        <th class="th-right">Empleadores</th><th class="th-right">Por nómina</th><th class="th-right">Por DDJJ</th>
-        <th class="th-right">De AEDA</th><th class="th-right">Afiliados</th>
-        <th class="th-right">Remuneración</th><th class="th-right">Cuota a pagar</th><th>Vence</th><th>Última liquidación</th>
+        <th class="th-right">Empleadores</th><th class="th-right">En cero</th><th class="th-right">Sin reliquidar (AEDA)</th>
+        <th class="th-right">CUIL activos</th><th class="th-right">Con DDJJ</th><th class="th-right">% con DDJJ</th>
+        <th class="th-right">Liquidados</th><th class="th-right">Remuneración</th><th class="th-right">Cuota a pagar</th>
+        <th class="th-right">Liquidado AEDA</th><th>Vence</th><th>Última liquidación</th>
       </tr></thead>
       <tbody>
         {% for p in periodos %}
@@ -115,17 +150,20 @@
           <td><div class="acciones">{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion', periodo=p.periodo)) }}</div></td>
           <td class="td-mono">{{ p.periodo | periodo }}</td>
           <td class="td-right" data-num="{{ p.empleadores }}">{{ p.empleadores }}</td>
-          <td class="td-right" data-num="{{ p.por_nomina or 0 }}">{{ p.por_nomina or 0 }}</td>
-          <td class="td-right" data-num="{{ p.por_ddjj or 0 }}">{{ p.por_ddjj or 0 }}</td>
+          <td class="td-right" data-num="{{ p.en_cero or 0 }}">{{ p.en_cero or 0 }}</td>
           <td class="td-right" data-num="{{ p.de_aeda or 0 }}">{{ p.de_aeda or 0 }}</td>
+          <td class="td-right" data-num="{{ p.activos or 0 }}">{{ p.activos or 0 }}</td>
+          <td class="td-right" data-num="{{ p.con_ddjj or 0 }}">{{ p.con_ddjj or 0 }}</td>
+          <td class="td-right" data-num="{{ p.porc if p.porc is not none else -1 }}">{{ porc(p.porc) }}</td>
           <td class="td-right" data-num="{{ p.afiliados or 0 }}">{{ p.afiliados or 0 }}</td>
           <td class="td-right" data-num="{{ p.remuneracion }}">{{ (p.remuneracion or 0) | miles }}</td>
           <td class="td-right td-fuerte" data-num="{{ p.importe }}">{{ (p.importe or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ p.importe_aeda or '' }}">{{ (p.importe_aeda | miles) if p.importe_aeda is not none else '—' }}</td>
           <td data-orden="{{ p.vto.isoformat() }}">{{ p.vto.strftime('%d/%m/%Y') }}</td>
           <td data-orden="{{ p.liquidado.isoformat() }}">{{ p.liquidado.strftime('%d/%m/%Y') }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="11" class="no-data">Todavía no hay períodos liquidados.</td></tr>
+        <tr class="no-data-row"><td colspan="13" class="no-data">Todavía no hay períodos liquidados.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -135,11 +173,13 @@
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  var fOrigen = document.getElementById('f-origen'), fEstado = document.getElementById('f-estado');
+  var fOrigen = document.getElementById('f-origen'), fEstado = document.getElementById('f-estado'),
+      fTramo = document.getElementById('f-tramo');
   if (document.getElementById('tbl-liquidacion')) {
     gestion_admTable('tbl-liquidacion', { pageSize: 50, filtroExtra: function (tr) {
       if (fOrigen.value && tr.dataset.origen !== fOrigen.value) return false;
       if (fEstado.value && tr.dataset.estado !== fEstado.value) return false;
+      if (fTramo.value && tr.dataset.tramo !== fTramo.value) return false;
       return true; } });
   }
   gestion_admTable('tbl-periodos', { pageSize: 20 });

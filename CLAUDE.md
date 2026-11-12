@@ -36,7 +36,7 @@ gestion_sindicato/
   app.py                  entrypoint: registra blueprints, login/logout/menu, /estilos, filtros `miles`, `periodo`, `svg_unico`
   db.py                   get_connection() a la base `sindicato` + helpers de sesión
   gestion_sindicato.py    blueprint `sindicato` — fiscalización de cuotas
-  fisca_liquidacion.py    liquidación de cuota sindical por período: nómina o DDJJ de OSEDA × alícuota
+  fisca_liquidacion.py    liquidación de cuota sindical por DDJJ de OSEDA, con los activos del empleador y el % con DDJJ
   empleadores.py          ABM de empleadores (p_empresas)
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
@@ -123,7 +123,7 @@ repetiría en la URL lo que dice el dominio.
 /importar_cuotas     GET vista, POST importación
 /importaciones_log   historial
 /api/cuotas          API del tab
-/fiscalizacion/liquidacion   liquidación de cuota sindical, ?periodo=AAAAMM; /generar POST; /<id> ficha
+/fiscalizacion/liquidacion   liquidación de cuota sindical, ?periodo=AAAAMM; /generar POST (desde, hasta); /<id> ficha
 /login /logout /menu
 /empleadores         ABM, ?edit=ID
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
@@ -417,24 +417,39 @@ la SSS; con afiliados por empleador, antigüedad en el gremio y controles del gr
 ## Liquidación de cuota sindical
 
 `fisca_liquidacion.py` (`/fiscalizacion/liquidacion`, menú 6 «Liquidación de Cuota Sindical» en Fiscalización de
-Cuotas, Administrador y Supervisor; `sql/fisca_liquidacion_20261111.sql`). Lo que cada empleador tiene que pagar por
-período: `fisca_liquidacion` (una por CUIT y período, `uq_fisca_liq`) + `fisca_liquidacion_detalle` (un renglón por
-afiliado). Es lo que AEDA hacía en `fis_deuda` / `fis_deuda_detalle` (202401-202602).
+Cuotas, Administrador y Supervisor; `sql/fisca_liquidacion_20261111.sql` y `sql/fisca_liquidacion_ddjj_20261112.sql`).
+Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por CUIT y período, `uq_fisca_liq`) +
+`fisca_liquidacion_detalle` (un renglón por afiliado). Es lo que AEDA hacía en `fis_deuda` / `fis_deuda_detalle`.
 
-- **Remuneración (decidido el 11/11/2026)**: la nómina del empleador si la cargó para el período
-  (`fisca_cuotarecepcion`, origen «nomina»); si no, sus afiliados titulares con la Remuneración imponible 5 de la
-  DDJJ de OSEDA de ese período (`contable_oseda.ddjj_del_periodo`, en vivo, de a 500 CUIL; origen «ddjj»). La
-  nómina manda: con nómina no se mira la DDJJ del empleador. AEDA solo usaba la DDJJ, así que solo veía a los
-  afiliados con OSEDA (≈318 por mes contra ≈1.370 de las nóminas).
+- **Solo DDJJ de OSEDA (decidido el 12/11/2026, reemplaza lo del 11/11)**: la Remuneración imponible 5 de cada titular
+  del padrón en la DDJJ del período (`f_ddjj_procesada` en contable de Railway, en vivo); la liquidación es del CUIT que
+  lo declaró. La nómina de los empleadores (`fisca_cuotarecepcion`, Importar Cuotas) ya no se usa para liquidar.
+  Afiliado del período = titular con alta hasta el último día y sin baja o con baja desde el primero.
+- **Activos del empleador y % con DDJJ (pedido del 12/11/2026)**: cada liquidación lleva a TODOS los titulares
+  activos del empleador en el período, con DDJJ o sin ella. Activo = relación laboral con ese CUIT vigente en el
+  período (ingreso hasta el último día o sin ingreso, egreso desde el primero); una relación inactiva sin egreso (las
+  de AEDA) termina con la baja del afiliado, y si el afiliado no tiene baja no cuenta. Columnas: `afiliados_activos`
+  (total), `activos_con_ddjj` (en la DDJJ de ESE empleador), `activos_sin_ddjj` y `porc_ddjj` (calculadas en la base);
+  `afiliados` = los liquidados (con remuneración). Detalle: fuente `ddjj` (con `activo` = 1 si además es activo del
+  empleador; 0 = lo declara sin relación laboral en el padrón) y `sin_ddjj` (activo no declarado, en cero). Un
+  empleador con activos y ninguno en su DDJJ tiene su liquidación en cero, con la nota.
+- **Ojo al leer el %**: «sin DDJJ» es no estar en la DDJJ de OSEDA; un afiliado con otra obra social no figura ahí
+  aunque el empleador lo declare en su F.931. Simulado el 12/11/2026: ≈1.950 activos por mes, ≈64 % con DDJJ.
 - **Cuota** = remuneración × `s_institucion.cuota_alicuota` (2,50 %), al centavo por renglón; vence el día
   `cuota_dia_vto` (20) del mes siguiente. Los dos se editan en Datos del Sindicato (bloque «Cuota sindical»).
-- **Liquidar de nuevo** el mismo período rehace el detalle de cada empleador con lo de hoy y anula, con la nota, la
-  de un empleador que se quedó sin base. Lo de AEDA no se toca. Con Railway caído se liquida lo que tiene nómina y
-  no se anula ninguna de origen DDJJ (no saber no es no tener). Un período que no empezó no se liquida.
-- **Historial de AEDA**: `importar_aeda_fisca_deuda.py`, tal cual lo emitió (importe, remuneración, fecha y
-  vencimiento), marca `[AEDA fis_deuda N]`, origen «aeda». No pisa un empleador y período ya liquidado acá.
-  **Sin cobros** (decidido el 11/11/2026): `fis_deudaaplic` está vacía y `fis_cobros` no se aplica a la deuda.
-- **Falta**: aplicar los cobros (recaudación) para tener saldo por empleador e intereses por mora.
+- **Liquidar un rango** (`generar_rango`): padrón una vez, DDJJ de todo el rango de Railway de a 12 períodos, cada
+  período en su transacción. Pantalla: Desde / Hasta, hasta 48 períodos. Consola (sin el tope de tiempo de IIS):
+  `python fisca_liquidacion.py 202401 202609 [--simular] [--usuario mail@…]`. Sin Railway no se liquida nada.
+- **Liquidar de nuevo** rehace el detalle con lo de hoy y anula, con la nota, la de un empleador que se quedó sin
+  base. El último período suele tener la DDJJ incompleta (202610 tenía 1.719 filas contra ≈2.420): se reliquida
+  cuando se complete.
+- **Lo de AEDA se reliquida** (cambiado el 12/11/2026): pasa a origen «ddjj» y lo que había liquidado AEDA queda en
+  `aeda_importe`, `aeda_afiliados` e `id_aeda` (pantalla: columna «Liquidado AEDA»); la marca «[AEDA fis_deuda N]» sale
+  de observaciones. `importar_aeda_fisca_deuda.py` solo reconoce como suyas las de origen «aeda», así no pisa una
+  reliquidada. AEDA liquidaba ≈250-340 afiliados por mes; por DDJJ son ≈1.300.
+- **Sin cobros** (decidido el 11/11/2026): `fis_deudaaplic` está vacía y `fis_cobros` no se aplica a la deuda. La
+  cuenta corriente de empleadores, primera etapa (12/11/2026): saldo = liquidado − cobrado, sin aplicar
+  (`logs/saldos_empleadores_*.xlsx`). Falta aplicar los cobros e intereses por mora.
 
 ## Nómina del empleador y DDJJ de OSEDA
 
