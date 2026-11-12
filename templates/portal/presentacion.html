@@ -1,0 +1,64 @@
+{% extends "portal/base.html" %}
+{% import "_ui.html" as ui %}
+{% import "fisca/_planilla_lsd.html" as planilla %}
+{% block title %}Cuota sindical {{ plan.periodo | periodo }}{% endblock %}
+
+{#
+  La planilla de un archivo (fisca_lsd.presentacion): sin presentar, para
+  revisarla y presentarla o descartarla; presentada, la liquidación y su Excel.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuota sindical {{ plan.periodo | periodo }}</h1>
+    <p>{{ enlace.razon_social or '' }} · CUIT {{ enlace.cuit }} · {{ pres.archivo_nombre }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('portal.empresa', token=token), icono_='volver') }}
+    {% if pres.estado != 'borrador' %}{{ ui.boton('Descargar planilla', 'excel', href=url_for('portal.planilla_portal', token=token, id_pres=pres.id), icono_='planilla') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{{ ui.aviso(confidencialidad, 'info') }}
+{% if pres.estado == 'borrador' %}
+  {{ ui.aviso('Todavía no está presentada. Revisen la planilla y, si está bien, presentenla: queda como la liquidación de la cuota sindical del mes.', 'warning') }}
+{% elif pres.estado == 'reemplazada' %}
+  {{ ui.aviso('Esta presentación fue reemplazada por una posterior del mismo mes.', 'info') }}
+{% elif pres.estado == 'anulada' %}
+  {{ ui.aviso('El sindicato anuló esta presentación.' ~ (' ' ~ pres.observaciones if pres.observaciones else ''), 'danger') }}
+{% endif %}
+
+<div class="card resumen">
+  <div class="card-body">
+    <div class="resumen-fila"><span>Período</span><strong>{{ plan.periodo | periodo }}</strong></div>
+    <div class="resumen-fila"><span>Liquidación</span><strong>{{ pres.nro_liquidacion or '—' }}</strong></div>
+    <div class="resumen-fila"><span>Trabajadores en el archivo</span><strong>{{ plan.trabajadores }}</strong></div>
+    <div class="resumen-fila"><span>Afiliados</span><strong>{{ plan.afiliados }}</strong></div>
+    <div class="resumen-fila"><span>Alícuota</span><strong>{{ ('%.2f' | format(plan.alicuota | float)).replace('.', ',') }} %</strong></div>
+    <div class="resumen-fila"><span>Vence</span><strong>{{ plan.vencimiento.strftime('%d/%m/%Y') }}</strong></div>
+    <div class="resumen-fila resumen-total"><span>Cuota a pagar</span><strong>$ {{ (plan.importe or 0) | miles }}</strong></div>
+    {% if pres.estado == 'borrador' %}
+    <div class="resumen-botones">
+      <form method="post" action="{{ url_for('portal.descartar_portal', token=token, id_pres=pres.id) }}"
+            onsubmit="return confirm('¿Descartar este archivo? No se presenta nada.');">
+        {{ ui.boton('Descartar', 'secondary', submit=True) }}
+      </form>
+      <form method="post" action="{{ url_for('portal.confirmar', token=token, id_pres=pres.id) }}"
+            onsubmit="return confirm('¿Presentar la cuota sindical de {{ plan.periodo | periodo }} por $ {{ (plan.importe or 0) | miles }}?');">
+        {{ ui.boton('Presentar', 'primary', submit=True, icono_='guardar') }}
+      </form>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Afiliados', nota=('Los trabajadores que no son afiliados no figuran (' ~ plan.no_afiliados ~ ' en el archivo). ' if plan.no_afiliados else '') ~ 'La remuneración es la Remuneración imponible 5 del registro 04.') }}
+  {{ planilla.tabla(plan, fuentes, fuente_tipo) }}
+  {% if plan.lineas | selectattr('fuente', 'equalto', 'sin_lsd') | list %}
+  <div class="card-body"><p class="muted">«No está en el archivo»: afiliados que en el padrón del sindicato trabajan en la empresa
+     y no figuran en esta liquidación. Si ya no trabajan ahí, avisen al sindicato.</p></div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "fisca/_planilla_lsd.html" as planilla %}
+{% block title %}LSD {{ plan.periodo | periodo }} · {{ pres.cuit }}{% endblock %}
+
+{#
+  Una presentación del Libro de Sueldos Digital (fisca_lsd.ficha): la planilla
+  y el control de cada remuneración contra la DDJJ de OSEDA. Sin presentar, se
+  presenta o se descarta; presentada, se anula (vuelve a la DDJJ de OSEDA).
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Libro de Sueldos Digital {{ plan.periodo | periodo }}</h1>
+    <p>{{ pres.razon_social or 'Empleador que no está en Empleadores' }} · CUIT {{ pres.cuit }} · {{ pres.archivo_nombre }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('fisca_lsd.lista'), icono_='volver') }}
+    {% if puede_empleador and pres.id_empresa %}{{ ui.boton('Ficha del empleador', 'secondary', href=url_for('empleadores.abm_empleadores', edit=pres.id_empresa, solapa='cuota')) }}{% endif %}
+    {% if puede_liquidacion and pres.id_liquidacion %}{{ ui.boton('Liquidación', 'secondary', href=url_for('fisca_liq.liquidacion_ficha', id_liq=pres.id_liquidacion)) }}{% endif %}
+    {{ ui.boton('Archivo original', 'secondary', href=url_for('fisca_lsd.archivo_interno', id_pres=pres.id), icono_='descargar') }}
+    {{ ui.boton('Planilla', 'excel', href=url_for('fisca_lsd.planilla_interno', id_pres=pres.id), icono_='planilla') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if pres.estado == 'borrador' %}{{ ui.aviso('Sin presentar: la empresa (o quien lo subió) todavía no la confirmó. Presentarla la hace la liquidación del período y reemplaza a la de DDJJ de OSEDA.', 'warning') }}
+{% elif pres.estado in ('anulada', 'reemplazada') %}{{ ui.aviso((pres.observaciones or '') if pres.estado == 'anulada' else 'Reemplazada por una presentación posterior del mismo período.', 'info') }}{% endif %}
+
+{% if control.error %}
+  {{ ui.aviso('No se pudo controlar contra la DDJJ de OSEDA (' ~ control.error ~ ').', 'warning') }}
+{% elif control.con_diferencia %}
+  {{ ui.aviso(control.con_diferencia ~ ' afiliado(s) con una remuneración distinta de la de su DDJJ de OSEDA: en total $ ' ~ (control.diferencia | miles) ~ ' (cuota $ ' ~ (control.cuota_diferencia | miles) ~ '). Mirá la columna Diferencia: el archivo es un texto y se puede editar antes de subirlo.', 'danger') }}
+{% elif control.con_ddjj %}
+  {{ ui.aviso('Las ' ~ control.con_ddjj ~ ' remuneraciones que están en la DDJJ de OSEDA de este CUIT coinciden con el archivo.', 'ok') }}
+{% else %}
+  {{ ui.aviso('Ningún afiliado del archivo está en la DDJJ de OSEDA de este CUIT: no hay contra qué controlar (otra obra social o DDJJ todavía no procesada).', 'info') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Presentación', nota=estados[pres.estado][0]) }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Período', plan.periodo | periodo, mono=True) }}
+      {{ dato('Envío', ('SJ · liquidación y F931' if pres.envio == 'SJ' else 'RE · solo F931 a rectificar')) }}
+      {{ dato('Liquidación N.º', pres.nro_liquidacion) }}
+      {{ dato('Subió', origenes[pres.origen] ~ (' · ' ~ pres.usuario if pres.usuario else '')) }}
+      {{ dato('Subido', pres.creado.strftime('%d/%m/%Y %H:%M')) }}
+      {{ dato('Presentada', pres.presentado.strftime('%d/%m/%Y %H:%M') if pres.presentado else None) }}
+      {{ dato('Trabajadores en el archivo', plan.trabajadores) }}
+      {{ dato('No afiliados', plan.no_afiliados) }}
+      {{ dato('Activos de la empresa', plan.activos) }}
+      {{ dato('Activos en el archivo', plan.en_archivo) }}
+      {{ dato('En el archivo sin relación laboral', plan.fuera_nomina) }}
+      {{ dato('Afiliados con cuota', plan.afiliados) }}
+      {{ dato('Remuneración', '$ ' ~ ((plan.remuneracion or 0) | miles), mono=True) }}
+      {{ dato('Cuota', '$ ' ~ ((plan.importe or 0) | miles), mono=True) }}
+      {% if plan.retenido is not none %}{{ dato('Retenido en los recibos', '$ ' ~ (plan.retenido | miles), mono=True) }}{% endif %}
+      {{ dato('Vencimiento', plan.vencimiento.strftime('%d/%m/%Y')) }}
+    </div>
+  </div>
+  {% if pres.estado == 'borrador' %}
+  <div class="card-body form-acciones">
+    <form method="post" action="{{ url_for('fisca_lsd.descartar_interno', id_pres=pres.id) }}" onsubmit="return confirm('¿Descartar este archivo?');">
+      {{ ui.boton('Descartar', 'secondary', submit=True) }}</form>
+    <form method="post" action="{{ url_for('fisca_lsd.confirmar_interno', id_pres=pres.id) }}"
+          onsubmit="return confirm('¿Presentarla? Queda como la liquidación de {{ plan.periodo | periodo }} de este CUIT.');">
+      {{ ui.boton('Presentar', 'primary', submit=True, icono_='guardar') }}</form>
+  </div>
+  {% elif pres.estado == 'presentada' %}
+  <div class="card-body">
+    <form method="post" action="{{ url_for('fisca_lsd.anular_interno', id_pres=pres.id) }}"
+          onsubmit="return confirm('¿Anular la presentación? La liquidación del período vuelve a la DDJJ de OSEDA.');">
+      <div class="campos">
+        <div class="campo" style="--span:8"><label>Motivo para anular</label>
+          <input type="text" name="motivo" maxlength="300" required placeholder="Por qué se anula"></div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Anular presentación', 'danger', submit=True, icono_='baja') }}</div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Afiliados', nota=plan.lineas | length ~ ' renglón(es)') }}
+  {% call ui.barra_filtros('Buscar por CUIL o nombre…', tam_pagina=50) %}
+    {% call ui.filtro('Archivo') %}<select class="filtro" id="f-fuente">
+      <option value="">Todos</option><option value="lsd">En el archivo</option><option value="sin_lsd">No está en el archivo</option>
+    </select>{% endcall %}
+    {% call ui.filtro('DDJJ OSEDA') %}<select class="filtro" id="f-difiere">
+      <option value="">Todos</option><option value="1">Con diferencia</option>
+    </select>{% endcall %}
+  {% endcall %}
+  {{ planilla.tabla(plan, fuentes, fuente_tipo, control=control, interno=True) }}
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fF = document.getElementById('f-fuente'), fD = document.getElementById('f-difiere');
+  gestion_admTable('tbl-planilla', { pageSize: 50, filtroExtra: function (tr) {
+    if (fF.value && tr.dataset.fuente !== fF.value) return false;
+    if (fD.value && tr.dataset.difiere !== fD.value) return false;
+    return true; } });
+});
+</script>
+{% endblock %}

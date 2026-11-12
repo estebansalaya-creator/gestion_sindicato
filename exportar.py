@@ -88,8 +88,16 @@ def _celda(ref: str, valor, tipo: str) -> str:
             f'{escape(texto)}</t></is></c>')
 
 
-def xlsx(nombre: str, columnas: list[dict], filas: list[list]) -> bytes:
-    """Un libro de una hoja: encabezado fijo con autofiltro, anchos según el contenido."""
+def xlsx(nombre: str, columnas: list[dict], filas: list[list], encabezado: list[str] | None = None) -> bytes:
+    """Un libro de una hoja: encabezado fijo con autofiltro, anchos según el contenido.
+
+    `encabezado`: renglones de texto antes de la grilla, uno por fila en la
+    columna A (la planilla de cuota sindical lleva el CUIT, el período y la
+    empresa en la fila 3: el formato que lee Importar Cuotas). La grilla
+    empieza en la fila siguiente.
+    """
+    encabezado = encabezado or []
+    off = len(encabezado)
     n_cols = len(columnas)
     ultima = _columna(max(n_cols - 1, 0))
     anchos = [len(c.get("titulo") or "") for c in columnas]
@@ -97,11 +105,14 @@ def xlsx(nombre: str, columnas: list[dict], filas: list[list]) -> bytes:
         for i, v in enumerate(f[:n_cols]):
             anchos[i] = max(anchos[i], len(str(v or "")))
 
-    filas_xml = ['<row r="1">' + "".join(
-        f'<c r="{_columna(i)}1" s="{S_ENCABEZADO}" t="inlineStr"><is><t>'
+    filas_xml = [f'<row r="{n}"><c r="A{n}" s="{S_TEXTO}" t="inlineStr"><is><t xml:space="preserve">'
+                 f'{escape(RE_CONTROL.sub("", t or ""))}</t></is></c></row>'
+                 for n, t in enumerate(encabezado, start=1) if t]
+    filas_xml.append(f'<row r="{off + 1}">' + "".join(
+        f'<c r="{_columna(i)}{off + 1}" s="{S_ENCABEZADO}" t="inlineStr"><is><t>'
         f'{escape(RE_CONTROL.sub("", c.get("titulo") or ""))}</t></is></c>'
-        for i, c in enumerate(columnas)) + "</row>"]
-    for r, f in enumerate(filas, start=2):
+        for i, c in enumerate(columnas)) + "</row>")
+    for r, f in enumerate(filas, start=off + 2):
         celdas = "".join(_celda(f"{_columna(i)}{r}", v, columnas[i].get("tipo", ""))
                          for i, v in enumerate(f[:n_cols]))
         filas_xml.append(f'<row r="{r}">{celdas}</row>')
@@ -111,11 +122,11 @@ def xlsx(nombre: str, columnas: list[dict], filas: list[list]) -> bytes:
     hoja = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-        '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" '
+        f'<sheetViews><sheetView workbookViewId="0"><pane ySplit="{off + 1}" topLeftCell="A{off + 2}" '
         'activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>'
         f'<cols>{cols_xml}</cols>'
         f'<sheetData>{"".join(filas_xml)}</sheetData>'
-        f'<autoFilter ref="A1:{ultima}{max(len(filas) + 1, 1)}"/>'
+        f'<autoFilter ref="A{off + 1}:{ultima}{off + max(len(filas) + 1, 1)}"/>'
         '</worksheet>'
     )
     # El nombre de hoja no admite estos caracteres y tiene un tope de 31.
@@ -166,7 +177,7 @@ def xlsx(nombre: str, columnas: list[dict], filas: list[list]) -> bytes:
                    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
                    f'<sheets><sheet name="{escape(nombre_hoja)}" sheetId="1" r:id="rId1"/></sheets>'
                    '<definedNames><definedName name="_xlnm._FilterDatabase" localSheetId="0" hidden="1">'
-                   f"'{escape(nombre_hoja)}'!$A$1:${ultima}${max(len(filas) + 1, 1)}</definedName></definedNames>"
+                   f"'{escape(nombre_hoja)}'!$A${off + 1}:${ultima}${off + max(len(filas) + 1, 1)}</definedName></definedNames>"
                    '</workbook>')
         z.writestr("xl/_rels/workbook.xml.rels",
                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'

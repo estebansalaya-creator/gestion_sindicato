@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  {# El enlace es la credencial: que no quede en el historial de los buscadores
+     ni viaje en el Referer a otros sitios. #}
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}Cuota sindical{% endblock %} — {{ inst.sigla or inst.nombre or 'Sindicato' }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sindicato.css') }}?v={{ v_css }}">
+</head>
+<body>
+  {#
+    Portal de las empresas (fisca_lsd.portal_bp): sin menú ni sesión. La misma
+    hoja de estilos que el resto del sistema; el marco es el de .portal-page.
+  #}
+  <div class="portal-page">
+    <header class="portal-top">
+      <h1>{{ inst.nombre or inst.sigla or 'Sindicato' }}</h1>
+      <p>Cuota sindical · Presentación del Libro de Sueldos Digital</p>
+    </header>
+    <main class="portal-cuerpo">
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="portal-pie">
+      Este enlace es personal de la empresa. Si dejó de andar o lo necesitan para otra persona, pídanlo al sindicato.
+    </footer>
+  </div>
+</body>
+</html>

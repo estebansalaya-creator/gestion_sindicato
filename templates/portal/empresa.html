@@ -1,0 +1,76 @@
+{% extends "portal/base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ enlace.razon_social or enlace.cuit }}{% endblock %}
+
+{#
+  Portal de la empresa (fisca_lsd.empresa): subir el archivo de liquidación del
+  Libro de Sueldos Digital y ver lo presentado.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ enlace.razon_social or 'Empresa' }}</h1>
+    <p>CUIT {{ enlace.cuit }}</p>
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{{ ui.aviso(confidencialidad, 'info') }}
+
+<div class="card">
+  {{ ui.card_head('Presentar la cuota sindical de un mes') }}
+  <div class="card-body">
+    <p>Suban el archivo de <strong>liquidación del Libro de Sueldos Digital</strong> que su sistema de sueldos genera para
+       ARCA (el <code>.txt</code> de «Liquidación de SyJ – DJ F931»). El sistema toma el período del archivo, busca a los
+       afiliados y arma la planilla con la cuota a pagar. Antes de presentarla la pueden revisar.</p>
+    <p class="muted">Si en el mes hicieron más de una liquidación (por ejemplo el SAC aparte), suban la última: trae las
+       bases acumuladas del mes. Lo último que presenten para un mes reemplaza a lo anterior.</p>
+    <form method="post" action="{{ url_for('portal.subir', token=token) }}" enctype="multipart/form-data">
+      <div class="campos">
+        <div class="campo" style="--span:8">
+          <label class="drop-zone chica">
+            {{ ui.icono('subir', 20) }}
+            <input type="file" name="archivo" accept=".txt,text/plain" required>
+            <span>Archivo .txt, hasta {{ max_mb }} MB</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Leer el archivo', 'primary', submit=True, icono_='subir') }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Presentaciones', nota=lista | length ~ ' archivo(s)') }}
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th class="col-acciones">Acciones</th>
+        <th>Período</th><th>Liquidación</th><th>Archivo</th><th>Estado</th><th>Presentada</th>
+        <th class="th-right">Afiliados</th><th class="th-right">Cuota</th>
+      </tr></thead>
+      <tbody>
+        {% for p in lista %}
+        <tr>
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('portal.presentacion', token=token, id_pres=p.id), titulo='Ver la planilla') }}
+            {% if p.estado != 'borrador' %}{{ ui.accion('planilla', href=url_for('portal.planilla_portal', token=token, id_pres=p.id), titulo='Descargar la planilla') }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ p.periodo | periodo }}</td>
+          <td>{{ p.nro_liquidacion or '—' }}{% if p.envio == 'RE' %} {{ ui.estado('Rectificativa', 'info') }}{% endif %}</td>
+          <td class="td-recorte" title="{{ p.archivo_nombre }}">{{ p.archivo_nombre }}</td>
+          <td>{{ ui.estado(estados[p.estado][0], estados[p.estado][1]) }}</td>
+          <td>{{ p.presentado.strftime('%d/%m/%Y %H:%M') if p.presentado else '—' }}</td>
+          <td class="td-right">{{ p.afiliados }}</td>
+          <td class="td-right td-fuerte">{{ (p.importe or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no presentaron ningún archivo.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

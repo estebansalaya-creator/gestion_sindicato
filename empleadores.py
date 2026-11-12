@@ -23,7 +23,7 @@ from flask import (Blueprint, render_template, request,
 
 import contactos as _contactos
 import contable_oseda
-from db import get_connection, validasesion
+from db import get_connection, puede, validasesion
 
 empleadores_bp = Blueprint("empleadores", __name__, template_folder="templates")
 
@@ -271,11 +271,24 @@ def abm_empleadores():
             # El parcial se dibuja únicamente en edición.
             contactos_emp = []
             nomina = []
+            # Solapa «Cuota sindical»: el enlace de la empresa para presentar su
+            # Libro de Sueldos Digital y lo que presentó (fisca_lsd.py). Solo
+            # para quien tiene Presentaciones LSD en el menú.
+            cuota = None
+            enlace_nuevo = None
             areas_contacto = _contactos.areas(cur)
             if empleador and empleador.get("id"):
                 contactos_emp = _contactos.de(cur, "empresa", empleador["id"])
                 if empleador.get("CUIT"):
                     nomina, aviso_ddjj = _nomina(cur, empleador)
+                    if puede(url_for("fisca_lsd.lista")):
+                        import fisca_lsd
+                        cuota = fisca_lsd.datos_empleador(cur, empleador)
+                        nuevo = session.pop("sind_enlace_nuevo", None)
+                        if nuevo and str(nuevo.get("id_empresa")) == str(empleador["id"]):
+                            enlace_nuevo = {"url": nuevo["url"],
+                                            "mailto": fisca_lsd.mailto(empleador, cuota.get("emails", []),
+                                                                       nuevo["url"], fisca_lsd._institucion())}
 
             # Sin paginación del lado del servidor: son 2.854 filas y el JS de
             # base.html ya pagina, filtra y ordena en el navegador. Traer todo
@@ -319,6 +332,9 @@ def abm_empleadores():
         contactos=contactos_emp,
         nomina=nomina,
         aviso_ddjj=aviso_ddjj,
+        cuota=cuota,
+        enlace_nuevo=enlace_nuevo,
+        solapa=request.args.get("solapa"),
         areas_contacto=areas_contacto,
         errores=errores,
     )

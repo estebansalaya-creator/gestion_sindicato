@@ -37,9 +37,11 @@
       {{ dato('Empleador', liq.razon_social) }}
       {{ dato('CUIT', liq.cuit, mono=True) }}
       {{ dato('CUIL activos', liq.afiliados_activos) }}
-      {{ dato('Con DDJJ', liq.activos_con_ddjj) }}
-      {{ dato('Sin DDJJ', liq.activos_sin_ddjj) }}
-      {{ dato('% con DDJJ', (('%.2f'|format(liq.porc_ddjj|float)).replace('.', ',') ~ ' %') if liq.porc_ddjj is not none else 'Sin activos') }}
+      {# Con el Libro de Sueldos Digital (origen «lsd»), las mismas columnas cuentan los activos que están en el archivo. #}
+      {% set lsd = liq.origen == 'lsd' %}
+      {{ dato('En el archivo' if lsd else 'Con DDJJ', liq.activos_con_ddjj) }}
+      {{ dato('No están en el archivo' if lsd else 'Sin DDJJ', liq.activos_sin_ddjj) }}
+      {{ dato('% en el archivo' if lsd else '% con DDJJ', (('%.2f'|format(liq.porc_ddjj|float)).replace('.', ',') ~ ' %') if liq.porc_ddjj is not none else 'Sin activos') }}
       {{ dato('Afiliados liquidados', liq.afiliados) }}
       {{ dato('Remuneración', '$ ' ~ ((liq.remuneracion or 0) | miles), mono=True) }}
       {{ dato('Alícuota', ('%.2f'|format(liq.alicuota|float)).replace('.', ',') ~ ' %') }}

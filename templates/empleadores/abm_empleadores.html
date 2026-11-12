@@ -82,11 +82,13 @@
 {{ ui.mensajes(errores) }}
 
 {% set inicial = 'datos' if (empleador or errores) else 'listado' %}
+{% if solapa == 'cuota' and cuota %}{% set inicial = 'cuota' %}{% endif %}
 {% set lista_solapas = [('listado', 'Listado', empleadores|length),
                         ('datos', 'Editar' if empleador else 'Nuevo', None)] %}
 {% if empleador and empleador.id %}
   {% set lista_solapas = lista_solapas + [('nomina', 'Nómina', nomina|length),
                                           ('contactos', 'Contactos', contactos|length)] %}
+  {% if cuota %}{% set lista_solapas = lista_solapas + [('cuota', 'Cuota sindical', (cuota.presentaciones or [])|length if not cuota.falta_esquema else None)] %}{% endif %}
 {% endif %}
 {{ ui.solapas(lista_solapas, inicial) }}
 
@@ -285,6 +287,88 @@
     {{ ui.paginacion() }}
     <p class="td-muted" style="margin-top:8px;">* Sin fecha de egreso en la relación: se muestra la fecha de baja del afiliado. La antigüedad de un activo se cuenta hasta hoy.</p>
   </div>
+</div>
+{% endif %}
+
+<!-- ── Cuota sindical ─────────────────────────────────────────────────────── -->
+{# El enlace con el que la empresa presenta su Libro de Sueldos Digital y lo
+   que presentó (fisca_lsd.py). Del enlace se guarda el hash: se ve una sola
+   vez, al generarlo. Solo para quien tiene Presentaciones LSD en el menú. #}
+{% if empleador and empleador.id and cuota %}
+<div class="abm-panel {{ 'oculto' if inicial != 'cuota' }}" data-panel="cuota">
+  {% if cuota.falta_esquema %}
+  {{ ui.aviso('Falta correr ' ~ cuota.sql ~ ': hasta entonces las empresas no pueden presentar su Libro de Sueldos Digital.', 'warning') }}
+  {% else %}
+  <div class="card">
+    {{ ui.card_head('Enlace para presentar el Libro de Sueldos Digital', nota='La empresa entra sin usuario ni clave, ve solo lo suyo y la cuota se liquida con lo que presenta.') }}
+    <div class="card-body">
+      {% if enlace_nuevo %}
+        {{ ui.aviso('Este es el enlace nuevo. Copialo o mandalo ahora: no se vuelve a mostrar. Si se pierde, se genera otro.', 'warning') }}
+        <code class="enlace-nuevo" id="enlace-nuevo">{{ enlace_nuevo.url }}</code>
+        <div class="form-acciones">
+          {{ ui.boton('Copiar', 'secondary', onclick="navigator.clipboard.writeText(document.getElementById('enlace-nuevo').textContent).then(function(){ this.textContent = 'Copiado'; }.bind(this))") }}
+          {% if cuota.emails %}{{ ui.boton('Enviar por mail a ' ~ cuota.emails | join(', '), 'primary', href=enlace_nuevo.mailto, icono_='mail') }}
+          {% else %}<span class="muted">El empleador no tiene mail en su ficha ni en sus contactos: copiá el enlace y mandalo a mano.</span>{% endif %}
+        </div>
+      {% elif cuota.enlace %}
+        <div class="datos">
+          <div class="dato"><div class="dato-lbl">Estado</div><div class="dato-val">{{ ui.estado('Vigente', 'ok') }}</div></div>
+          <div class="dato"><div class="dato-lbl">Generado</div><div class="dato-val">{{ cuota.enlace.creado.strftime('%d/%m/%Y %H:%M') }}{{ (' · ' ~ cuota.enlace.usuario) if cuota.enlace.usuario }}</div></div>
+          <div class="dato"><div class="dato-lbl">Termina en</div><div class="dato-val mono">…{{ cuota.enlace.pista }}</div></div>
+          <div class="dato"><div class="dato-lbl">Último ingreso</div><div class="dato-val">{{ cuota.enlace.ultimo_uso.strftime('%d/%m/%Y %H:%M') if cuota.enlace.ultimo_uso else 'Todavía no entró' }}</div></div>
+          <div class="dato"><div class="dato-lbl">Ingresos</div><div class="dato-val">{{ cuota.enlace.usos }}</div></div>
+        </div>
+      {% else %}
+        <p class="muted">La empresa todavía no tiene enlace.</p>
+      {% endif %}
+      <div class="form-acciones">
+        <form method="post" action="{{ url_for('fisca_lsd.enlace', id_empresa=empleador.id) }}"
+              {% if cuota.enlace %}onsubmit="return confirm('¿Generar un enlace nuevo? El que tiene la empresa deja de andar.');"{% endif %}>
+          <input type="hidden" name="accion" value="generar">
+          {{ ui.boton('Generar un enlace nuevo' if cuota.enlace else 'Generar enlace', 'primary' if not cuota.enlace else 'secondary', submit=True, icono_='agregar') }}
+        </form>
+        {% if cuota.enlace %}
+        <form method="post" action="{{ url_for('fisca_lsd.enlace', id_empresa=empleador.id) }}"
+              onsubmit="return confirm('¿Revocar el enlace? La empresa no va a poder entrar hasta que se le mande otro.');">
+          <input type="hidden" name="accion" value="revocar">
+          {{ ui.boton('Revocar', 'danger', submit=True, icono_='baja') }}
+        </form>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Presentaciones', nota='Lo que presentó la empresa o se subió por ella.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuota-lsd" data-exportar="Presentaciones LSD {{ empleador.razon_social }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th>Período</th><th>Liquidación</th><th>Estado</th><th>Subió</th><th>Presentada</th>
+          <th class="th-right">Activos</th><th class="th-right">En el archivo</th><th class="th-right">Afiliados</th><th class="th-right">Cuota</th>
+        </tr></thead>
+        <tbody>
+          {% for f in cuota.presentaciones %}
+          <tr class="{{ 'fila-baja' if f.estado in ('anulada', 'reemplazada') }}">
+            <td><div class="acciones">{{ ui.accion('ver', href=url_for('fisca_lsd.ficha', id_pres=f.id), titulo='Ver la planilla') }}</div></td>
+            <td class="td-mono">{{ f.periodo | periodo }}</td>
+            <td>{{ f.nro_liquidacion or '—' }}</td>
+            <td>{{ ui.estado(cuota.estados[f.estado][0], cuota.estados[f.estado][1]) }}</td>
+            <td>{{ 'Empresa' if f.origen == 'empresa' else (f.usuario or 'Sindicato') }}</td>
+            <td>{{ f.presentado.strftime('%d/%m/%Y') if f.presentado else '—' }}</td>
+            <td class="td-right">{{ f.afiliados_activos }}</td>
+            <td class="td-right">{{ f.activos_en_archivo }}</td>
+            <td class="td-right">{{ f.afiliados }}</td>
+            <td class="td-right td-fuerte" data-num="{{ f.importe }}">{{ (f.importe or 0) | miles }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">Todavía no presentó ningún archivo.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 

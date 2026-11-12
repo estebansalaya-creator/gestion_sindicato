@@ -75,11 +75,15 @@ CENT = Decimal("0.01")
 ALICUOTA_DEFECTO = Decimal("2.50")
 DIA_VTO_DEFECTO = 20
 #: «nomina» ya no se genera (12/11/2026); queda para leer lo que se haya liquidado así.
-ORIGENES = {"ddjj": "DDJJ de OSEDA", "aeda": "AEDA", "nomina": "Nómina del empleador"}
-ORIGEN_TIPO = {"ddjj": "info", "aeda": "neutro", "nomina": "ok"}
+#: «lsd»: la presentó la empresa con su Libro de Sueldos Digital (fisca_lsd.py).
+ORIGENES = {"ddjj": "DDJJ de OSEDA", "aeda": "AEDA", "nomina": "Nómina del empleador",
+            "lsd": "Libro de Sueldos Digital"}
+ORIGEN_TIPO = {"ddjj": "info", "aeda": "neutro", "nomina": "ok", "lsd": "ok"}
 #: De dónde sale cada renglón del detalle.
-FUENTES = {"ddjj": "Con DDJJ", "sin_ddjj": "Sin DDJJ", "aeda": "AEDA", "nomina": "Nómina"}
-FUENTE_TIPO = {"ddjj": "ok", "sin_ddjj": "warn", "aeda": "neutro", "nomina": "info"}
+FUENTES = {"ddjj": "Con DDJJ", "sin_ddjj": "Sin DDJJ", "aeda": "AEDA", "nomina": "Nómina",
+           "lsd": "En el archivo", "sin_lsd": "No está en el archivo"}
+FUENTE_TIPO = {"ddjj": "ok", "sin_ddjj": "warn", "aeda": "neutro", "nomina": "info",
+               "lsd": "ok", "sin_lsd": "warn"}
 #: Tramos del porcentaje de activos con DDJJ (filtro de la grilla).
 TRAMOS = {"100": "100 %", "50": "50 % a 99 %", "1": "1 % a 49 %", "0": "0 %", "sin": "Sin activos"}
 MAX_PERIODOS = 48
@@ -181,21 +185,21 @@ def leer_padron(cur, desde: datetime.date, hasta: datetime.date) -> dict:
     return {"titulares": titulares, "relaciones": cur.fetchall()}
 
 
-def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> dict:
-    """
-    Lo que corresponde liquidar en el período, sin base de datos: la función que
-    prueban las simulaciones. `ddjj` son las filas de contable_oseda (pueden
-    venir de varios períodos: se toman las de este).
-
-    {cuit: {"lineas": [{cuil, id_afiliado, nombre, remuneracion, cuota, fuente,
-    activo}], "activos", "con_ddjj", "afiliados", "fuera_nomina", "remuneracion",
-    "importe"}}
-    """
+def afiliados_del_periodo(periodo: str, padron: dict) -> dict:
+    """Los titulares que son afiliados en el período: alta hasta el último día
+    y sin baja o con baja desde el primero. {cuil: titular}"""
     desde, hasta = limites(periodo)
-    del_periodo = {t["cuil"]: t for t in padron["titulares"]
-                   if (t["fecha_alta"] is None or t["fecha_alta"] <= hasta)
-                   and (t["fecha_baja"] is None or t["fecha_baja"] >= desde)}
+    return {t["cuil"]: t for t in padron["titulares"]
+            if (t["fecha_alta"] is None or t["fecha_alta"] <= hasta)
+            and (t["fecha_baja"] is None or t["fecha_baja"] >= desde)}
 
+
+def activos_por_empleador(periodo: str, padron: dict, del_periodo: dict | None = None) -> dict:
+    """{cuit: {cuil: titular}}: los afiliados del período con una relación
+    laboral vigente en el período con cada CUIT (la regla del docstring)."""
+    desde, hasta = limites(periodo)
+    if del_periodo is None:
+        del_periodo = afiliados_del_periodo(periodo, padron)
     activos: dict[str, dict] = defaultdict(dict)
     for r in padron["relaciones"]:
         a = del_periodo.get(r["cuil"])
@@ -210,6 +214,21 @@ def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> di
         elif r["estado"] != "activa" and not a["fecha_baja"]:
             continue                # inactiva sin egreso y el afiliado sigue: no se sabe hasta cuándo
         activos[cuit][r["cuil"]] = a
+    return activos
+
+
+def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> dict:
+    """
+    Lo que corresponde liquidar en el período, sin base de datos: la función que
+    prueban las simulaciones. `ddjj` son las filas de contable_oseda (pueden
+    venir de varios períodos: se toman las de este).
+
+    {cuit: {"lineas": [{cuil, id_afiliado, nombre, remuneracion, cuota, fuente,
+    activo}], "activos", "con_ddjj", "afiliados", "fuera_nomina", "remuneracion",
+    "importe"}}
+    """
+    del_periodo = afiliados_del_periodo(periodo, padron)
+    activos = activos_por_empleador(periodo, padron, del_periodo)
 
     empleadores: dict[str, dict] = {}
 
@@ -301,20 +320,34 @@ def _aeda(ya: dict, hoy: datetime.date) -> dict | None:
                      + (f" (fis_deuda {ida})" if ida else "") + "."}
 
 
-def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = None) -> dict:
-    """Liquida (o reliquida) el período. Devuelve los contadores para la pantalla."""
+def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = None,
+            solo_cuit: str | None = None) -> dict:
+    """Liquida (o reliquida) el período. Devuelve los contadores para la pantalla.
+
+    Lo que la empresa presentó con su Libro de Sueldos Digital (origen «lsd»,
+    fisca_lsd.py) no se toca: manda el archivo (cuenta en «por_lsd»). Con
+    `solo_cuit` liquida únicamente ese empleador: lo usa fisca_lsd al anular
+    una presentación, para que vuelva a la DDJJ.
+    """
     calculo = calculo or calcular(cur, periodo)
+    if solo_cuit:
+        calculo = {**calculo, "empleadores": {c: e for c, e in calculo["empleadores"].items() if c == solo_cuit}}
     hoy = datetime.date.today()
     vto = vencimiento(periodo, calculo["dia_vto"])
     r = {"periodo": periodo, "nuevas": 0, "reliquidadas": 0, "iguales": 0, "de_aeda": 0, "anuladas": 0,
-         "en_cero": 0, "importe": Decimal("0")}
+         "en_cero": 0, "por_lsd": 0, "importe": Decimal("0")}
 
     cur.execute("""SELECT id, cuit, origen, estado, importe, afiliados, afiliados_activos, activos_con_ddjj,
                           observaciones, aeda_importe, aeda_afiliados, id_aeda
                      FROM fisca_liquidacion WHERE periodo = %s FOR UPDATE""", (periodo,))
-    existentes = {f["cuit"]: f for f in cur.fetchall()}
+    existentes = {f["cuit"]: f for f in cur.fetchall() if not solo_cuit or f["cuit"] == solo_cuit}
+    # Las presentadas con el Libro de Sueldos Digital quedan como están.
+    por_lsd = {c for c, f in existentes.items() if f["origen"] == "lsd" and f["estado"] == "vigente"}
+    r["por_lsd"] = len(por_lsd)
 
     for cuit, e in sorted(calculo["empleadores"].items()):
+        if cuit in por_lsd:
+            continue
         ya = existentes.get(cuit)
         aeda = _aeda(ya, hoy) if ya else None
         nota = _nota(e, aeda)
@@ -359,7 +392,7 @@ def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = No
     # Lo liquidado antes que ya no tiene base (la DDJJ se rectificó, el afiliado
     # dejó de serlo), también lo de AEDA: se anula con la nota y lo de AEDA queda.
     for cuit, ya in existentes.items():
-        if cuit in calculo["empleadores"] or ya["estado"] == "anulada":
+        if cuit in calculo["empleadores"] or ya["estado"] == "anulada" or cuit in por_lsd:
             continue
         aeda = _aeda(ya, hoy)
         texto = f"Anulada al liquidar por DDJJ el {hoy:%d/%m/%Y}: sin afiliados activos ni DDJJ en el período."
@@ -518,7 +551,8 @@ def liquidacion_generar():
     except ErrorLiquidacion as e:
         flash("!" + str(e))
         return redirect(url_for("fisca_liq.liquidacion", periodo=desde))
-    suma = {k: sum(r[k] for r in res) for k in ("nuevas", "reliquidadas", "iguales", "de_aeda", "anuladas", "en_cero")}
+    suma = {k: sum(r[k] for r in res) for k in ("nuevas", "reliquidadas", "iguales", "de_aeda", "anuladas", "en_cero",
+                                                "por_lsd")}
     partes = [f"{n} {t}" for n, t in ((suma["nuevas"], "nuevas"), (suma["reliquidadas"], "reliquidadas"),
                                        (suma["iguales"], "sin cambios"), (suma["de_aeda"], "de AEDA reliquidadas"),
                                        (suma["anuladas"], "anuladas")) if n]
@@ -526,7 +560,9 @@ def liquidacion_generar():
     flash(f"{'Período' if hasta == desde else 'Períodos'} {rango} liquidado{'s' if hasta != desde else ''}: "
           + (", ".join(partes) or "no hay nada para liquidar")
           + f". Cuota liquidada: $ {_pesos(sum(r['importe'] for r in res))}."
-          + (f" {suma['en_cero']} en cero (activos sin DDJJ)." if suma["en_cero"] else ""))
+          + (f" {suma['en_cero']} en cero (activos sin DDJJ)." if suma["en_cero"] else "")
+          + (f" {suma['por_lsd']} no se tocaron: las presentó la empresa con su Libro de Sueldos Digital."
+             if suma["por_lsd"] else ""))
     return redirect(url_for("fisca_liq.liquidacion", periodo=hasta))
 
 

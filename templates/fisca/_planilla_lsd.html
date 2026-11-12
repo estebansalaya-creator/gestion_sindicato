@@ -1,0 +1,63 @@
+{#
+  La planilla de cuota sindical que sale de un Libro de Sueldos Digital
+  (fisca_lsd.py): un renglón por afiliado. La usan el portal de la empresa y la
+  ficha interna de la presentación.
+
+    {% import "fisca/_planilla_lsd.html" as planilla %}
+    {{ planilla.tabla(plan, fuentes, fuente_tipo) }}                 (portal)
+    {{ planilla.tabla(plan, fuentes, fuente_tipo, control=control) }} (adentro: con la DDJJ de OSEDA)
+
+  `control` es el de fisca_lsd.control_ddjj: agrega la remuneración de la DDJJ
+  de OSEDA y la diferencia. Con `interno`, el CUIL lleva al padrón.
+#}
+{% import "_ui.html" as ui %}
+
+{% macro tabla(plan, fuentes, fuente_tipo, control=None, interno=False, id='tbl-planilla') -%}
+{%- set con_retenido = plan.lineas | selectattr('retenido', 'ne', none) | list | length > 0 -%}
+{%- set con_ddjj = control and not control.error -%}
+<div class="data-table-wrap">
+  <table class="data-table" id="{{ id }}" data-exportar="Cuota sindical {{ plan.periodo | periodo }} {{ plan.cuit }}">
+    <thead><tr>
+      {% if interno %}<th class="col-acciones" data-no-sort>Acciones</th>{% endif %}
+      <th>CUIL</th><th>Apellido y nombres</th><th>En el archivo</th><th>Activo de la empresa</th>
+      <th class="th-right">Remuneración</th><th class="th-right">Cuota</th>
+      {% if con_retenido %}<th class="th-right" title="Concepto 810004 «Cuota Sindical» de los recibos">Retenido en el recibo</th>{% endif %}
+      {% if con_ddjj %}<th class="th-right" title="Remuneración imponible 5 de la DDJJ de OSEDA de este CUIT">DDJJ OSEDA</th>
+      <th class="th-right">Diferencia</th>{% endif %}
+    </tr></thead>
+    <tbody>
+      {% for l in plan.lineas %}
+      {%- set difiere = con_ddjj and l.dif is not none and (l.dif > 0.99 or l.dif < -0.99) -%}
+      <tr data-fuente="{{ l.fuente }}" data-activo="{{ 1 if l.activo else 0 }}" data-difiere="{{ 1 if difiere else 0 }}">
+        {% if interno %}<td><div class="acciones">
+          {% if l.id_afiliado %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=l.id_afiliado), titulo='Ver el afiliado', blank=True) }}{% endif %}
+        </div></td>{% endif %}
+        <td class="td-mono">{{ l.cuil }}</td>
+        <td>{{ l.nombre or '' }}</td>
+        <td>{{ ui.estado(fuentes[l.fuente], fuente_tipo[l.fuente]) }}</td>
+        <td>{{ ui.si_no(l.activo) }}</td>
+        <td class="td-right" data-num="{{ l.remuneracion }}">{{ (l.remuneracion or 0) | miles }}</td>
+        <td class="td-right td-fuerte" data-num="{{ l.cuota }}">{{ (l.cuota or 0) | miles }}</td>
+        {% if con_retenido %}<td class="td-right" data-num="{{ l.retenido if l.retenido is not none else '' }}">{{ (l.retenido | miles) if l.retenido is not none else '—' }}</td>{% endif %}
+        {% if con_ddjj %}
+        <td class="td-right" data-num="{{ l.ddjj if l.ddjj is not none else '' }}">{{ (l.ddjj | miles) if l.ddjj is not none else '—' }}</td>
+        <td class="td-right" data-num="{{ l.dif if l.dif is not none else '' }}">{% if difiere %}{{ ui.estado(l.dif | miles, 'danger') }}{% elif l.dif is not none %}{{ ui.estado('Coincide', 'ok') }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr class="no-data-row"><td colspan="10" class="no-data">Ningún afiliado de AEDA entre los trabajadores del archivo ni activo de la empresa en el período.</td></tr>
+      {% endfor %}
+      {% if plan.lineas %}
+      <tr class="total-row">
+        {% if interno %}<td></td>{% endif %}
+        <td></td><td class="td-fuerte">Total</td><td></td><td></td>
+        <td class="td-right td-fuerte">{{ (plan.remuneracion or 0) | miles }}</td>
+        <td class="td-right td-fuerte">{{ (plan.importe or 0) | miles }}</td>
+        {% if con_retenido %}<td class="td-right td-fuerte">{{ (plan.retenido or 0) | miles }}</td>{% endif %}
+        {% if con_ddjj %}<td></td><td></td>{% endif %}
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}

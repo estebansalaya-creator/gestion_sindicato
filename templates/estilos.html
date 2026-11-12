@@ -552,6 +552,7 @@
     <details class="card texto-leido"><summary>Texto leído del PDF</summary><pre>ORIGINAL
 A FACTURA  COD. 01  Punto de Venta: 00003  Comp. Nro: 00001234</pre></details>
     {{ ej("<label class=\"drop-zone chica\">…<input type=\"file\" class=\"oculto\"></label>   zona de archivo dentro de un formulario\n<iframe class=\"visor-pdf\" src=\"…\"></iframe>                  el PDF en la pantalla, mientras se carga o se audita\n<details class=\"card texto-leido\"><summary>…</summary><pre>…</pre></details>   lo leído, plegado\n<span class=\"marcas\">{{ ui.estado('ARCA', 'ok') }}{{ ui.estado('sin PDF', 'warn') }}</span>\n<span class=\"chip chip-alerta\">sin alta</span>\n<div class=\"pila\">…</div>   bloques uno debajo del otro, con aire     .separado  margen arriba") }}
+    {{ ej("<div class=\"portal-page\"> <header class=\"portal-top\">…</header> <main class=\"portal-cuerpo\">…</main> <footer class=\"portal-pie\">…</footer> </div>\n   el portal de las empresas (templates/portal/base.html): sin menú ni sesión, mismas tarjetas y grillas\n<code class=\"enlace-nuevo\">https://…/empresas/…</code>   un enlace para copiar, que se muestra una sola vez") }}
     <p class="chico muted">
       Una nota de crédito se carga en positivo y el tipo dice que resta: en los totales de las grillas va en negativo.
       Los datos que identifican un comprobante validado por ARCA van <code>readonly</code>, pero el servidor los vuelve a

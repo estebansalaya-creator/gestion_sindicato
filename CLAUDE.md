@@ -37,6 +37,8 @@ gestion_sindicato/
   db.py                   get_connection() a la base `sindicato` + helpers de sesión
   gestion_sindicato.py    blueprint `sindicato` — fiscalización de cuotas
   fisca_liquidacion.py    liquidación de cuota sindical por DDJJ de OSEDA, con los activos del empleador y el % con DDJJ
+  fisca_lsd.py            la empresa presenta su Libro de Sueldos Digital por un enlace y la cuota se liquida con él
+  lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
@@ -124,6 +126,10 @@ repetiría en la URL lo que dice el dominio.
 /importaciones_log   historial
 /api/cuotas          API del tab
 /fiscalizacion/liquidacion   liquidación de cuota sindical, ?periodo=AAAAMM; /generar POST (desde, hasta); /<id> ficha
+/fiscalizacion/lsd           presentaciones del LSD, ?periodo, ?estado; /subir POST; /<id> ficha; /<id>/confirmar,
+                             /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
+/empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
+                             /descartar POST, /planilla.xlsx)
 /login /logout /menu
 /empleadores         ABM, ?edit=ID
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
@@ -268,6 +274,7 @@ SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AE
 [SIND_ARCA_CERT  SIND_ARCA_KEY  SIND_ARCA_CUIT]   constatación con ARCA (opcional)
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)
 [SIND_CONTABLE_HOST  _PORT  _USER  _PASS  _DB]    contable en Railway, solo lectura (contable_oseda.py)
+[SIND_URL_PUBLICA]                                https://aeda.seggestion.com.ar: arma el enlace de las empresas
 ```
 
 - **La base no se configura por entorno.** `DB_NAME = "sindicato"` es constante en `db.py`, para que
@@ -443,6 +450,8 @@ Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por
 - **Liquidar de nuevo** rehace el detalle con lo de hoy y anula, con la nota, la de un empleador que se quedó sin
   base. El último período suele tener la DDJJ incompleta (202610 tenía 1.719 filas contra ≈2.420): se reliquida
   cuando se complete.
+- **Lo presentado con el Libro de Sueldos Digital no se reliquida por DDJJ** (origen «lsd», ver «Presentación del
+  Libro de Sueldos Digital»): manda el archivo de la empresa. Anular la presentación la devuelve a la DDJJ.
 - **Lo de AEDA se reliquida** (cambiado el 12/11/2026): pasa a origen «ddjj» y lo que había liquidado AEDA queda en
   `aeda_importe`, `aeda_afiliados` e `id_aeda` (pantalla: columna «Liquidado AEDA»); la marca «[AEDA fis_deuda N]» sale
   de observaciones. `importar_aeda_fisca_deuda.py` solo reconoce como suyas las de origen «aeda», así no pisa una
@@ -450,6 +459,46 @@ Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por
 - **Sin cobros** (decidido el 11/11/2026): `fis_deudaaplic` está vacía y `fis_cobros` no se aplica a la deuda. La
   cuenta corriente de empleadores, primera etapa (12/11/2026): saldo = liquidado − cobrado, sin aplicar
   (`logs/saldos_empleadores_*.xlsx`). Falta aplicar los cobros e intereses por mora.
+
+## Presentación del Libro de Sueldos Digital (cuota sindical)
+
+`fisca_lsd.py` + `lsd_lector.py` (`sql/fisca_lsd_20261112.sql`, menú 7 «Presentaciones LSD» en Fiscalización de
+Cuotas, Administrador y Supervisor; test: `python tests/test_fisca_lsd.py`, sin base). Pedido del 12/11/2026: que las
+empresas suban el archivo de liquidación del Libro de Sueldos Digital y se complete sola la planilla de la cuota
+sindical con los afiliados activos. Reemplaza a la planilla que generaba el sistema viejo, que se mandaba por mail y
+el empleador completaba a mano («no era nada seguro»).
+
+- **Acceso: enlace personal por empresa** (decidido el 12/11/2026), `/empresas/<token>`, sin usuario ni clave. Se
+  genera en Empleadores, solapa «Cuota sindical» (`fisca_lsd.enlace`), y se manda por mail desde ahí (abre el correo
+  de quien lo manda, a los mails de la ficha y de los contactos: la app no envía mails). De `fisca_enlace_empresa` se
+  guarda el SHA-256 del token, nunca el token: el enlace se ve UNA vez, al generarlo (viaja por la sesión,
+  `sind_enlace_nuevo`). Generar otro corta el anterior; «Revocar» lo corta sin generar otro. El portal tiene su propia
+  plantilla (`templates/portal/base.html`, sin menú) con `noindex` y `no-referrer`; con el enlace solo se ve y se sube
+  lo del CUIT del enlace. Un token sin el formato da el 404 del portal sin ir a la base.
+- **Confidencialidad** (pedido del 12/11/2026): el mismo texto (`fisca_lsd.CONFIDENCIALIDAD`, Ley 25.326, la
+  afiliación sindical es dato sensible) va en el mail del enlace y arriba de las páginas del portal.
+- **El archivo**: el de liquidación del LSD (registros 01 a 06, ver `lsd_lector.py`); se valida el diseño, el CUIT del
+  enlace y que el período ya haya empezado. Con errores no se guarda nada y se listan los renglones. Se guarda entero en
+  `fisca_lsd_presentacion.archivo`.
+- **La planilla** (`armar_planilla`): afiliado del período (la regla de fisca_liquidacion) que está en el archivo, con
+  su **Remuneración imponible 5 del registro 04** (la misma base que la DDJJ) × la alícuota de Datos del Sindicato;
+  más los activos del empleador que no están en el archivo, en cero; los no afiliados solo se cuentan. Si el recibo
+  trae el concepto ARCA 810004 «Cuota Sindical», se muestra lo retenido al lado (con la muestra de 202610 coincidió al
+  centavo).
+- **Presentar = liquidar**: la planilla pasa a `fisca_liquidacion` con origen **«lsd»** (detalle «lsd» / «sin_lsd»;
+  `activos_con_ddjj` cuenta los activos que están en el archivo), conserva lo que había liquidado AEDA y reemplaza a la
+  de DDJJ. **«Liquidar» por DDJJ no la pisa** (`generar` las saltea y las cuenta en «por_lsd»). Manda la última
+  presentada del período (la anterior queda «reemplazada»): si el mes tuvo varias liquidaciones se sube la última,
+  que trae las bases acumuladas en el registro 04. Sin presentar queda un borrador por CUIT.
+- **Control contra la DDJJ de OSEDA** (ficha interna, `control_ddjj`, en vivo de Railway): la remuneración de cada
+  afiliado contra la Rem. 5 de su DDJJ de OSEDA de ESE CUIT; marca diferencias de $ 1 o más. El archivo es un texto y se
+  puede editar antes de subirlo; los que tienen otra obra social no se pueden controlar así.
+- **Anular** (ficha interna, con motivo): la liquidación vuelve a la DDJJ de OSEDA (`generar(..., solo_cuit=)`, hace
+  falta Railway). La presentación reemplazada antes no vuelve sola: se sube de nuevo.
+- **Excel**: `exportar.xlsx(..., encabezado=[…])` con el formato de la planilla de aportes del art. 38 (CUIT, período y
+  empresa en la fila 3; renglones desde la 5), el que lee Importar Cuotas, más lo retenido y una observación.
+- **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo) y avisarle a la empresa los meses
+  que no presentó.
 
 ## Nómina del empleador y DDJJ de OSEDA
 

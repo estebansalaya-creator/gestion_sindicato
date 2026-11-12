@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Presentaciones LSD{% endblock %}
+
+{#
+  Fiscalización de Cuotas → Presentaciones LSD (fisca_lsd.lista): los archivos
+  del Libro de Sueldos Digital que presentaron las empresas (por su enlace) o
+  que subió el sindicato por ellas. Cada uno presentado es la liquidación de
+  la cuota sindical de su CUIT y período.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Presentaciones del Libro de Sueldos Digital</h1>
+    <p>Lo que presentan las empresas para liquidar la cuota sindical. El enlace de cada empresa se genera en Empleadores, solapa «Cuota sindical».</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede(url_for('fisca_liq.liquidacion')) %}{{ ui.boton('Liquidación de cuota sindical', 'secondary', href=url_for('fisca_liq.liquidacion', periodo=periodo)) }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<div class="card">
+  {{ ui.card_head('Subir un archivo por una empresa', nota='Para la que lo manda por mail. El CUIT y el período salen del archivo.') }}
+  <div class="card-body">
+    <form method="post" action="{{ url_for('fisca_lsd.subir_interno') }}" enctype="multipart/form-data">
+      <div class="campos">
+        <div class="campo" style="--span:8">
+          <label class="drop-zone chica">
+            {{ ui.icono('subir', 20) }}
+            <input type="file" name="archivo" accept=".txt,text/plain" required>
+            <span>Archivo de liquidación del LSD (.txt), hasta {{ max_mb }} MB</span>
+          </label>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Leer el archivo', 'primary', submit=True, icono_='subir') }}</div>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Presentaciones', nota=filas | length ~ ' archivo(s)' ~ (' · ' ~ (periodo | periodo) if periodo else '')) }}
+  <form method="get" class="card-body">
+    <div class="campos">
+      <div class="campo" style="--span:3"><label>Período</label>
+        <input type="month" name="periodo" value="{{ (periodo | periodo) if periodo else '' }}"></div>
+      <div class="campo" style="--span:3"><label>Estado</label>
+        <select name="estado"><option value="">Todos</option>
+          {% for k, (t, _) in estados.items() %}<option value="{{ k }}" {{ 'selected' if estado == k }}>{{ t }}</option>{% endfor %}
+        </select></div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Consultar', 'secondary', submit=True, icono_='buscar') }}</div>
+  </form>
+  {% call ui.barra_filtros('Buscar por CUIT o empresa…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-lsd" data-exportar="Presentaciones LSD">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Período</th><th>CUIT</th><th>Empresa</th><th>Liquidación</th><th>Estado</th><th>Subió</th>
+        <th>Presentada</th><th class="th-right">Trabajadores</th><th class="th-right">Activos</th>
+        <th class="th-right">En el archivo</th><th class="th-right">Afiliados</th><th class="th-right">Cuota</th>
+      </tr></thead>
+      <tbody>
+        {% for f in filas %}
+        <tr class="{{ 'fila-baja' if f.estado in ('anulada', 'reemplazada') }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_lsd.ficha', id_pres=f.id), titulo='Ver la planilla') }}
+            {{ ui.accion('planilla', href=url_for('fisca_lsd.planilla_interno', id_pres=f.id), titulo='Descargar la planilla') }}
+          </div></td>
+          <td class="td-mono">{{ f.periodo | periodo }}</td>
+          <td class="td-mono">{{ f.cuit }}</td>
+          <td class="td-fuerte">{{ f.razon_social or '(no está en Empleadores)' }}</td>
+          <td>{{ f.nro_liquidacion or '—' }}{% if f.envio == 'RE' %} {{ ui.estado('RE', 'info') }}{% endif %}</td>
+          <td>{{ ui.estado(estados[f.estado][0], estados[f.estado][1]) }}</td>
+          <td>{{ 'Empresa' if f.origen == 'empresa' else (f.usuario or 'Sindicato') }}</td>
+          <td>{{ f.presentado.strftime('%d/%m/%Y %H:%M') if f.presentado else '—' }}</td>
+          <td class="td-right">{{ f.trabajadores }}</td>
+          <td class="td-right">{{ f.afiliados_activos }}</td>
+          <td class="td-right">{{ f.activos_en_archivo }}</td>
+          <td class="td-right">{{ f.afiliados }}</td>
+          <td class="td-right td-fuerte" data-num="{{ f.importe }}">{{ (f.importe or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="13" class="no-data">No hay presentaciones{{ ' para el filtro' if periodo or estado }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-lsd', { pageSize: 50 }); });</script>
+{% endblock %}

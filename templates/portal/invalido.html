@@ -1,0 +1,11 @@
+{% extends "portal/base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Enlace no válido{% endblock %}
+{% block content %}
+<div class="pantalla-aviso">
+  <div class="pantalla-aviso-icono">{{ ui.icono('alerta', 40) }}</div>
+  <h1>El enlace no es válido</h1>
+  <p>Puede que se haya escrito mal, o que el sindicato haya generado uno nuevo para la empresa: el anterior deja de andar.</p>
+  <p>Pidan el enlace vigente al sindicato.</p>
+</div>
+{% endblock %}
