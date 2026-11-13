@@ -198,7 +198,7 @@ def falta_esquema(cur) -> list[str]:
     for tabla, columna, script in ESQUEMA:
         if f"{tabla}.{columna}".lower() not in hay and script not in faltan:
             faltan.append(script)
-    cur.execute("""SELECT column_type FROM information_schema.columns WHERE table_schema = DATABASE()
+    cur.execute("""SELECT column_type AS column_type FROM information_schema.columns WHERE table_schema = DATABASE()
                     AND table_name = 'ingreso_ordenes' AND column_name = 'clase'""")
     r = cur.fetchone()
     if (not r or "cuota_sindical" not in (r["column_type"] or "")) and SQL_ESQUEMA not in faltan:
@@ -705,6 +705,22 @@ def lista():
     salida = _guardia()
     if salida:
         return salida
+    try:
+        return _lista()
+    except Exception as e:                       # noqa: BLE001 — se informa en pantalla y en el log
+        # Mientras la pantalla es nueva: el error en el aviso, con dónde pasó, en
+        # lugar de un 500 mudo (en Railway el traceback queda en Deploy Logs).
+        log.exception("Emisión de recibos")
+        import traceback
+        donde = traceback.extract_tb(e.__traceback__)[-1]
+        flash(f"!Error al armar la pantalla: {type(e).__name__}: {e} "
+              f"({donde.filename.rsplit('/', 1)[-1].rsplit(chr(92), 1)[-1]}, línea {donde.lineno}: {donde.line})")
+        return render_template("fisca/recibos.html", cuentas=[], cuenta=None, filas=[], relaciones=[],
+                               desde=None, hasta=None, id_cuenta=None, res={}, falta_esquema=True,
+                               estados=ESTADOS, como=COMO, excedido=False, tope=TOPE)
+
+
+def _lista():
     with get_connection() as conn:
         with conn.cursor() as cur:
             faltan = falta_esquema(cur)
