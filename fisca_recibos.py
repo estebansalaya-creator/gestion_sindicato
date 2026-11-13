@@ -176,15 +176,38 @@ def _guardia():
     return None
 
 
-def _falta_esquema(cur) -> bool:
-    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns
-                    WHERE table_schema = DATABASE() AND table_name = 'ingreso_ordenes_detalle'
-                      AND column_name = 'cuit'""")
-    if not cur.fetchone()["n"]:
-        return True
-    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
-                    WHERE table_schema = DATABASE() AND table_name = 'fisca_cuit_relacionado'""")
-    return not cur.fetchone()["n"]
+#: Lo que la pantalla necesita de la base, y el script que lo crea. En Railway
+#: los scripts se corren a mano: sin esto, uno que falta es un 500 sin explicación.
+ESQUEMA = [
+    ("c_extractos_bancarios", "id", "sql/conciliacion_bancaria_20261111.sql"),
+    ("conc_reglas", "id_cuenta_destino", "sql/conciliacion_bancaria_20261111.sql"),
+    ("conciliacion_comprobantes", "id_debito_credito", "sql/conciliacion_bancaria_20261111.sql"),
+    ("conciliacion_items", "id_grupo", "sql/conciliacion_bancaria_20261111.sql"),
+    ("fisca_liquidacion", "afiliados_activos", "sql/fisca_liquidacion_ddjj_20261112.sql"),
+    ("ingreso_ordenes_detalle", "cuit", SQL_ESQUEMA),
+    ("fisca_cuit_relacionado", "cuit_pagador", SQL_ESQUEMA),
+]
+
+
+def falta_esquema(cur) -> list[str]:
+    """Los scripts que faltan correr en esta base (vacío si está todo)."""
+    cur.execute("""SELECT CONCAT(table_name, '.', column_name) AS c FROM information_schema.columns
+                    WHERE table_schema = DATABASE()""")
+    hay = {f["c"].lower() for f in cur.fetchall()}
+    faltan = []
+    for tabla, columna, script in ESQUEMA:
+        if f"{tabla}.{columna}".lower() not in hay and script not in faltan:
+            faltan.append(script)
+    cur.execute("""SELECT column_type FROM information_schema.columns WHERE table_schema = DATABASE()
+                    AND table_name = 'ingreso_ordenes' AND column_name = 'clase'""")
+    r = cur.fetchone()
+    if (not r or "cuota_sindical" not in (r["column_type"] or "")) and SQL_ESQUEMA not in faltan:
+        faltan.append(SQL_ESQUEMA)
+    return faltan
+
+
+def _aviso_esquema(faltan) -> None:
+    flash("!Faltan correr en esta base: " + ", ".join(faltan) + ". Hasta entonces no se emiten recibos.")
 
 
 # =============================================================================
@@ -684,12 +707,13 @@ def lista():
         return salida
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cuentas = _cuentas_banco(cur)
-            if _falta_esquema(cur):
-                flash(f"!Falta correr {SQL_ESQUEMA}: hasta entonces no se emiten recibos.")
-                return render_template("fisca/recibos.html", cuentas=cuentas, cuenta=None, filas=[], relaciones=[],
+            faltan = falta_esquema(cur)
+            if faltan:
+                _aviso_esquema(faltan)
+                return render_template("fisca/recibos.html", cuentas=[], cuenta=None, filas=[], relaciones=[],
                                        desde=None, hasta=None, id_cuenta=None, res={}, falta_esquema=True,
                                        estados=ESTADOS, como=COMO, excedido=False, tope=TOPE)
+            cuentas = _cuentas_banco(cur)
             id_cuenta = request.args.get("cuenta", type=int) or (cuentas[0]["id"] if cuentas else None)
             cuenta = next((c for c in cuentas if c["id"] == id_cuenta), None)
             desde, hasta = _rango(cur, request.args)
@@ -732,8 +756,9 @@ def emitir_uno(id_extracto):
     errores: list[str] = []
     with get_connection() as conn:
         with conn.cursor() as cur:
-            if _falta_esquema(cur):
-                flash(f"!Falta correr {SQL_ESQUEMA}.")
+            faltan = falta_esquema(cur)
+            if faltan:
+                _aviso_esquema(faltan)
                 return redirect(url_for("fisca_rec.lista"))
             cur.execute("""SELECT e.*, c.nombre AS cuenta, c.numero_de_cuenta
                              FROM c_extractos_bancarios e JOIN c_cuentas_de_fondos c ON c.id = e.c_cuentas_de_fondos_id
@@ -823,6 +848,10 @@ def emitir_lote():
         return _volver_lista()
     with get_connection() as conn:
         with conn.cursor() as cur:
+            faltan = falta_esquema(cur)
+            if faltan:
+                _aviso_esquema(faltan)
+                return _volver_lista()
             cur.execute("SELECT MIN(fecham) AS d, MAX(fecham) AS h FROM c_extractos_bancarios "
                         f"WHERE c_cuentas_de_fondos_id = %s AND id IN ({','.join(['%s'] * len(ids))})",
                         [id_cuenta, *ids])
