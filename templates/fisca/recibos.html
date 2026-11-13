@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Emisión de recibos{% endblock %}
+
+{#
+  Fiscalización de Cuotas → Emisión de Recibos (fisca_rec.lista): las
+  acreditaciones del extracto de una cuenta, cada una con su empleador (por el
+  CUIT del banco o un CUIT relacionado), si ya tiene recibo y en qué períodos
+  iría. Se emite de a uno (el ícono) o los tildados de una vez; abajo, los CUIT
+  que pagan por un empleador.
+#}
+
+{% macro tarjeta(icono, tipo, rotulo, valor, sub='') -%}
+<div class="kpi-card">
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val">{{ valor }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Emisión de recibos de cuota sindical</h1>
+    <p>De cada acreditación del extracto sale el recibo del empleador que pagó. El empleador se reconoce por el CUIT que informa el banco o por un CUIT relacionado.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_extractos %}{{ ui.boton('Extractos bancarios', 'secondary', href=url_for('extractos.index', cuenta=id_cuenta), icono_='subir') }}{% endif %}
+    {% if puede_conc %}{{ ui.boton('Conciliación bancaria', 'secondary', href=url_for('conc.lista', cuenta=id_cuenta), icono_='aplicaciones') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if not cuentas %}{{ ui.aviso('No hay cuentas bancarias habilitadas: se cargan en Tesorería → Tablas → Cuentas de Fondos.', 'warning') }}{% endif %}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' acreditaciones en estas fechas: se muestran las primeras. Acotá el rango.', 'warning') }}{% endif %}
+
+{% if not falta_esquema %}
+<div class="card">
+  <form method="get" action="{{ url_for('fisca_rec.lista') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta del banco') %}<select name="cuenta" class="filtro" onchange="this.form.submit()">
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.nombre }}{% if c.numero_de_cuenta %} — {{ c.numero_de_cuenta }}{% endif %}{% if not c.ultimo %} (sin extracto){% endif %}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ desde.isoformat() if desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ hasta.isoformat() if hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('fisca_rec.lista', cuenta=id_cuenta) }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+{% if cuenta %}
+<div class="kpi-row">
+  {{ tarjeta('dinero', '', 'Acreditaciones', res.cant, '$ ' ~ (res.total | miles)) }}
+  {{ tarjeta('ok', 'ok', 'Con recibo', res.emitido[0] + res.ya_tiene[0],
+             res.emitido[0] ~ ' emitidos acá · ' ~ res.ya_tiene[0] ~ ' ya registrados (AEDA)') }}
+  {{ tarjeta('empresa', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · empleador seguro') }}
+  {{ tarjeta('alerta', 'warn', 'Para emitir de a uno', res.a_mano[0] + res.posible[0],
+             res.a_mano[0] ~ ' sin empleador seguro · ' ~ res.posible[0] ~ ' a revisar') }}
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('fisca_rec.emitir_lote') }}" id="form-lote"
+      data-proceso="Emitiendo los recibos…" data-proceso-detalle="Cada recibo se graba con su renglón del libro.">
+  <input type="hidden" name="cuenta" value="{{ id_cuenta or '' }}">
+  <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+  <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+  <div class="card">
+    {% call ui.barra_filtros('Buscar por concepto, referencia, CUIT o empleador…', tam_pagina=50) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Todos</option>
+        {% for k, (t, _) in estados.items() %}<option value="{{ k }}" {{ 'selected' if k == 'pendiente' }}>{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Empleador') %}<select class="filtro" id="f-como">
+        <option value="">Todos</option>
+        {% for k, (t, _) in como.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-recibos" data-exportar="Recibos {{ cuenta.nombre if cuenta else '' }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>
+            <input type="checkbox" id="chk-todos" title="Tildar las filtradas que se pueden emitir en lote" onclick="marcarTodos(this)">
+          </th>
+          <th data-orden="asc">Fecha</th><th>Referencia</th><th>Concepto del banco</th><th>CUIT del banco</th>
+          <th>Empleador</th><th>Períodos</th><th class="th-right">Importe</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for f in filas %}
+          <tr data-estado="{{ f.estado }}" data-como="{{ f.emp.como }}">
+            <td><div class="acciones">
+              {% if f.en_lote %}
+              <input type="checkbox" class="chk-item" name="extracto" value="{{ f.id }}" data-importe="{{ f.importe }}"
+                     aria-label="Tildar {{ f.fecham.strftime('%d/%m') }} {{ f.importe | miles }}" onchange="recalcularSel()">
+              {% endif %}
+              {% if f.estado in emitibles %}
+              {{ ui.accion('agregar', href=url_for('fisca_rec.emitir_uno', id_extracto=f.id, desde=desde.isoformat(), hasta=hasta.isoformat()), titulo='Emitir el recibo') }}
+              {% elif f.estado == 'emitido' %}
+              {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
+              {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=f.recibo.id_orden), titulo='Recibo en PDF', blank=True) }}
+              {% elif f.recibo and puede_ingreso %}
+              {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=f.recibo.id_orden), titulo='Ver la orden de ingreso') }}
+              {% endif %}
+            </div></td>
+            <td data-valor="{{ f.fecham.isoformat() }}">{{ f.fecham.strftime('%d/%m/%Y') }}</td>
+            <td class="td-mono td-muted">{{ f.ref_nro or '—' }}</td>
+            <td class="td-wrap">{{ f.concepto or '—' }}</td>
+            <td class="td-mono">{{ f.cuit or '—' }}</td>
+            <td class="td-wrap">
+              {% if f.emp.cuit %}<span class="td-fuerte">{{ f.emp.razon or '—' }}</span>
+                {% if f.emp.como != 'mismo' %}<div class="td-mono chico td-muted">{{ f.emp.cuit }}</div>{% endif %}
+              {% elif f.emp.opciones %}<span class="td-muted">{{ f.emp.opciones | map(attribute='razon') | join(' / ') }}</span>
+              {% endif %}
+              {% if f.emp.como != 'mismo' %}<div>{{ ui.estado(como[f.emp.como][0], como[f.emp.como][1]) }}</div>{% endif %}
+            </td>
+            <td class="td-mono chico">
+              {% if f.estado == 'emitido' %}{% for p in (f.recibo.periodos or '').split(',') if p %}{{ p | periodo }}{{ ', ' if not loop.last }}{% endfor %}
+              {% elif f.sugerido %}{% for p, imp in f.sugerido %}<div>{{ p | periodo }}{% if f.sugerido | length > 1 %} <span class="td-muted">{{ imp | miles }}</span>{% endif %}</div>{% endfor %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="td-right td-fuerte importe-ok" data-num="{{ f.importe }}">{{ f.importe | miles }}</td>
+            <td>{{ ui.estado(estados[f.estado][0], estados[f.estado][1]) }}
+              {% if f.recibo %}<div class="td-mono chico td-muted">{{ f.recibo.nro_orden }}</div>{% endif %}
+              {% if f.regla %}<div class="chico td-muted">{{ f.regla }}</div>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">{{ 'No hay acreditaciones en estas fechas: importá el extracto en Extractos Bancarios.' if cuenta else 'Elegí una cuenta.' }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if res.lote and res.lote[0] %}
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Tildadas</div><div class="res-card-val" id="res-cant">0</div></div>
+      <div><div class="res-card-lbl">Total</div><div class="res-card-val ok mono" id="res-total">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir los recibos tildados', 'primary', submit=True, icono_='dinero', id='btn-emitir',
+                onclick='return confirmarLote();') }}
+  </div>
+  {% endif %}
+</form>
+
+<div class="card">
+  {{ ui.card_head('CUIT que pagan por un empleador', nota='El estudio contable, el dueño o la otra empresa del grupo. Sus pagos se reconocen como del empleador.') }}
+  <form method="post" action="{{ url_for('fisca_rec.relacion_alta') }}" class="card-body">
+    <input type="hidden" name="cuenta" value="{{ id_cuenta or '' }}">
+    <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+    <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+    <div class="campos">
+      <div class="campo" style="--span:3"><label for="rel-pagador">CUIT / CUIL que paga <span class="req">*</span></label>
+        <input type="text" id="rel-pagador" name="cuit_pagador" inputmode="numeric" maxlength="13" required></div>
+      <div class="campo" style="--span:3"><label for="rel-empleador">CUIT del empleador <span class="req">*</span></label>
+        <input type="text" id="rel-empleador" name="cuit_empleador" inputmode="numeric" maxlength="13" required
+               oninput="buscarEmpleador(this, 'rel-razon')">
+        <small class="campo-ayuda" id="rel-razon"></small></div>
+      <div class="campo" style="--span:6"><label for="rel-obs">Observaciones</label>
+        <input type="text" id="rel-obs" name="observaciones" maxlength="250" placeholder="Quién es: el estudio, el dueño…"></div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Agregar', 'primary', submit=True, icono_='agregar') }}</div>
+  </form>
+  {% call ui.barra_filtros('Buscar por CUIT o empleador…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-rel" data-exportar="CUIT relacionados">
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Paga</th><th>Por el empleador</th><th>CUIT del empleador</th>
+        <th>Observaciones</th><th>Cargó</th></tr></thead>
+      <tbody>
+        {% for r in relaciones %}
+        <tr>
+          <td><div class="acciones">
+            <button type="button" class="btn-accion baja" title="Dar de baja" aria-label="Dar de baja"
+                    onclick="bajaRelacion({{ r.id }}, '{{ r.cuit_pagador }}', '{{ (r.razon_social or r.cuit_empleador) | replace("'", "") }}')">{{ ui.icono('baja') }}</button>
+          </div></td>
+          <td class="td-mono">{{ r.cuit_pagador }}{% if r.razon_pagador %}<div class="chico td-muted">{{ r.razon_pagador }}</div>{% endif %}</td>
+          <td class="td-fuerte">{{ r.razon_social or '(no está en Empleadores)' }}</td>
+          <td class="td-mono">{{ r.cuit_empleador }}</td>
+          <td class="td-wrap td-muted">{{ r.observaciones or '' }}</td>
+          <td class="chico">{{ 'AEDA' if r.origen == 'aeda' else (r.usuario or '—') }} · {{ r.creado.strftime('%d/%m/%Y') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">No hay CUIT relacionados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="modal" id="modal-baja">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Dar de baja la relación?</div>
+    <div class="modal-texto" id="baja-texto"></div>
+    <div class="modal-texto">Los recibos ya emitidos no cambian; los próximos pagos de ese CUIT quedan sin identificar.</div>
+    <form method="post" id="form-baja">
+      <input type="hidden" name="cuenta" value="{{ id_cuenta or '' }}">
+      <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+      <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-baja')") }}
+        {{ ui.boton('Dar de baja', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+<script>
+var URL_BAJA = "{{ url_for('fisca_rec.relacion_baja', id_rel=0) }}";
+var URL_EMPLEADOR = "{{ url_for('afiliados.buscar_empleador') }}";
+function items() { return Array.from(document.querySelectorAll('.chk-item')); }
+// Tilda o suelta lo que pasó el filtro, no las filas escondidas.
+function marcarTodos(chk) {
+  var tbl = document.getElementById('tbl-recibos');
+  var filas = tbl._grilla ? tbl._grilla.filas() : Array.from(tbl.tBodies[0].rows);
+  filas.forEach(function (tr) { var c = tr.querySelector('.chk-item'); if (c) c.checked = chk.checked; });
+  recalcularSel();
+}
+function recalcularSel() {
+  var sel = items().filter(function (i) { return i.checked; });
+  var total = sel.reduce(function (a, i) { return a + (parseFloat(i.dataset.importe) || 0); }, 0);
+  if (!document.getElementById('res-cant')) return;
+  document.getElementById('res-cant').textContent = sel.length;
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('btn-emitir').disabled = sel.length === 0;
+}
+function confirmarLote() {
+  var n = items().filter(function (i) { return i.checked; }).length;
+  if (!n) { alert('Tildá al menos una acreditación.'); return false; }
+  return confirm('Se van a emitir ' + n + ' recibo' + (n === 1 ? '' : 's') + ' por ' + document.getElementById('res-total').textContent
+    + ', con los períodos que se ven en la grilla.\n\n¿Seguir?');
+}
+function bajaRelacion(id, pagador, empleador) {
+  document.getElementById('baja-texto').textContent = pagador + ' deja de reconocerse como ' + empleador + '.';
+  document.getElementById('form-baja').action = URL_BAJA.replace(/\/0\/baja$/, '/' + id + '/baja');
+  abrirModal('modal-baja');
+}
+function buscarEmpleador(inp, idAyuda) {
+  var cuit = inp.value.replace(/\D/g, ''), ayuda = document.getElementById(idAyuda);
+  ayuda.textContent = '';
+  if (cuit.length !== 11) return;
+  fetch(URL_EMPLEADOR + '?cuit=' + cuit).then(function (r) { return r.json(); }).then(function (d) {
+    ayuda.textContent = d.razon_social || 'No está en Empleadores';
+    ayuda.classList.toggle('ok', !!d.razon_social);
+  }).catch(function () {});
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fc = document.getElementById('f-como');
+  if (!fe) return;
+  gestion_admTable('tbl-recibos', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value && tr.dataset.estado !== fe.value) return false;
+    if (fc.value && tr.dataset.como !== fc.value) return false;
+    return true;
+  }});
+  gestion_admTable('tbl-rel', { pageSize: 20 });
+  recalcularSel();
+});
+</script>
+{% endblock %}

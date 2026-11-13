@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Recibo {{ o.nro_orden }}{% endblock %}
+
+{#
+  Recibo de cuota sindical (fisca_rec.recibo): una orden de ingreso de clase
+  «cuota_sindical» emitida desde una acreditación del extracto. El PDF es el
+  que se le manda al empleador.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+{% set e = o.extracto or {} %}
+<div class="page-header">
+  <div>
+    <h1>Recibo {{ o.nro_orden }}</h1>
+    <p>Cuota sindical de {{ (o.empresa or {}).razon_social or o.cuit or '—' }}, acreditada en {{ o.cuenta or '—' }}.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Emisión de recibos', 'secondary', href=url_for('fisca_rec.lista', cuenta=o.id_cuenta,
+                desde=e.fecham.isoformat() if e.fecham else None, hasta=e.fecham.isoformat() if e.fecham else None), icono_='volver') }}
+    {% if puede_ingreso %}{{ ui.boton('Orden de ingreso', 'secondary', href=url_for('tes_mov.ingreso', id_orden=o.id)) }}{% endif %}
+    {{ ui.boton('PDF', 'pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=o.id), icono_='pdf', blank=True) }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if o.estado == 'anulado' %}
+  {{ ui.aviso('Anulado el ' ~ (o.fecha_anulacion.strftime('%d/%m/%Y') if o.fecha_anulacion else '—') ~ ' por ' ~ (o.usuario_anulacion or '—') ~ ': ' ~ (o.motivo_anulacion or '') ~ '. La acreditación quedó sin recibo.', 'danger') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Recibo') }}
+  <div class="card-body">
+    <p>Recibimos de <b>{{ (o.empresa or {}).razon_social or '—' }}</b> (CUIT {{ o.cuit or '—' }}) la suma de
+      <b>pesos {{ o.en_letras | lower }}</b> ($ {{ o.importe_total | miles }}) en concepto de cuota sindical.</p>
+    <div class="datos">
+      {{ dato('Número', o.nro_orden, mono=True) }}
+      {{ dato('Fecha', o.fecha.strftime('%d/%m/%Y')) }}
+      {{ dato('Importe', '$ ' ~ (o.importe_total | miles), mono=True) }}
+      {{ dato('Empleador', (o.empresa or {}).razon_social) }}
+      {{ dato('CUIT', o.cuit, mono=True) }}
+      {{ dato('Emitió', (o.usuario_creacion or '—') ~ ' · ' ~ o.creado.strftime('%d/%m/%Y %H:%M')) }}
+    </div>
+    {% if o.empresa and puede_empleador %}
+    <div class="form-acciones">{{ ui.boton('Ficha del empleador', 'secondary', chico=True, icono_='empresa', href=url_for('empleadores.abm_empleadores', edit=o.empresa.id)) }}</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Períodos') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Recibo {{ o.nro_orden }}">
+      <thead><tr><th>Período</th><th>Descripción</th><th class="th-right">Importe</th></tr></thead>
+      <tbody>
+        {% for d in o.detalle %}
+        <tr><td class="td-mono">{{ d.periodo | periodo if d.periodo else '—' }}</td><td class="td-wrap">{{ d.descripcion }}</td>
+          <td class="td-right" data-num="{{ d.importe }}">{{ d.importe | miles }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('La acreditación') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Cuenta', (o.cuenta or '—') ~ ((' — ' ~ o.numero_de_cuenta) if o.numero_de_cuenta else '')) }}
+      {{ dato('Fecha', e.fecham.strftime('%d/%m/%Y') if e.fecham else None) }}
+      {{ dato('Referencia', e.ref_nro, mono=True) }}
+      {{ dato('Concepto del banco', e.concepto) }}
+      {{ dato('CUIT del banco', e.cuit, mono=True) }}
+    </div>
+    <p class="td-muted chico">{{ o.observaciones or '' }}</p>
+  </div>
+</div>
+
+{% if o.estado != 'anulado' and puede_anular %}
+<div class="card resumen">
+  {{ ui.card_head('Anular') }}
+  <div class="card-body">
+    <p class="td-muted">Se anula desde Tesorería → Anulaciones, con el motivo. Si quedó conciliado, primero se desvincula en la conciliación. Anulado, la acreditación vuelve a quedar sin recibo.</p>
+    <div class="resumen-botones">{{ ui.boton('Ir a Anulaciones', 'secondary', href=url_for('tes_mov.anulaciones_lista', tipo='ingreso', desde=o.fecha.isoformat(), hasta=o.fecha.isoformat())) }}</div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

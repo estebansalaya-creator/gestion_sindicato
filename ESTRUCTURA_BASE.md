@@ -77,6 +77,7 @@ Catálogos cargados: `p_tipo_documento` `p_estado_civil` `p_nacionalidad` `p_par
 `c_extractos_bancarios` `c_debitos_creditos_bancarios` `c_extracto_cuil_asignado`
 `c_cobro_cuil_equivalencia` `conc_reglas` `conciliacion_header` `conciliacion_items`
 `conciliacion_grupos` `conciliacion_comprobantes`
+`fisca_cuit_relacionado` (los CUIT que pagan la cuota sindical de un empleador, fisca_recibos.py)
 
 ### Contabilidad (17)
 `c_ejercicios` `c_periodos` `c_cierres` `c_plan_de_cuentas` `c_clasificacion_plan_cuentas`

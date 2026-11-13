@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Emitir recibo{% endblock %}
+
+{#
+  Emitir el recibo de una acreditación (fisca_rec.emitir_uno): el renglón del
+  banco, el empleador (el reconocido o el que se elija: ?cuit=), lo que debe por
+  período y en qué períodos va el pago. Sugerido: el mes anterior a la
+  acreditación, o el período cuyo saldo es exactamente el importe.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Emitir recibo de cuota sindical</h1>
+    <p>La acreditación del {{ e.fecham.strftime('%d/%m/%Y') }} en {{ e.cuenta }} por $ {{ e.credito | miles }}.</p>
+  </div>
+  <div class="page-header-acciones">{{ ui.boton('Volver', 'secondary', href=volver, icono_='volver') }}</div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{% if conciliado %}{{ ui.aviso('Esta acreditación ya está conciliada: no se le puede emitir un recibo. Si le falta, primero se desvincula en la conciliación.', 'danger') }}{% endif %}
+{% if fila.recibo %}
+  {{ ui.aviso(('Parece que ya tiene recibo: ' if fila.estado == 'ya_tiene' else 'Puede que ya tenga recibo: ')
+              ~ fila.recibo.nro_orden ~ ' del ' ~ fila.recibo.fecha.strftime('%d/%m/%Y') ~ ' por $ ' ~ (fila.recibo.importe | miles)
+              ~ ((' · ' ~ fila.recibo.detalle) if fila.recibo.detalle else '') ~ '. Revisalo antes de emitir otro.', 'warning') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('La acreditación') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Fecha', e.fecham.strftime('%d/%m/%Y')) }}
+      {{ dato('Cuenta', e.cuenta ~ ((' — ' ~ e.numero_de_cuenta) if e.numero_de_cuenta else '')) }}
+      {{ dato('Importe', '$ ' ~ (e.credito | miles), mono=True) }}
+      {{ dato('Referencia', e.ref_nro, mono=True) }}
+      {{ dato('Concepto del banco', e.concepto) }}
+      {{ dato('CUIT del banco', pagador, mono=True) }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Empleador', nota=('Reconocido: ' ~ como[sugerido.como][0]) if sugerido.cuit else como[sugerido.como][0]) }}
+  <form method="get" class="card-body">
+    <input type="hidden" name="desde" value="{{ request.values.get('desde', '') }}">
+    <input type="hidden" name="hasta" value="{{ request.values.get('hasta', '') }}">
+    <div class="campos">
+      <div class="campo" style="--span:3"><label for="cuit">CUIT del empleador <span class="req">*</span></label>
+        <input type="text" id="cuit" name="cuit" inputmode="numeric" maxlength="13" value="{{ elegido }}" required></div>
+      <div class="campo" style="--span:6"><span class="campo-label">Razón social</span>
+        <div class="td-fuerte" style="padding-top:8px">{{ razon or ('—' if not elegido else 'No está en Empleadores') }}</div></div>
+    </div>
+    {% if sugerido.opciones %}
+    <p class="td-muted">Paga por varios empleadores: elegí uno.</p>
+    <div class="fila">{% for o in sugerido.opciones %}
+      {{ ui.boton(o.razon ~ ' · ' ~ o.cuit, 'secondary', chico=True,
+                  href=url_for('fisca_rec.emitir_uno', id_extracto=e.id, cuit=o.cuit, desde=request.values.get('desde'), hasta=request.values.get('hasta'))) }}
+    {% endfor %}</div>
+    {% endif %}
+    <div class="form-acciones">{{ ui.boton('Usar este empleador', 'secondary', submit=True, icono_='buscar') }}</div>
+  </form>
+</div>
+
+{% if razon %}
+<div class="card">
+  {{ ui.card_head('Lo que debe', nota='Lo liquidado vigente menos lo cobrado, por período. El mes anterior a la acreditación es ' ~ (periodo_mes | periodo) ~ '.') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-saldos" data-exportar="Saldos {{ elegido }}">
+      <thead><tr><th>Período</th><th>Vence</th><th class="th-right">Liquidado</th><th class="th-right">Cobrado</th><th class="th-right">Saldo</th></tr></thead>
+      <tbody>
+        {% for p in periodos %}{% set s = saldos.get(p) %}
+        <tr class="{{ 'fila-actual' if p == periodo_mes }}">
+          <td class="td-mono">{{ p | periodo }}</td>
+          <td>{{ s.vencimiento.strftime('%d/%m/%Y') if s and s.vencimiento else '—' }}</td>
+          <td class="td-right" data-num="{{ s.liquidado if s else 0 }}">{{ (s.liquidado | miles) if s else 'sin liquidar' }}</td>
+          <td class="td-right" data-num="{{ s.cobrado if s else sin_liq[p] }}">{{ (s.cobrado if s else sin_liq[p]) | miles }}</td>
+          <td class="td-right td-fuerte {{ 'importe-danger' if s and s.saldo > 0 }}" data-num="{{ s.saldo if s else 0 }}">{{ (s.saldo | miles) if s else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="5" class="no-data">No tiene liquidaciones ni cobros: el pago queda como «pago sin liquidar».</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<form method="post" data-proceso="Emitiendo el recibo…">
+  <input type="hidden" name="accion" value="emitir">
+  <input type="hidden" name="cuit" value="{{ elegido }}">
+  <input type="hidden" name="desde" value="{{ request.values.get('desde', '') }}">
+  <input type="hidden" name="hasta" value="{{ request.values.get('hasta', '') }}">
+  <div class="card">
+    {{ ui.card_head('Períodos que se pagan', nota='Tienen que sumar el importe de la acreditación.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-renglones" data-sin-orden>
+        <thead><tr><th class="col-acciones" data-no-sort></th><th>Período</th><th class="th-right">Importe</th></tr></thead>
+        <tbody id="renglones">
+          {% for p, imp in (renglones or [(periodo_mes, e.credito)]) %}
+          <tr>
+            <td><div class="acciones">{{ ui.accion('borrar', onclick='quitarRenglon(this)') }}</div></td>
+            <td><input type="month" name="r_periodo" value="{{ (p | periodo) if p else '' }}" max="{{ hoy }}" required></td>
+            <td class="td-right"><input type="text" inputmode="decimal" class="importe" name="r_importe"
+                       value="{{ imp | miles }}" oninput="recalcular()" required></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      {{ ui.boton('Agregar período', 'secondary', chico=True, icono_='agregar', onclick='agregarRenglon()') }}
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Emitir') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:12"><label for="obs">Observaciones</label>
+          <input type="text" id="obs" name="observaciones" maxlength="250" value="{{ obs }}"></div>
+        {% if pagador and pagador != elegido and pagador | length == 11 %}
+        <div class="campo" style="--span:12">
+          <label class="campo-check"><input type="checkbox" name="recordar" value="1" {{ 'checked' if recordar }}>
+            Recordar que los pagos de {{ pagador }} son de {{ razon }}</label>
+          <small class="campo-ayuda">Así la próxima acreditación de ese CUIT se reconoce sola y se puede emitir en lote.</small>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Acreditación</div><div class="res-card-val mono">$ {{ e.credito | miles }}</div></div>
+      <div><div class="res-card-lbl">Períodos</div><div class="res-card-val mono" id="res-suma">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Diferencia</div><div class="res-card-val mono" id="res-dif">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir el recibo', 'primary', submit=True, icono_='dinero', id='btn-emitir') }}
+  </div>
+</form>
+{% endif %}
+
+<template id="tpl-renglon">
+  <tr>
+    <td><div class="acciones">{{ ui.accion('borrar', onclick='quitarRenglon(this)') }}</div></td>
+    <td><input type="month" name="r_periodo" max="{{ hoy }}" required></td>
+    <td class="td-right"><input type="text" inputmode="decimal" class="importe" name="r_importe" oninput="recalcular()" required></td>
+  </tr>
+</template>
+
+<script>
+var TOTAL = {{ e.credito | float }};
+function leer(t) {
+  t = (t || '').replace(/\s|\$/g, '');
+  if (t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  var v = parseFloat(t); return isNaN(v) ? 0 : v;
+}
+function recalcular() {
+  var suma = Array.from(document.querySelectorAll('input[name=r_importe]')).reduce(function (a, i) { return a + leer(i.value); }, 0);
+  var dif = Math.round((TOTAL - suma) * 100) / 100;
+  var s = document.getElementById('res-suma'); if (!s) return;
+  s.textContent = pesos(suma);
+  var d = document.getElementById('res-dif');
+  d.textContent = pesos(dif);
+  d.classList.toggle('danger', Math.abs(dif) >= 0.01);
+  document.getElementById('btn-emitir').disabled = Math.abs(dif) >= 0.01 {{ '|| true' if conciliado }};
+}
+function agregarRenglon() {
+  var tb = document.getElementById('renglones');
+  tb.appendChild(document.getElementById('tpl-renglon').content.cloneNode(true));
+  var falta = TOTAL - Array.from(document.querySelectorAll('input[name=r_importe]')).reduce(function (a, i) { return a + leer(i.value); }, 0);
+  var ult = tb.querySelectorAll('input[name=r_importe]');
+  if (falta > 0.005) ult[ult.length - 1].value = numeroAR(Math.round(falta * 100) / 100);
+  recalcular();
+}
+function quitarRenglon(b) {
+  var tb = document.getElementById('renglones');
+  if (tb.rows.length > 1) b.closest('tr').remove();
+  recalcular();
+}
+document.addEventListener('DOMContentLoaded', recalcular);
+</script>
+{% endblock %}

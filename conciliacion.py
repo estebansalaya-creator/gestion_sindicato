@@ -52,7 +52,8 @@ QUE CAMBIA RESPECTO DE GESTION_ADM
   Antes una regla nueva («COMISION MANT CTA») iba al final y la tapaba la vieja
   («COMISION»).
 - Sin Prisma, débito automático, cobranzas por CUIL ni grupos familiares: son
-  de la obra social. Las sugerencias quedan por número de cheque, CUIT (el del
+  de la obra social. Las sugerencias quedan por el recibo de cuota sindical
+  emitido desde el renglón (fisca_recibos.py), número de cheque, CUIT (el del
   empleador que aparece en la acreditación contra el de la orden de ingreso de
   cuota sindical) y unicidad del importe.
 - Desde cuándo se concilia: desde `s_configuracion.conc_fecha_corte`
@@ -103,6 +104,7 @@ TIPOS_REGLA = OrderedDict([
 
 #: Qué dice cada regla de sugerencia, de la más fuerte a la más débil.
 REGLAS_SUGERENCIA = {
+    "recibo":        ("Recibo del renglón", "El recibo de cuota sindical se emitió desde este renglón del extracto."),
     "cheque":        ("N° de cheque", "El banco debitó el cheque con este número y este importe."),
     "cuit_fecha":    ("CUIT, fecha e importe", "Mismo CUIT, mismo día y mismo importe, y es el único así de los dos lados."),
     "cuit_importe":  ("CUIT e importe", "Mismo CUIT y mismo importe en el período, sin otro igual de ninguno de los dos lados."),
@@ -337,6 +339,7 @@ SQL_LIBRO = f"""
              WHEN 'reintegro' THEN (SELECT MIN(rd.cuil) FROM pago_ordenes_reintegro_det rd WHERE rd.id_orden = o.id)
            END AS cuit_pago,
            io.nro_orden AS nro_ingreso,
+           (SELECT MIN(d.id_extracto_origen) FROM ingreso_ordenes_detalle d WHERE d.id_orden = io.id) AS id_extracto_origen,
            (SELECT GROUP_CONCAT(d.descripcion ORDER BY d.id SEPARATOR ' / ')
               FROM ingreso_ordenes_detalle d WHERE d.id_orden = io.id) AS detalle_ingreso,
            mc.tipo_movimiento, mc.comentario AS comentario_mov,
@@ -516,6 +519,16 @@ def sugerencias(extracto: list[dict], libro: list[dict]) -> dict:
     def anotar(m, c, regla):
         sug[m["id"]] = (c, regla)
         tomados.add(c["id_dc"])
+
+    # 0. El recibo de cuota sindical emitido desde el renglón (fisca_recibos.py).
+    por_ext: dict = {}
+    for c in libro:
+        if c.get("id_extracto_origen"):
+            por_ext.setdefault(c["id_extracto_origen"], []).append(c)
+    for m in pendientes():
+        cand = [c for c in por_ext.get(m["id"], ()) if c["id_dc"] not in tomados and abs(c["importe"] - m["importe"]) < TOL]
+        if len(cand) == 1:
+            anotar(m, cand[0], "recibo")
 
     # 1. El número de cheque: el banco debitó el cheque N y el libro emitió el cheque N.
     por_cheque: dict = {}

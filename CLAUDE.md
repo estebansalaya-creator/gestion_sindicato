@@ -38,6 +38,7 @@ gestion_sindicato/
   gestion_sindicato.py    blueprint `sindicato` — fiscalización de cuotas
   fisca_liquidacion.py    liquidación de cuota sindical por DDJJ de OSEDA, con los activos del empleador y el % con DDJJ
   fisca_lsd.py            la empresa presenta su Libro de Sueldos Digital por un enlace y la cuota se liquida con él
+  fisca_recibos.py        emisión de recibos de cuota sindical desde las acreditaciones del extracto bancario
   lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
@@ -96,6 +97,7 @@ gestion_sindicato/
   importar_aeda_fisca_deuda.py  las liquidaciones de cuota sindical de AEDA (fis_deuda); ídem
   importar_aeda_fondos.py     el libro de bancos y caja de AEDA (adm_movctas): instrumentos, gastos varios,
                               pases, depósitos, recaudación, órdenes de ingreso y valores; ídem, con control de saldos
+  importar_aeda_extractos.py  los extractos del Nación que AEDA cargó (adm_bna24) → c_extractos_bancarios; ídem
   contable_oseda.py       lectura en vivo (solo lectura) de las DDJJ de OSEDA en contable de Railway
   cruce_nomina_ddjj.py    qué empleadores tienen toda su nómina de AEDA en la DDJJ de OSEDA (planillas en logs/)
   cruce_atributo_aeda.py  si los titulares activos de AEDA tienen la marca «AEDA» en el padrón de OSEDA (logs/)
@@ -128,6 +130,8 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/liquidacion   liquidación de cuota sindical, ?periodo=AAAAMM; /generar POST (desde, hasta); /<id> ficha
 /fiscalizacion/lsd           presentaciones del LSD, ?periodo, ?estado; /subir POST; /<id> ficha; /<id>/confirmar,
                              /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
+/fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=);
+                             /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
                              /descartar POST, /planilla.xlsx)
 /login /logout /menu
@@ -499,6 +503,43 @@ el empleador completaba a mano («no era nada seguro»).
   empresa en la fila 3; renglones desde la 5), el que lee Importar Cuotas, más lo retenido y una observación.
 - **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo) y avisarle a la empresa los meses
   que no presentó.
+
+## Emisión de recibos de cuota sindical
+
+`fisca_recibos.py` (`sql/fisca_recibos_20261112.sql`, menú 8 «Emisión de Recibos» en Fiscalización de Cuotas,
+Administrador y Supervisor; test: `python tests/test_fisca_recibos.py`, sin base). Pedido del 12/11/2026: el recibo
+de cuota sindical sale de la acreditación del extracto bancario; se elige la cuenta del banco y cada acreditación se
+relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del banco: `importar_aeda_extractos.py`
+(lo que AEDA ya cargó en `adm_bna24`, desde el corte de la conciliación).
+
+- **El empleador** (`resolver_empleador`): el mismo CUIT del banco si está en Empleadores; si no, un CUIT
+  relacionado (`fisca_cuit_relacionado`: el estudio, el dueño, otra empresa del grupo; las 15 de AEDA
+  `afi_empresas_rel` vinieron con el script); si no, un afiliado con relación vigente con un solo empleador, **solo
+  como sugerencia** (las transferencias de $ 30.000 de CUIL son casi siempre la cuota de la persona). Un pagador
+  relacionado con varios empleadores: se elige al emitir. Al emitir con otro empleador se puede «Recordar» la
+  relación; también se cargan y se dan de baja abajo en la pantalla.
+- **El recibo** = orden de ingreso clase `cuota_sindical`, origen `extracto`, fecha de la acreditación, a la cuenta
+  del extracto; un renglón por período (motivo CUOTA SINDICAL) con `ingreso_ordenes_detalle.cuit` (columna nueva,
+  completada desde la descripción en lo ya cargado) e `id_extracto_origen`. La descripción repite el formato de AEDA
+  («CUOTA SINDICAL 2026-10 · RAZÓN (CUIT …)»). Número AAMM-######## de las órdenes de ingreso. PDF con el membrete
+  de `pagos_pdf._Doc` y el importe en letras (`en_letras`). Se anula en Tesorería → Anulaciones; anulado, la
+  acreditación queda otra vez sin recibo.
+- **Se concilia solo** si la cuenta tiene una conciliación abierta que incluye la fecha (como lo que genera la
+  conciliación). Si no, la conciliación lo sugiere primero de todo: regla «recibo» (el recibo emitido desde ese
+  renglón, por `id_extracto_origen`).
+- **Períodos** (`distribuir`): el mes anterior a la acreditación; si el importe es exactamente el saldo de un
+  período, ese; si no, el mes hasta su saldo, lo que sobra a la deuda más vieja y el resto al mes; si el mes no está
+  liquidado, entero ahí («pago sin liquidar»). Saldo = `fisca_liquidacion` vigente − lo cobrado por CUIT y período.
+  Se cambia al emitir de a uno.
+- **¿Ya tiene recibo?** (`emparejar`, mientras AEDA siga cobrando): emitido desde el renglón; el «comprobante N»
+  de los AEDA-RC = la referencia del banco, con el importe; CUIT (banco o empleador) + importe a 15 días; y como «¿ya
+  tiene?» (se puede emitir igual) lo único con esa fecha e importe de los dos lados (así caen los AEDA-OI de
+  fiscalización). Con los 56 créditos de la recaudadora del 02 al 05/11/2026: 42 ya tenían su AEDA-RC (los 42 que
+  AEDA cobró), 3 «¿ya tiene?» (AEDA-OI).
+- **Lote**: solo lo «sin recibo» con empleador seguro (mismo CUIT o relacionado), con los períodos que muestra la
+  grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).
+- **Pendiente**: aplicar los cobros a la cuenta corriente de empleadores e intereses por mora; mandar el recibo por
+  mail.
 
 ## Nómina del empleador y DDJJ de OSEDA
 
