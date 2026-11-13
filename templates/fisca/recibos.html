@@ -31,7 +31,7 @@
 </div>
 
 {{ ui.mensajes() }}
-{% if not cuentas %}{{ ui.aviso('No hay cuentas bancarias habilitadas: se cargan en Tesorería → Tablas → Cuentas de Fondos.', 'warning') }}{% endif %}
+{% if not cuentas and not falta_esquema %}{{ ui.aviso('No hay cuentas bancarias habilitadas: se cargan en Tesorería → Tablas → Cuentas de Fondos.', 'warning') }}{% endif %}
 {% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' acreditaciones en estas fechas: se muestran las primeras. Acotá el rango.', 'warning') }}{% endif %}
 
 {% if not falta_esquema %}

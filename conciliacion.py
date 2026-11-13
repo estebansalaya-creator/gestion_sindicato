@@ -277,7 +277,7 @@ def reglas_activas(cur) -> list[dict]:
                      LEFT JOIN c_motivos_de_ingreso mi ON mi.id = r.id_motivo_ingreso
                      LEFT JOIN c_cuentas_de_fondos cd ON cd.id = r.id_cuenta_destino
                     WHERE r.activa = 1""")
-    reglas = cur.fetchall()
+    reglas = list(cur.fetchall())   # sin filas PyMySQL devuelve una tupla vacía, sin .sort
     reglas.sort(key=lambda r: (r["orden"] or 0, -len(r["patron_texto"] or ""), r["id"]))
     for r in reglas:
         r["clasif_txt"] = texto_regla(r)
