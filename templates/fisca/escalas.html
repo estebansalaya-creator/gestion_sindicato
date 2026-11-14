@@ -45,7 +45,7 @@
         {% for v in vigs %}
         <tr data-origen="{{ v.origen }}" class="{{ 'fila-actual' if sel and v.periodo_desde == sel.periodo_desde }}">
           <td><div class="acciones">
-            {{ ui.accion('ver', href=url_for('fisca_esc.lista', ver=v.periodo_desde)) }}
+            {{ ui.accion('ver', href=url_for('fisca_esc.lista', ver=v.periodo_desde) ~ '#escala', titulo='Ver la escala') }}
             {% if v.origen == 'manual' %}
             {{ ui.accion('editar', href=url_for('fisca_esc.editar', desde=v.periodo_desde)) }}
             {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'desde': v.periodo_desde, 'texto': v.periodo_desde | periodo}) }}
@@ -69,7 +69,7 @@
 </div>
 
 {% if sel %}
-<div class="card">
+<div class="card" id="escala">
   {{ ui.card_head('Escala desde ' ~ (sel.periodo_desde | periodo),
                   nota=('vigente' if sel.abierta else 'hasta ' ~ (sel.periodo_hasta | periodo)) ~ ' · ' ~ origenes[sel.origen][0]) }}
   <div class="card-body">
@@ -143,6 +143,9 @@ document.addEventListener('DOMContentLoaded', function () {
   gestion_admTable('tbl-vigencias', { pageSize: 20, filtroExtra: function (tr) {
     return !fo.value || tr.dataset.origen === fo.value; } });
   if (document.getElementById('tbl-escala')) gestion_admTable('tbl-escala', { pageSize: 50 });
+  // Con ?ver= se baja a la escala elegida: está debajo de las vigencias y no se veía.
+  var esc = document.getElementById('escala');
+  if (esc && /[?&]ver=/.test(location.search)) esc.scrollIntoView({ behavior: 'smooth', block: 'start' });
 });
 </script>
 {% endblock %}
