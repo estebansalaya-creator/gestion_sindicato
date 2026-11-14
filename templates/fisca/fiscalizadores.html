@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Fiscalizadores{% endblock %}
+
+{#
+  ABM de fiscalizadores (fisca_acta.fiscalizadores): los que labran las actas
+  de fiscalización. Uno que figura en un acta no se elimina: se desactiva y
+  deja de ofrecerse. El acta guarda el nombre y el DNI como se imprimieron:
+  corregir la ficha no cambia un acta ya labrada.
+#}
+{% set r = registro or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Fiscalizadores</h1>
+    <p>Quienes labran las actas de fiscalización de cuota sindical.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/fiscalizacion/actas') %}{{ ui.boton('Actas', 'secondary', href=url_for('fisca_acta.actas')) }}{% endif %}
+    {% if registro %}{{ ui.boton('Nuevo', href=url_for('fisca_acta.fiscalizadores', nuevo=1), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar' if r.get('id') else 'Nuevo', None)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Filtrar por nombre, DNI o cargo…', 50) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="1" selected>Activos</option>
+        <option value="0">Inactivos</option>
+        <option value="">Todos</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-fiscalizadores" data-exportar="Fiscalizadores">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th data-orden="asc">Apellido y nombres</th><th>DNI</th><th>Cargo</th><th>Teléfono</th><th>Correo</th>
+          <th>Usuario</th><th class="th-right" data-tipo="n">Actas</th><th class="th-center">Última</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for f in filas %}
+          <tr class="{{ 'fila-baja' if not f.activo }}" data-activo="{{ f.activo }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('fisca_acta.fiscalizadores', edit=f.id)) }}
+              {% if not f.actas %}
+                {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'id': f.id, 'nombre': f.apellido_nombres}) }}
+              {% elif f.activo %}
+                {{ ui.accion('baja', titulo='Desactivar: figura en actas, así que no se elimina', onclick='enviar(this)',
+                             datos={'id': f.id, 'accion': 'baja'}) }}
+              {% endif %}
+              {% if not f.activo %}
+                {{ ui.accion('reactivar', onclick='enviar(this)', datos={'id': f.id, 'accion': 'reactivar'}) }}
+              {% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ f.apellido_nombres }}</td>
+            <td class="td-mono">{{ f.dni or '—' }}</td>
+            <td>{{ f.cargo or '—' }}</td>
+            <td>{{ f.telefono or '—' }}</td>
+            <td>{{ f.email or '—' }}</td>
+            <td class="chico">{{ f.usuario or '—' }}</td>
+            <td class="td-right {{ 'td-muted' if not f.actas }}" data-num="{{ f.actas }}">{{ f.actas }}{% if f.abiertas %} <span class="chico muted">({{ f.abiertas }} abierta{{ 's' if f.abiertas != 1 }})</span>{% endif %}</td>
+            <td class="td-center" data-num="{{ f.ultima.toordinal() if f.ultima else 0 }}">{{ f.ultima.strftime('%d/%m/%Y') if f.ultima else '—' }}</td>
+            <td>{{ ui.estado('Activo', 'ok') if f.activo else ui.estado('Inactivo', 'neutro') }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">Todavía no hay fiscalizadores: agregá el primero.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head(('Editar fiscalizador' if r.get('id') else 'Nuevo fiscalizador')) %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('fisca_acta.fiscalizadores'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('fisca_acta.fiscalizadores') }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:6;"><label for="apellido_nombres">Apellido y nombres <span class="req">*</span></label>
+            <input type="text" name="apellido_nombres" id="apellido_nombres" required maxlength="150" value="{{ r.get('apellido_nombres') or '' }}"
+                   placeholder="PEREZ JUAN CARLOS"></div>
+          <div class="campo" style="--span:2;"><label for="dni">DNI</label>
+            <input type="text" name="dni" id="dni" maxlength="20" inputmode="numeric" value="{{ r.get('dni') or '' }}"></div>
+          <div class="campo" style="--span:4;"><label for="cargo">Cargo</label>
+            <input type="text" name="cargo" id="cargo" maxlength="100" value="{{ r.get('cargo') or '' }}" placeholder="Inspector de fiscalización"></div>
+          <div class="campo" style="--span:3;"><label for="telefono">Teléfono</label>
+            <input type="text" name="telefono" id="telefono" maxlength="50" value="{{ r.get('telefono') or '' }}"></div>
+          <div class="campo" style="--span:4;"><label for="email">Correo</label>
+            <input type="email" name="email" id="email" maxlength="150" value="{{ r.get('email') or '' }}"></div>
+          <div class="campo" style="--span:5;"><label for="id_usuario">Usuario del sistema</label>
+            <select name="id_usuario" id="id_usuario">
+              <option value="">— Sin usuario —</option>
+              {% for u in usuarios %}<option value="{{ u.id }}" {{ 'selected' if r.get('id_usuario') == u.id }}>{{ u.nombre }} · {{ u.email }}</option>{% endfor %}
+            </select>
+            <small class="campo-ayuda">Opcional: si también entra al sistema.</small></div>
+          <div class="campo" style="--span:10;"><label for="observaciones">Observaciones</label>
+            <input type="text" name="observaciones" id="observaciones" maxlength="500" value="{{ r.get('observaciones') or '' }}"></div>
+          <div class="campo" style="--span:2;"><label>&nbsp;</label>
+            <label class="campo-check"><input type="checkbox" name="activo" value="1" {{ 'checked' if r.get('activo') }}> Activo</label></div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {{ ui.boton('Guardar cambios' if r.get('id') else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Eliminar al fiscalizador?</div>
+    <div class="modal-texto" id="modal-nombre"></div>
+    <form method="post" action="{{ url_for('fisca_acta.fiscalizadores') }}" class="modal-acciones">
+      <input type="hidden" name="accion" value="borrar">
+      <input type="hidden" name="id" id="modal-id">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+      {{ ui.boton('Eliminar', 'danger', icono_='borrar', submit=True) }}
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('fisca_acta.fiscalizadores') }}" id="form-accion" class="oculto">
+  <input type="hidden" name="accion" id="fa-accion"><input type="hidden" name="id" id="fa-id">
+</form>
+
+<script>
+function confirmarBorrar(b) {
+  document.getElementById('modal-id').value = b.dataset.id;
+  document.getElementById('modal-nombre').textContent = b.dataset.nombre;
+  abrirModal('modal-borrar');
+}
+function enviar(b) {
+  document.getElementById('fa-accion').value = b.dataset.accion;
+  document.getElementById('fa-id').value = b.dataset.id;
+  document.getElementById('form-accion').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado');
+  gestion_admTable('tbl-fiscalizadores', { pageSize: 50, filtroExtra: function (tr) {
+    return !fe.value || tr.dataset.activo === fe.value;
+  } });
+});
+</script>
+{% endblock %}

@@ -39,7 +39,7 @@ gestion_sindicato/
   fisca_liquidacion.py    liquidación de cuota sindical por DDJJ de OSEDA, con los activos del empleador y el % con DDJJ
   fisca_lsd.py            la empresa presenta su Libro de Sueldos Digital por un enlace y la cuota se liquida con él
   fisca_recibos.py        emisión de recibos de cuota sindical desde las acreditaciones del extracto bancario
-  fisca_actas.py          actas de fiscalización (deuda + intereses resarcitorios ARCA) y acuerdos de pago
+  fisca_actas.py          actas de fiscalización (deuda + intereses resarcitorios ARCA), acuerdos de pago y fiscalizadores
   fisca_intereses.py      vencimiento del F.931 por terminación de CUIT e interés resarcitorio de ARCA por tramos
   importar_arca_tablas.py vencimientos F.931, tasas y feriados de ARCA desde contable (solo lectura); --aplicar graba
   fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
@@ -143,6 +143,7 @@ repetiría en la URL lo que dice el dominio.
                              &con_pagos_tarde: recalcula sin guardar); /guardar POST; /<id> ficha; /<id>/cerrar,
                              /<id>/anular POST; /<id>/pdf; /<id>/acuerdo (?id=), /<id>/acuerdo/guardar POST
 /fiscalizacion/acuerdos      acuerdos: ?estado; /<id>/estado POST (anular, cancelar, judicializar); /<id>/pdf
+/fiscalizacion/fiscalizadores  ABM, ?edit=ID, ?nuevo=1; POST accion=guardar|borrar|baja|reactivar
 /fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=);
                              /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
 /fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
@@ -508,7 +509,11 @@ corriente de acá.
   vencimiento a su fecha (`fisca_acta_pago`). Se graba el detalle: el acta dice lo que se calculó ese día.
 - **Estados**: abierta (una por CUIT; se corrige y «Guardar y recalcular» la rehace), cerrada (la deuda queda firme;
   habilita el acuerdo), anulada (con motivo; no con un acuerdo vigente; sus períodos se pueden volver a reclamar).
-  Número `ACTA-AAAA-NNNNNN` y `AP-AAAA-NNNNNN` (`c_numeradores`). El inspector es texto (con los ya usados para elegir).
+  Número `ACTA-AAAA-NNNNNN` y `AP-AAAA-NNNNNN` (`c_numeradores`).
+- **Fiscalizadores** (`fisca_fiscalizador`, `sql/fisca_fiscalizadores_20261114.sql`, menú 16, pedido del 14/11/2026; el
+  `f_inspectores` de gestion_adm): apellido y nombres, DNI (único), cargo, teléfono, correo, usuario del sistema
+  opcional. El acta se labra con uno activo: guarda `id_fiscalizador` y, como se imprimió, `inspector` e
+  `inspector_dni` (corregir la ficha no cambia un acta labrada). Uno que figura en actas no se elimina: se desactiva.
 - **Acuerdo** (sobre un acta cerrada, uno vigente): la deuda es el total del acta; el interés de financiación se escribe
   a mano (decidido el 14/11/2026) y el cronograma se propone en cuotas iguales, editables. El total financiado es la
   suma de las cuotas y el interés lo que supera a la deuda; si no la cubre, no se graba. Estados: vigente, cancelado

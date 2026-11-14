@@ -75,12 +75,16 @@
           <input type="date" name="fecha_acta" id="fecha_acta" required value="{{ a.fecha_acta.isoformat() if a.fecha_acta else '' }}"></div>
         <div class="campo" style="--span:2;"><label for="hora_acta">Hora</label>
           <input type="time" name="hora_acta" id="hora_acta" value="{{ a.hora_acta or '' }}"></div>
-        <div class="campo" style="--span:5;"><label for="inspector">Inspector <span class="req">*</span></label>
-          <input type="text" name="inspector" id="inspector" maxlength="150" list="lista-inspectores" value="{{ a.inspector or '' }}" autocomplete="off"></div>
-        <div class="campo" style="--span:2;"><label for="inspector_dni">DNI del inspector</label>
-          <input type="text" name="inspector_dni" id="inspector_dni" maxlength="20" value="{{ a.inspector_dni or '' }}"></div>
+        <div class="campo" style="--span:7;"><label for="id_fiscalizador">Fiscalizador <span class="req">*</span></label>
+          <select name="id_fiscalizador" id="id_fiscalizador" required>
+            <option value="">— Elegí el fiscalizador —</option>
+            {% for f in fiscalizadores %}<option value="{{ f.id }}" {{ 'selected' if a.id_fiscalizador == f.id }}>{{ f.apellido_nombres }}{% if f.dni %} · DNI {{ f.dni }}{% endif %}{% if f.cargo %} · {{ f.cargo }}{% endif %}{% if not f.activo %} (inactivo){% endif %}</option>{% endfor %}
+          </select>
+          {% if a.id and a.inspector %}<small class="campo-ayuda">En el acta: {{ a.inspector }}{% if a.inspector_dni %} · DNI {{ a.inspector_dni }}{% endif %}.</small>
+          {% elif not fiscalizadores %}<small class="campo-ayuda error">No hay fiscalizadores activos{% if puede_fiscalizadores %}: <a href="{{ url_for('fisca_acta.fiscalizadores', nuevo=1) }}">cargá uno</a>{% endif %}.</small>
+          {% elif puede_fiscalizadores and editable %}<small class="campo-ayuda"><a href="{{ url_for('fisca_acta.fiscalizadores') }}">Fiscalizadores</a></small>{% endif %}
+        </div>
       </div>
-      <datalist id="lista-inspectores">{% for i in inspectores %}<option value="{{ i.inspector }}" data-dni="{{ i.dni or '' }}">{% endfor %}</datalist>
     </div>
 
     <div class="bloque">
@@ -267,12 +271,6 @@
 document.addEventListener('DOMContentLoaded', function () {
   if (document.getElementById('tbl-periodos')) gestion_admTable('tbl-periodos', { pageSize: 50 });
   if (document.getElementById('tbl-pagos')) gestion_admTable('tbl-pagos', { pageSize: 50 });
-  // Elegido un inspector de la lista, su DNI.
-  var insp = document.getElementById('inspector'), dni = document.getElementById('inspector_dni');
-  if (insp) insp.addEventListener('change', function () {
-    var o = Array.from(document.querySelectorAll('#lista-inspectores option')).find(function (x) { return x.value === insp.value; });
-    if (o && o.dataset.dni && !dni.value) dni.value = o.dataset.dni;
-  });
 });
 </script>
 {% endblock %}

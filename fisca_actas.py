@@ -13,6 +13,7 @@ fisca_actas.py — Actas de fiscalización y acuerdos de pago de cuota sindical.
     /fiscalizacion/actas/<id>/acuerdo/guardar   POST
     /fiscalizacion/acuerdos/<id>/estado      POST: anular, cancelar o judicializar, con motivo
     /fiscalizacion/acuerdos/<id>/pdf
+    /fiscalizacion/fiscalizadores            ABM (menú 16): ?edit=ID, ?nuevo=1; POST guardar, borrar, baja, reactivar
 
 Portado de gestion_adm (fiscalizacion_routes.acta_* y acuerdo_*), sobre la
 cuenta corriente de empleadores de acá (fisca_aplicaciones.py).
@@ -27,6 +28,12 @@ QUÉ RECLAMA EL ACTA (`calcular`)
   Entra el período con saldo o con interés de pagos tarde. El vencimiento es el
   de la liquidación: el del F.931 del CUIT (fisca_intereses.py). El interés es
   simple, con la tasa de arca_intereses vigente cada día.
+
+FISCALIZADORES (`fisca_fiscalizador`, sql/fisca_fiscalizadores_20261114.sql)
+  El acta se labra con uno del catálogo (activo). Guarda el id y, además, el
+  nombre y el DNI como quedaron impresos (`inspector`, `inspector_dni`): corregir
+  la ficha después no cambia un acta ya labrada. Uno que figura en un acta no se
+  elimina: se desactiva.
 
 ESTADOS
   abierta   se edita y se recalcula (un acta abierta por CUIT, como gestion_adm)
@@ -65,7 +72,9 @@ fisca_acta_bp = Blueprint("fisca_acta", __name__, url_prefix="/fiscalizacion")
 
 URL_ACTAS = "/fiscalizacion/actas"
 URL_ACUERDOS = "/fiscalizacion/acuerdos"
+URL_FISCALIZADORES = "/fiscalizacion/fiscalizadores"
 SQL_ESQUEMA = "sql/fisca_actas_20261114.sql"
+SQL_FISCALIZADORES = "sql/fisca_fiscalizadores_20261114.sql"
 CENT = Decimal("0.01")
 ESTADOS_ACTA = {"abierta": ("Abierta", "warn"), "cerrada": ("Cerrada", "ok"), "anulada": ("Anulada", "danger")}
 ESTADOS_ACUERDO = {"vigente": ("Vigente", "ok"), "anulado": ("Anulado", "danger"), "cancelado": ("Cancelado", "info"),
@@ -136,11 +145,16 @@ def falta_esquema(cur) -> bool:
     cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()
                     AND table_name IN ('fisca_acta', 'fisca_acta_periodo', 'fisca_acta_pago', 'fisca_acuerdo',
                                        'fisca_acuerdo_cuota', 'arca_intereses')""")
-    return cur.fetchone()["n"] < 6 or fa.falta_esquema(cur)
+    if cur.fetchone()["n"] < 6 or fa.falta_esquema(cur):
+        return True
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE()
+                    AND table_name = 'fisca_acta' AND column_name = 'id_fiscalizador'""")
+    return not cur.fetchone()["n"]
 
 
 def _aviso_esquema():
-    flash(f"!Falta correr {SQL_ESQUEMA} (y sql/fisca_aplicaciones_20261114.sql) en la base, desde DBeaver como root.")
+    flash(f"!Faltan correr en la base, desde DBeaver como root: sql/fisca_aplicaciones_20261114.sql, {SQL_ESQUEMA} "
+          f"y {SQL_FISCALIZADORES} (los que no se hayan corrido).")
 
 
 def numero(cur, prefijo: str, ambito: str, fecha: datetime.date) -> str:
@@ -355,22 +369,25 @@ def _vista_nueva(cur, cuit: str, args) -> dict:
          "fecha_acta": hoy, "hora_acta": datetime.datetime.now().strftime("%H:%M"), "fecha_calculo": fecha_calc,
          "periodo_desde": periodo_de(args.get("periodo_desde") or args.get("desde")),
          "periodo_hasta": periodo_de(args.get("periodo_hasta") or args.get("hasta")),
-         "con_pagos_tarde": 1 if con_pagos else 0, "inspector": "", "inspector_dni": "", "representante": "",
+         "con_pagos_tarde": 1 if con_pagos else 0, "id_fiscalizador": None, "inspector": "", "inspector_dni": "",
+         "representante": "",
          "representante_dni": "", "representante_cargo": "",
          "fecha_pago": hoy + datetime.timedelta(days=int(par["plazo"])) if par["plazo"] else None,
          "lugar_pago": par["lugar"], "observaciones": "", "acuerdos": [], "acuerdo_vigente": None}
     return a
 
 
-def _inspectores(cur) -> list[dict]:
-    cur.execute("""SELECT inspector, MAX(inspector_dni) AS dni FROM fisca_acta
-                    WHERE inspector IS NOT NULL AND inspector <> '' GROUP BY inspector ORDER BY inspector""")
+def fiscalizadores_para(cur, actual: int | None = None) -> list[dict]:
+    """Los activos, más el del acta aunque ya no lo esté (si no, el select lo perdería)."""
+    cur.execute("""SELECT id, apellido_nombres, dni, cargo, activo FROM fisca_fiscalizador
+                    WHERE activo = 1 OR id = %s ORDER BY apellido_nombres""", (actual or 0,))
     return list(cur.fetchall())
 
 
 def _render_acta(cur, a: dict, calc: dict | None, error: str | None = None):
     return render_template("fisca/acta.html", a=a, calc=calc, error=error, estados=ESTADOS_ACTA,
-                           estados_acuerdo=ESTADOS_ACUERDO, inspectores=_inspectores(cur),
+                           estados_acuerdo=ESTADOS_ACUERDO, fiscalizadores=fiscalizadores_para(cur, a.get("id_fiscalizador")),
+                           puede_fiscalizadores=puede(URL_FISCALIZADORES),
                            editable=a["estado"] == "abierta", puede_acuerdo=puede(URL_ACUERDOS),
                            puede_cc=puede("/empleadores/cc"))
 
@@ -429,7 +446,7 @@ def _datos_form(form) -> dict:
     t = lambda k, n: (form.get(k) or "").strip()[:n] or None          # noqa: E731
     return {"domicilio": t("domicilio", 300), "actividad": t("actividad", 200), "telefono": t("telefono", 100),
             "email": t("email", 150), "fecha_acta": _fecha(form.get("fecha_acta")), "hora_acta": t("hora_acta", 5),
-            "inspector": t("inspector", 150), "inspector_dni": t("inspector_dni", 20),
+            "id_fiscalizador": form.get("id_fiscalizador", type=int),
             "representante": t("representante", 200), "representante_dni": t("representante_dni", 20),
             "representante_cargo": t("representante_cargo", 100), "fecha_pago": _fecha(form.get("fecha_pago")),
             "lugar_pago": t("lugar_pago", 300), "observaciones": t("observaciones", 1000)}
@@ -458,8 +475,8 @@ def acta_guardar():
         errores.append("La fecha de cálculo está a más de un año.")
     if desde and hasta and desde > hasta:
         errores.append("El período desde es posterior al período hasta.")
-    if not datos["inspector"]:
-        errores.append("Falta el inspector.")
+    if not datos["id_fiscalizador"]:
+        errores.append("Elegí el fiscalizador.")
     volver = (url_for("fisca_acta.acta", id_acta=id_acta) if id_acta
               else url_for("fisca_acta.acta_nueva", cuit=cuit, fecha_calculo=f.get("fecha_calculo"),
                            desde=desde, hasta=hasta, con_pagos_tarde="1" if con_pagos else "0"))
@@ -477,7 +494,13 @@ def acta_guardar():
                     if a["estado"] != "abierta":
                         raise ErrorActa("El acta ya no está abierta: no se modifica.")
                     cuit = a["cuit"]
-                else:
+                cur.execute("SELECT id, apellido_nombres, dni, activo FROM fisca_fiscalizador WHERE id = %s",
+                            (datos["id_fiscalizador"],))
+                fz = cur.fetchone()
+                if not fz or (not fz["activo"] and not (id_acta and a["id_fiscalizador"] == fz["id"])):
+                    raise ErrorActa("Ese fiscalizador no existe o está inactivo.")
+                datos.update(inspector=fz["apellido_nombres"][:150], inspector_dni=fz["dni"])
+                if not id_acta:
                     cur.execute("SELECT id FROM fisca_acta WHERE cuit = %s AND estado = 'abierta' FOR UPDATE", (cuit,))
                     ya = cur.fetchone()
                     if ya:                                   # el mismo formulario mandado dos veces
@@ -526,7 +549,7 @@ def acta_cerrar(id_acta):
                 if not a["periodos"]:
                     raise ErrorActa("El acta no tiene períodos.")
                 if not a["inspector"]:
-                    raise ErrorActa("Falta el inspector.")
+                    raise ErrorActa("Falta el fiscalizador.")
                 cur.execute("""UPDATE fisca_acta SET estado = 'cerrada', cerrado = NOW(), id_usuario_cierre = %s
                                 WHERE id = %s AND estado = 'abierta'""", (_uid(), id_acta))
             conn.commit()
@@ -589,7 +612,7 @@ def _pdf_acta(a: dict, tasas: list):
     doc = P._Doc("Acta de fiscalización", a["nro_acta"], "BORRADOR — acta abierta" if a["estado"] == "abierta" else None)
     doc.datos("1. IDENTIFICACIÓN", [
         ("Acta N°", escape(a["nro_acta"])), ("Fecha y hora", P._fecha(a["fecha_acta"]) + (f" · {a['hora_acta']} h" if a["hora_acta"] else "")),
-        ("Inspector", escape(a["inspector"] or "") + (f" · DNI {escape(a['inspector_dni'])}" if a["inspector_dni"] else ""))])
+        ("Fiscalizador", escape(a["inspector"] or "") + (f" · DNI {escape(a['inspector_dni'])}" if a["inspector_dni"] else ""))])
     doc.datos("2. EMPLEADOR", [
         ("Razón social", escape(a["razon_social"] or "")), ("CUIT", P._cuit(a["cuit"])), ("Domicilio", escape(a["domicilio"] or "")),
         ("Actividad", escape(a["actividad"] or "")), ("Teléfono", escape(a["telefono"] or "")), ("Correo", escape(a["email"] or "")),
@@ -631,7 +654,7 @@ def _pdf_acta(a: dict, tasas: list):
     if a["observaciones"]:
         doc.datos("OBSERVACIONES", [("", escape(a["observaciones"]))])
     doc.story.append(Spacer(1, 2.2 * cm))
-    f = Table([["", "", ""], [doc.P("Firma del inspector", alignment=1), "", doc.P("Firma y aclaración por el empleador", alignment=1)]],
+    f = Table([["", "", ""], [doc.P("Firma del fiscalizador", alignment=1), "", doc.P("Firma y aclaración por el empleador", alignment=1)]],
               colWidths=[6.5 * cm, 3 * cm, 6.5 * cm], rowHeights=[1.2 * cm, None])
     f.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, doc.MUTED), ("LINEABOVE", (2, 1), (2, 1), 0.6, doc.MUTED)]))
     doc.story.append(f)
@@ -883,3 +906,106 @@ def acuerdo_pdf(id_acuerdo):
     f.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, doc.MUTED), ("LINEABOVE", (2, 1), (2, 1), 0.6, doc.MUTED)]))
     doc.story.append(f)
     return P.respuesta(doc.pdf(f"Acuerdo {x['nro_acuerdo']}"), f"Acuerdo {x['nro_acuerdo']} CUIT {x['cuit']}.pdf")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Fiscalizadores
+# ─────────────────────────────────────────────────────────────────────────────
+
+CAMPOS_FISCALIZADOR = {"apellido_nombres": 150, "dni": 20, "cargo": 100, "telefono": 50, "email": 150,
+                       "observaciones": 500}
+
+
+def _fiscalizador_form(cur, form, id_fz) -> tuple[dict, list[str]]:
+    v = {k: (form.get(k) or "").strip()[:n] or None for k, n in CAMPOS_FISCALIZADOR.items()}
+    errores = []
+    if v["apellido_nombres"]:
+        v["apellido_nombres"] = v["apellido_nombres"].upper()
+    else:
+        errores.append("Falta el apellido y nombre.")
+    if v["dni"]:
+        v["dni"] = re.sub(r"\D", "", v["dni"]) or None
+        if v["dni"] and not 6 <= len(v["dni"]) <= 9:
+            errores.append("El DNI tiene que tener entre 6 y 9 dígitos.")
+        elif v["dni"]:
+            cur.execute("SELECT apellido_nombres FROM fisca_fiscalizador WHERE dni = %s AND id <> %s", (v["dni"], id_fz or 0))
+            otro = cur.fetchone()
+            if otro:
+                errores.append(f"El DNI {v['dni']} ya es de {otro['apellido_nombres']}.")
+    if v["email"] and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", v["email"]):
+        errores.append("El correo no es válido.")
+    v["id_usuario"] = form.get("id_usuario", type=int) or None
+    v["activo"] = 1 if form.get("activo") == "1" else 0
+    return v, errores
+
+
+@fisca_acta_bp.route("/fiscalizadores", methods=["GET", "POST"])
+def fiscalizadores():
+    salida = _guardia(URL_FISCALIZADORES)
+    if salida:
+        return salida
+    errores, registro = [], None
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
+                            WHERE table_schema = DATABASE() AND table_name = 'fisca_fiscalizador'""")
+            if not cur.fetchone()["n"] or falta_esquema(cur):
+                _aviso_esquema()
+                return render_template("fisca/fiscalizadores.html", filas=[], registro=None, usuarios=[],
+                                       errores=[], abrir_ficha=False)
+            if request.method == "POST":
+                accion = request.form.get("accion")
+                id_fz = request.form.get("id", type=int)
+                try:
+                    if accion == "guardar":
+                        v, errores = _fiscalizador_form(cur, request.form, id_fz)
+                        if not errores:
+                            if id_fz:
+                                cur.execute(f"UPDATE fisca_fiscalizador SET {', '.join(k + ' = %s' for k in v)} WHERE id = %s",
+                                            list(v.values()) + [id_fz])
+                                flash(f"Fiscalizador {v['apellido_nombres']} actualizado. Las actas ya labradas conservan "
+                                      "el nombre y el DNI con que se imprimieron.")
+                            else:
+                                cur.execute(f"INSERT INTO fisca_fiscalizador ({', '.join(v)}) VALUES ({', '.join(['%s'] * len(v))})",
+                                            list(v.values()))
+                                flash(f"Fiscalizador {v['apellido_nombres']} agregado.")
+                            conn.commit()
+                            return redirect(url_for("fisca_acta.fiscalizadores"))
+                        registro = {**v, "id": id_fz}
+                    elif accion in ("baja", "reactivar"):
+                        cur.execute("UPDATE fisca_fiscalizador SET activo = %s WHERE id = %s",
+                                    (1 if accion == "reactivar" else 0, id_fz))
+                        conn.commit()
+                        flash("Fiscalizador " + ("reactivado." if accion == "reactivar" else "desactivado: deja de ofrecerse en las actas."))
+                        return redirect(url_for("fisca_acta.fiscalizadores"))
+                    elif accion == "borrar":
+                        cur.execute("SELECT COUNT(*) AS n FROM fisca_acta WHERE id_fiscalizador = %s", (id_fz,))
+                        if cur.fetchone()["n"]:
+                            flash("!Figura en actas: no se elimina, se desactiva.")
+                        else:
+                            cur.execute("DELETE FROM fisca_fiscalizador WHERE id = %s", (id_fz,))
+                            conn.commit()
+                            flash("Fiscalizador eliminado.")
+                        return redirect(url_for("fisca_acta.fiscalizadores"))
+                except Exception:
+                    conn.rollback()
+                    raise
+            cur.execute("""SELECT f.*, u.nombre AS usuario,
+                                  (SELECT COUNT(*) FROM fisca_acta a WHERE a.id_fiscalizador = f.id) AS actas,
+                                  (SELECT COUNT(*) FROM fisca_acta a WHERE a.id_fiscalizador = f.id AND a.estado = 'abierta') AS abiertas,
+                                  (SELECT MAX(a.fecha_acta) FROM fisca_acta a WHERE a.id_fiscalizador = f.id) AS ultima
+                             FROM fisca_fiscalizador f LEFT JOIN s_usuarios u ON u.id = f.id_usuario
+                            ORDER BY f.apellido_nombres""")
+            filas = list(cur.fetchall())
+            if registro is None:
+                if request.args.get("edit", type=int):
+                    registro = next((f for f in filas if f["id"] == request.args.get("edit", type=int)), None)
+                    if not registro:
+                        flash("!No existe ese fiscalizador.")
+                elif request.args.get("nuevo"):
+                    registro = {"activo": 1}
+            cur.execute("SELECT id, nombre, email FROM s_usuarios WHERE activo = 1 OR id = %s ORDER BY nombre",
+                        ((registro or {}).get("id_usuario") or 0,))
+            usuarios = list(cur.fetchall())
+    return render_template("fisca/fiscalizadores.html", filas=filas, registro=registro, usuarios=usuarios,
+                           errores=errores, abrir_ficha=registro is not None)
