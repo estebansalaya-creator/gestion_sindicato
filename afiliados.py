@@ -409,7 +409,8 @@ def _relaciones(cur, cuil) -> list[dict]:
     # empresa que todavía no estaba en el padrón), por CUIT.
     cur.execute("""
         SELECT r.id_relacion, r.cuit_empleador, r.fecha_inicio, r.fecha_fin, r.categoria,
-               r.estado, r.observaciones,
+               r.estado, r.observaciones, r.fecha_antiguedad, r.antiguedad_origen,
+               r.antiguedad_al_menos, r.antiguedad_nota,
                COALESCE(e1.razon_social, e2.razon_social) AS razon_social,
                COALESCE(e1.id, e2.id) AS id_empresa
           FROM p_relaciones_laborales r
@@ -683,6 +684,13 @@ def empleadores(id_af):
                         cur.execute(f"UPDATE p_relaciones_laborales SET "
                                     f"{', '.join(c + ' = %s' for c in cols)} WHERE id_relacion = %s",
                                     [r[c] for c in cols] + [id_rel])
+                        if antes["fecha_inicio"] != r["fecha_inicio"]:
+                            # La fecha cargada a mano manda sobre la calculada
+                            # por antiguedad_ddjj.py (sql/antiguedad_20261114.sql).
+                            cur.execute("""UPDATE p_relaciones_laborales
+                                              SET fecha_antiguedad = NULL, antiguedad_origen = NULL,
+                                                  antiguedad_al_menos = 0, antiguedad_nota = NULL
+                                            WHERE id_relacion = %s""", (id_rel,))
                         flash("Relación laboral actualizada.")
                     else:
                         cur.execute(f"INSERT INTO p_relaciones_laborales (cuil, {', '.join(cols)}) "

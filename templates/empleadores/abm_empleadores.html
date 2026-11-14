@@ -274,7 +274,8 @@
             <td class="td-right">{{ n.fecha_inicio.strftime('%d/%m/%Y') if n.fecha_inicio else '—' }}</td>
             <td class="td-right"{% if n.baja_del_afiliado %} title="La relación no tiene fecha de egreso: es la fecha de baja del afiliado"{% endif %}>
               {{ n.fecha_baja.strftime('%d/%m/%Y') if n.fecha_baja else '—' }}{% if n.baja_del_afiliado %} *{% endif %}</td>
-            <td class="td-right">{{ n.antiguedad if n.antiguedad is not none else '—' }}</td>
+            <td class="td-right"{% if n.fecha_antiguedad %} title="Desde {{ n.fecha_antiguedad.strftime('%d/%m/%Y') }} ({{ {'padron': 'ingreso del padrón', 'ddjj': 'DDJJ de OSEDA', 'empresa': 'informada por el empleador'}[n.antiguedad_origen] }}){% if n.antiguedad_nota %}: {{ n.antiguedad_nota }}{% endif %}"{% endif %}>
+              {%- if n.antiguedad is none %}—{% else %}{% if n.antiguedad_al_menos %}≥ {% endif %}{{ n.antiguedad }}{% if n.antiguedad_origen == 'ddjj' %} ¹{% endif %}{% endif -%}</td>
             <td class="td-center td-mono">{{ n.ultimo_periodo | periodo if n.ultimo_periodo else '—' }}</td>
             <td class="td-right">{{ (n.rem5_ultimo | miles) if n.rem5_ultimo is not none else '—' }}</td>
           </tr>
@@ -285,7 +286,8 @@
       </table>
     </div>
     {{ ui.paginacion() }}
-    <p class="td-muted" style="margin-top:8px;">* Sin fecha de egreso en la relación: se muestra la fecha de baja del afiliado. La antigüedad de un activo se cuenta hasta hoy.</p>
+    <p class="td-muted" style="margin-top:8px;">* Sin fecha de egreso en la relación: se muestra la fecha de baja del afiliado. La antigüedad de un activo se cuenta hasta hoy.<br>
+      ¹ Contada desde la DDJJ de OSEDA de este empleador, que empieza antes que el ingreso del padrón (o el padrón no lo tiene). ≥ La DDJJ empieza en 1996-07, el primer período que hay: puede ser mayor.</p>
   </div>
 </div>
 {% endif %}

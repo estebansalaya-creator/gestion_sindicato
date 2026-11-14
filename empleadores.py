@@ -109,11 +109,15 @@ def _nomina(cur, empleador: dict) -> tuple[list[dict], str | None]:
     La DDJJ se consulta en vivo en `contable` de Railway (contable_oseda.py,
     conexión de solo lectura) y se cruza acá por CUIL. Si Railway no está
     disponible la nómina se muestra igual, sin DDJJ, y `aviso` dice por qué.
+    La antigüedad se cuenta desde `fecha_antiguedad` si la hay (ver
+    antiguedad_ddjj.py), si no desde `fecha_inicio`.
+
     Devuelve (filas, aviso).
     """
     hoy = date.today()
     cur.execute("""
         SELECT r.id_relacion, r.cuil, r.fecha_inicio, r.fecha_fin, r.estado,
+               r.fecha_antiguedad, r.antiguedad_origen, r.antiguedad_al_menos, r.antiguedad_nota,
                a.id_afiliado, a.apellido_nombres, a.fecha_baja AS afiliado_baja
           FROM p_relaciones_laborales r
           LEFT JOIN p_afiliados a ON a.cuil = r.cuil
@@ -141,7 +145,9 @@ def _nomina(cur, empleador: dict) -> tuple[list[dict], str | None]:
             f["fecha_baja"] = f["afiliado_baja"]
             f["baja_del_afiliado"] = True
         hasta = f["fecha_baja"] if (not f["activo"] and f["fecha_baja"]) else hoy
-        f["antiguedad"] = _anios(f["fecha_inicio"], hasta)
+        # Desde la fecha de antigüedad (padrón, DDJJ de OSEDA o la que informó
+        # el empleador: antiguedad_ddjj.py); sin ella, desde el ingreso.
+        f["antiguedad"] = _anios(f["fecha_antiguedad"] or f["fecha_inicio"], hasta)
     return filas, aviso
 
 

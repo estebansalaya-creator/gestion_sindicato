@@ -31,11 +31,19 @@ Resultado por afiliado:
 La «fecha sugerida» es la más antigua de las dos cuando difieren (la DDJJ
 prueba que ya trabajaba ahí; una fecha del padrón anterior a la DDJJ puede
 venir de otra obra social), y la de la DDJJ cuando el padrón no tiene.
-Es una sugerencia: el script no escribe en ninguna base.
+
+Con --aplicar la graba en `p_relaciones_laborales.fecha_antiguedad` (+ origen,
+«al menos», nota y fecha del cálculo; sql/antiguedad_20261114.sql), que es de
+donde cuentan la antigüedad la Nómina del empleador y la ficha del afiliado.
+`fecha_inicio` no se toca. Solo las relaciones vigentes de titulares activos.
+Una relación cuya fecha desde se editó en la ficha después del último cálculo
+no se pisa: manda lo cargado a mano; tampoco una que informó el empleador
+(origen «empresa»).
 
 Uso
 ---
-    python antiguedad_ddjj.py
+    python antiguedad_ddjj.py                  simula: no graba nada
+    python antiguedad_ddjj.py --aplicar        graba la fecha sugerida
     python antiguedad_ddjj.py --hueco 3 --tolerancia 2
 
 Deja en logs/ el resumen (.txt) y la planilla por afiliado (.xlsx).
@@ -88,8 +96,9 @@ def _num(v) -> str:
 
 
 def leer_nomina(cur) -> list[dict]:
-    cur.execute("""SELECT r.cuit_empleador AS cuit, a.cuil, a.apellido_nombres, a.id_afiliado,
-                          r.fecha_inicio, e.razon_social
+    cur.execute("""SELECT r.id_relacion, r.cuit_empleador AS cuit, a.cuil, a.apellido_nombres, a.id_afiliado,
+                          r.fecha_inicio, r.fecha_antiguedad, r.antiguedad_origen, r.antiguedad_al_menos,
+                          r.antiguedad_nota, r.antiguedad_calculada, r.updated_at, e.razon_social
                      FROM p_relaciones_laborales r
                      JOIN p_afiliados a ON a.cuil = r.cuil
                      LEFT JOIN p_empresas e ON e.CUIT = CAST(r.cuit_empleador AS UNSIGNED)
@@ -157,10 +166,44 @@ def analizar(n: dict, ddjj: dict, primero: str, hoy: date, hueco: int, toleranci
                 f["resultado"], f["sugerida"] = "ddjj_antes", desde_ddjj
             else:
                 f["resultado"] = "ddjj_despues"
+    if f["resultado"] in ("sin_fecha", "ddjj_antes"):
+        f["origen"] = "ddjj"
+    else:
+        f["origen"] = "padron" if f["sugerida"] else None
+    f["nota"] = RESULTADOS[f["resultado"]] + (f" (DDJJ desde {_per(f['inicio'])})" if f["inicio"] else "")
     f["antig_padron"] = _años(ingreso, hoy) if ingreso else None
     f["antig_ddjj"] = _años(date(int(f["inicio"][:4]), int(f["inicio"][4:]), 1), hoy) if f["inicio"] else None
     f["antig_sugerida"] = _años(f["sugerida"], hoy) if f["sugerida"] else None
     return f
+
+
+def aplicar(cur, filas: list[dict], ahora: datetime) -> dict:
+    """Graba la fecha sugerida. Devuelve los contadores."""
+    c = {"grabadas": 0, "iguales": 0, "manuales": 0, "empresa": 0}
+    for f in filas:
+        # Editada en la ficha después del último cálculo (updated_at cambia con
+        # cualquier UPDATE de la fila, también con el nuestro: por eso se
+        # compara con un margen de un minuto).
+        if f["antiguedad_origen"] == "empresa":         # la informó el empleador: manda
+            c["empresa"] += 1
+            continue
+        if (f["antiguedad_calculada"] and f["updated_at"]
+                and (f["updated_at"] - f["antiguedad_calculada"]).total_seconds() > 60
+                and f["fecha_antiguedad"] is None):
+            c["manuales"] += 1
+            continue
+        nuevo = (f["sugerida"], f["origen"], 1 if f["al_menos"] else 0, f["nota"][:200])
+        viejo = (f["fecha_antiguedad"], f["antiguedad_origen"], f["antiguedad_al_menos"] or 0,
+                 f["antiguedad_nota"])
+        if nuevo == viejo:
+            c["iguales"] += 1
+            continue
+        cur.execute("""UPDATE p_relaciones_laborales
+                          SET fecha_antiguedad = %s, antiguedad_origen = %s, antiguedad_al_menos = %s,
+                              antiguedad_nota = %s, antiguedad_calculada = %s
+                        WHERE id_relacion = %s""", nuevo + (ahora, f["id_relacion"]))
+        c["grabadas"] += 1
+    return c
 
 
 def main():
@@ -169,6 +212,8 @@ def main():
                         help="meses seguidos sin DDJJ que no cortan el tramo (por defecto 2)")
     parser.add_argument("--tolerancia", type=int, default=2,
                         help="meses de diferencia que se toman como coincidencia (por defecto 2)")
+    parser.add_argument("--aplicar", action="store_true",
+                        help="grabar la fecha sugerida en p_relaciones_laborales (sin esto, simula)")
     args = parser.parse_args()
     inicio = datetime.now()
     hoy = inicio.date()
@@ -185,6 +230,16 @@ def main():
         cn.close()
 
     filas = [analizar(n, ddjj, primero, hoy, args.hueco, args.tolerancia) for n in nomina]
+    grabado = None
+    if args.aplicar:
+        with get_connection() as conn:
+            try:
+                with conn.cursor() as cur:
+                    grabado = aplicar(cur, filas, inicio.replace(microsecond=0))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
     cuenta = defaultdict(int)
     for f in filas:
         cuenta[f["resultado"]] += 1
@@ -233,6 +288,13 @@ def main():
               f"    tramo desde el primer período (al menos)      {al_menos:>6}", "",
               "  Resultado por relación:"]
     lineas += [f"    {RESULTADOS[k]:<44} {cuenta[k]:>6}  ({100 * cuenta[k] / total:.1f} %)" for k in RESULTADOS]
+    if grabado:
+        lineas += ["", f"  Grabado en p_relaciones_laborales.fecha_antiguedad: {grabado['grabadas']}",
+                   f"    sin cambios                                   {grabado['iguales']:>6}",
+                   f"    editadas a mano después del cálculo (no se tocan) {grabado['manuales']:>3}",
+                   f"    informadas por el empleador (no se tocan)     {grabado['empresa']:>6}"]
+    else:
+        lineas += ["", "  Simulación: no se grabó nada (--aplicar graba la fecha sugerida)."]
     lineas += ["", f"Planilla: {planilla.name}"]
     resumen = base.with_suffix(".txt")
     resumen.write_text("\n".join(lineas) + "\n", encoding="utf-8")

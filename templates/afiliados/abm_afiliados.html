@@ -501,6 +501,7 @@
           {% if not consulta %}<th class="col-acciones" data-no-sort>Acciones</th>{% endif %}
           <th>Empleador</th><th>CUIT</th>
           <th class="th-right">Desde</th><th class="th-right">Hasta</th>
+          <th class="th-right">Antigüedad desde</th>
           <th>Estado</th><th>Categoría</th><th>Observaciones</th>
         </tr></thead>
         <tbody>
@@ -526,6 +527,11 @@
             <td class="td-mono">{{ r.cuit_empleador }}</td>
             <td class="td-right">{{ r.fecha_inicio.strftime('%d/%m/%Y') if r.fecha_inicio else '—' }}</td>
             <td class="td-right">{{ r.fecha_fin.strftime('%d/%m/%Y') if r.fecha_fin else '—' }}</td>
+            <td class="td-right"{% if r.antiguedad_nota %} title="{{ r.antiguedad_nota }}"{% endif %}>
+              {%- if r.fecha_antiguedad %}{% if r.antiguedad_al_menos %}≥ {% endif %}{{ r.fecha_antiguedad.strftime('%d/%m/%Y') }}
+                <span class="td-muted">{{ {'padron': 'padrón', 'ddjj': 'DDJJ OSEDA', 'empresa': 'empleador'}[r.antiguedad_origen] }}</span>
+              {%- else %}{{ r.fecha_inicio.strftime('%d/%m/%Y') if r.fecha_inicio else '—' }}{% endif -%}
+            </td>
             <td>
               {%- if r.vigente %}{{ ui.estado('Vigente', 'ok') }}
               {%- elif r.fecha_fin %}{{ ui.estado('Finalizada', 'neutro') }}
@@ -536,7 +542,7 @@
             <td class="td-muted td-wrap">{{ r.observaciones or '—' }}</td>
           </tr>
           {% else %}
-          <tr class="no-data-row"><td colspan="{{ 7 if consulta else 8 }}" class="no-data">Sin empleadores registrados.</td></tr>
+          <tr class="no-data-row"><td colspan="{{ 8 if consulta else 9 }}" class="no-data">Sin empleadores registrados.</td></tr>
           {% endfor %}
         </tbody>
       </table>

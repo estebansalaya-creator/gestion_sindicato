@@ -598,6 +598,14 @@ cumplidos y la última DDJJ de OSEDA de ese CUIL **para ese CUIT** con su remune
   seguidos sin DDJJ, contra `fecha_inicio` del padrón: coincide, DDJJ anterior, DDJJ posterior, sin fecha, sin DDJJ;
   sugiere la más antigua. Al 14/11/2026: 1.573 de 1.907 tienen DDJJ de su empleador. El archivo del LSD no trae la
   fecha de ingreso: solo el registro 05, que es de los trabajadores eventuales.
+  Con `--aplicar` la graba en `p_relaciones_laborales.fecha_antiguedad` + `antiguedad_origen` (`padron`, `ddjj`,
+  `empresa`), `antiguedad_al_menos`, `antiguedad_nota`, `antiguedad_calculada` (`sql/antiguedad_20261114.sql`);
+  `fecha_inicio` no se toca. La Nómina del empleador cuenta la antigüedad desde ahí (sin ella, desde el ingreso; «¹»
+  = desde la DDJJ, «≥» = la DDJJ empieza en 1996-07) y la solapa Empleadores del afiliado la muestra. Editar la fecha
+  desde en la ficha la borra (manda lo cargado a mano) y el script no la vuelve a calcular; tampoco pisa una de
+  origen `empresa`. La fecha real (Simplificación Registral) solo la ve el empleador con su clave: el origen
+  `empresa` queda para cuando la informe por el portal (pendiente: hace falta una muestra del export de Mi
+  Simplificación).
 - **Marca AEDA en OSEDA** (`cruce_atributo_aeda.py`, pedido del 11/11/2026, no escribe nada): los titulares del
   padrón contra `p_afiliados` de contable y su atributo «AEDA — Afiliado al Gremio» (`p_atributos_por_afiliado`, por
   rótulo). Resultado por CUIL: correcto, falta la marca, de baja en OSEDA, familiar en OSEDA, no está en OSEDA, y
