@@ -5,7 +5,8 @@
 -- El sueldo básico por antigüedad (0 a 35 años) y el adicional por almuerzo de
 -- cada vigencia del convenio: lo que AEDA guarda en `aeda.dbo.fis_escalas`
 -- (38 vigencias, de 2012-10 a 2023-09, 36 antigüedades cada una). Los datos los
--- trae importar_aeda_fisca_escalas.py.
+-- trae importar_aeda_fisca_escalas.py. Las de la paritaria 2024-2026 que AEDA no
+-- cargó (2025-01 a 2026-09) están en sql/fisca_escalas_2025_2026_20261114.sql.
 --
 -- Correrlo ENTERO: en DBeaver, «Ejecutar script» (Alt+X). Idempotente.
 
@@ -15,7 +16,7 @@ SET NAMES utf8mb4;
 CREATE TABLE IF NOT EXISTS fisca_escala_salarial (
   id             INT NOT NULL AUTO_INCREMENT,
   periodo_desde  CHAR(6) NOT NULL              COMMENT 'AAAAMM: primer período de la vigencia',
-  periodo_hasta  CHAR(6) NOT NULL              COMMENT 'AAAAMM: último período de la vigencia',
+  periodo_hasta  CHAR(6) NULL                  COMMENT 'AAAAMM: último período de la vigencia; NULL = vigente hasta la próxima escala',
   antiguedad     TINYINT UNSIGNED NOT NULL     COMMENT 'Años de antigüedad (0 a 35)',
   basico         DECIMAL(15,2) NOT NULL        COMMENT 'Sueldo básico para esa antigüedad',
   almuerzo       DECIMAL(15,2) NOT NULL DEFAULT 0 COMMENT 'Adicional por almuerzo (igual para todas las antigüedades)',
