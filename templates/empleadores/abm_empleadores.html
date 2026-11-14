@@ -74,6 +74,9 @@
   </div>
   {% if empleador %}
   <div class="page-header-acciones">
+    {% if empleador.get('CUIT') and puede('/empleadores/cc') %}
+    {{ ui.boton('Cuenta corriente', 'secondary', href=url_for('cc_emp.estado_cuenta', cuit='%011d' % empleador.CUIT)) }}
+    {% endif %}
     {{ ui.boton('Nuevo empleador', href=url_for('empleadores.abm_empleadores'), icono_='agregar') }}
   </div>
   {% endif %}

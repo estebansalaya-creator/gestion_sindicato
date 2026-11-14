@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}CC — {{ empresa.razon_social if empresa else cuit }}{% endblock %}
+
+{#
+  Estado de cuenta de un empleador (cc_emp.estado_cuenta): un renglón por
+  período, liquidado o cobrado, con el saldo del período y el acumulado;
+  debajo, los cobros. Saldo = Liquidado − Cobrado: positivo, debe (rojo);
+  negativo, pagó de más (verde). Lo anterior al «desde» entra como saldo
+  anterior. El acumulado manda el orden: la grilla no se ordena (data-sin-orden).
+#}
+
+{% macro saldo(v) -%}
+  {%- if v > 0.01 %}<span class="importe-danger">{{ v | miles }}</span>
+  {%- elif v < -0.01 %}<span class="importe-ok">{{ v | miles }}</span>
+  {%- else %}<span class="saldo-cero">—</span>{% endif -%}
+{%- endmacro %}
+
+{% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
+<div class="kpi-card"><div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div><div>
+  <div class="kpi-lbl">{{ rotulo }}</div>
+  <div class="kpi-val monto {{ clase }}">{{ valor }}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+</div></div>
+{%- endmacro %}
+
+{% macro enlace_cobro(c) -%}
+  {%- if c.clase == 'cuota_sindical' and puede_rec -%}
+    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo', blank=True) }}
+  {%- elif puede_ingreso -%}
+    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso', blank=True) }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ empresa.razon_social if empresa else 'CUIT ' ~ cuit }}
+      {% if empresa and empresa.nombre_fantasia and empresa.nombre_fantasia|lower != empresa.razon_social|lower %}
+      <span class="chico muted">({{ empresa.nombre_fantasia }})</span>{% endif %}
+    </h1>
+    <p class="fila">
+      <span class="mono">CUIT {{ cuit }}</span>
+      {% if not empresa %}<span class="chip chip-alerta">no está en Empleadores</span>{% endif %}
+    </p>
+  </div>
+  <div class="page-header-acciones">
+    {% if empresa and puede_empleador %}
+    {{ ui.boton('Ficha del empleador', 'secondary', href=url_for('empleadores.abm_empleadores', edit=empresa.id)) }}
+    {% endif %}
+    {{ ui.boton('Cuenta Corriente', 'secondary', href=url_for('cc_emp.bandeja'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="kpi-row">
+  {% if desde and ec.anterior %}
+    {{ kpi('historial', '', 'Saldo anterior', ec.anterior | miles, 'importe-danger' if ec.anterior > 0 else 'importe-ok') }}
+  {% endif %}
+  {{ kpi('dinero', 'danger', 'Liquidado', ec.liquidado | miles, 'importe-danger') }}
+  {{ kpi('dinero', 'ok', 'Cobrado', ec.cobrado | miles, 'importe-ok') }}
+  {{ kpi('planilla', 'danger' if ec.saldo_total > 0.01 else 'ok', 'Saldo', ec.saldo_total | miles,
+         'importe-danger' if ec.saldo_total > 0.01 else ('importe-ok' if ec.saldo_total < -0.01 else ''),
+         ('Debe — ' ~ ec.periodos_deuda ~ ' período(s) con saldo') if ec.saldo_total > 0.01
+         else ('Pagó de más' if ec.saldo_total < -0.01 else 'Sin saldo')) }}
+  {{ kpi('reloj', 'warn', 'Vencido', ec.vencido | miles, 'importe-pendiente', 'Períodos con saldo y el vencimiento pasado') }}
+  {% if ec.total_sin_periodo %}
+    {{ kpi('alerta', 'warn', 'Cobrado sin período', ec.total_sin_periodo | miles, '',
+           ec.sin_periodo|length ~ ' cobro(s): restan del saldo, no cancelan ningún período') }}
+  {% endif %}
+</div>
+{% if desde or hasta %}
+{{ ui.aviso('Los indicadores de liquidado y cobrado son los del rango elegido; el saldo y lo vencido, los de toda la cuenta.', 'info') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Períodos') }}
+  <form method="get" action="{{ url_for('cc_emp.estado_cuenta', cuit=cuit) }}" class="filter-bar">
+    {% call ui.filtro('Período desde') %}<input type="month" name="desde" class="filtro-srv" value="{{ desde | periodo if desde else '' }}">{% endcall %}
+    {% call ui.filtro('Período hasta') %}<input type="month" name="hasta" class="filtro-srv" value="{{ hasta | periodo if hasta else '' }}">{% endcall %}
+    <label class="filtro-check">
+      <input type="checkbox" name="con_saldo" value="1" {{ 'checked' if solo_saldo }} onchange="this.form.submit()">
+      Solo períodos con saldo
+    </label>
+    <button type="submit" class="btn btn-primary btn-sm" title="Aplicar filtro">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('cc_emp.estado_cuenta', cuit=cuit) }}" class="btn btn-secondary btn-sm" title="Quitar filtros">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count"></span>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar Excel</button>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [24, 60, 120] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+  </form>
+
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-periodos" data-sin-orden data-exportar="Estado de cuenta {{ cuit }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:60px;">Acciones</th>
+          <th class="th-center" style="width:84px;">Período</th>
+          <th class="th-center" style="width:92px;">Vencimiento</th>
+          <th>Liquidado por</th>
+          <th class="th-center" style="width:84px;" title="Afiliados liquidados / activos del empleador en el período">Afiliados</th>
+          <th class="th-right" style="width:124px;">Remuneración</th>
+          <th class="th-right" style="width:120px;">Liquidado</th>
+          <th class="th-right" style="width:120px;">Cobrado</th>
+          <th class="th-right" style="width:120px;">Saldo</th>
+          <th class="th-right" style="width:124px;">Acumulado</th>
+          <th class="th-center" style="width:72px;" title="Días desde el vencimiento, si el período tiene saldo">Mora (días)</th>
+          <th class="th-right" style="width:110px;" title="Lo que había liquidado AEDA para ese período">Liquidado AEDA</th>
+        </tr>
+        {% if desde and ec.anterior %}
+        <tr class="fila-grupo-cc">
+          <td></td><td colspan="8">Saldo anterior a {{ desde | periodo }}</td>
+          <td class="td-right">{{ saldo(ec.anterior) }}</td><td></td><td></td>
+        </tr>
+        {% endif %}
+      </thead>
+      <tbody>
+        {% for x in ec.periodos %}
+        {% set l = x.liq %}
+        <tr>
+          <td><div class="acciones">
+            {% if l and puede_liq %}{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion_ficha', id_liq=l.id), titulo='Ver la liquidación', blank=True) }}{% endif %}
+          </div></td>
+          <td class="td-center td-mono">{{ x.periodo | periodo }}</td>
+          <td class="td-center">{{ x.vencimiento.strftime('%d/%m/%Y') if x.vencimiento else '—' }}</td>
+          <td>{% if l %}{{ origenes.get(l.origen, l.origen) }}{% else %}<span class="chip chip-alerta" title="Hay cobros de este período y no hay liquidación vigente">sin liquidar</span>{% endif %}</td>
+          <td class="td-center">{% if l %}{{ l.afiliados or 0 }}{% if l.afiliados_activos is not none %} / {{ l.afiliados_activos }}{% endif %}{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ l.remuneracion if l else 0 }}">{{ (l.remuneracion | miles) if l and l.remuneracion else '—' }}</td>
+          <td class="td-right" data-num="{{ x.liquidado }}">{{ x.liquidado | miles if x.liquidado else '—' }}</td>
+          <td class="td-right" data-num="{{ x.cobrado }}">{{ x.cobrado | miles if x.cobrado else '—' }}</td>
+          <td class="td-right" data-num="{{ x.saldo }}">{{ saldo(x.saldo) }}</td>
+          <td class="td-right" data-num="{{ x.acumulado }}">{{ saldo(x.acumulado) }}</td>
+          <td class="td-center">{% if x.mora is not none %}<span class="importe-pendiente">{{ x.mora }}</span>{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ l.aeda_importe if l and l.aeda_importe else 0 }}">{{ (l.aeda_importe | miles) if l and l.aeda_importe else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="12" class="no-data">No hay períodos liquidados ni cobrados{{ ' con saldo' if solo_saldo }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cobros', 'Recibos de cuota sindical y órdenes de ingreso por fiscalización con el CUIT del empleador' ~ (', de los períodos elegidos' if desde or hasta else '')) }}
+  {{ ui.barra_filtros('Filtrar cobros…', 50) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cobros" data-exportar="Cobros {{ cuit }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:60px;">Acciones</th>
+          <th class="th-center" style="width:92px;" data-orden="desc">Fecha</th>
+          <th style="width:130px;">Número</th>
+          <th>Motivo</th>
+          <th class="th-center" style="width:84px;">Período</th>
+          <th>Descripción</th>
+          <th class="th-right" style="width:120px;">Importe</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in ec.cobros | reverse %}
+        <tr>
+          <td><div class="acciones">{{ enlace_cobro(c) }}</div></td>
+          <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
+          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td>{{ c.motivo or '—' }}</td>
+          <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
+          <td class="chico">{{ c.descripcion or '' }}</td>
+          <td class="td-right" data-num="{{ c.importe or 0 }}">{{ (c.importe or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">No hay cobros{{ ' de esos períodos' if desde or hasta }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-periodos', { pageSize: 24 });
+  gestion_admTable('tbl-cobros', { pageSize: 50 });
+});
+</script>
+{% endblock %}

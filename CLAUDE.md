@@ -42,6 +42,7 @@ gestion_sindicato/
   fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
   lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
+  cc_empleadores.py       cuenta corriente de empleadores: cuota sindical liquidada contra lo cobrado, por CUIT y período
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
   afiliados_metricas.py   métricas del padrón: indicadores, altas y bajas, pirámide, empleadores, controles
@@ -141,6 +142,8 @@ repetiría en la URL lo que dice el dominio.
                              /descartar POST, /planilla.xlsx)
 /login /logout /menu
 /empleadores         ABM, ?edit=ID
+/empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
+                     (?desde, ?hasta, ?con_saldo=1)
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
 /afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
                      listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
@@ -508,6 +511,25 @@ el empleador completaba a mano («no era nada seguro»).
   empresa en la fila 3; renglones desde la 5), el que lee Importar Cuotas, más lo retenido y una observación.
 - **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo) y avisarle a la empresa los meses
   que no presentó.
+
+## Cuenta corriente de empleadores
+
+`cc_empleadores.py` (`/empleadores/cc`, menú 12 «Cuenta Corriente» en Empleadores, Administrador, Supervisor y
+Operador; pedido del 14/11/2026). Solo lectura. Por CUIT y período: **Debe** = la `fisca_liquidacion` vigente (DDJJ,
+LSD, nómina o AEDA); **Haber** = renglones de órdenes de ingreso no anuladas con ese `ingreso_ordenes_detalle.cuit` y
+clase `cuota_sindical` o motivo CUOTA SINDICAL / INGRESOS POR FISCALIZACION (los recibos y los AEDA-RC / AEDA-OI).
+Saldo = Debe − Haber, positivo = debe (rojo), negativo = pagó de más (verde): la regla de `fisca_recibos.saldos_de`.
+
+- **Por período**: un cobro sin período, o con uno que no es AAAAMM (AEDA tiene 252505), suma al cobrado y no
+  cancela ningún período; un período pagado de más no compensa otro. «Vencido» = saldo de los períodos con el
+  vencimiento pasado. Con un rango de períodos la bandeja cuenta solo lo de esos períodos.
+- **Estado de cuenta** (`/empleadores/cc/<cuit>`): un renglón por período liquidado o cobrado (los cobrados sin
+  liquidación, «sin liquidar»), con saldo, acumulado (lo anterior al «desde» es el saldo anterior), días de mora y lo
+  que había liquidado AEDA; debajo, los cobros con enlace al recibo o a la orden de ingreso. Botón «Cuenta corriente»
+  en la ficha del empleador.
+- Al 14/11/2026, desde 202401: 456 CUIT, liquidado $ 1.763,7 M, cobrado $ 2.269,8 M, vencido $ 344,1 M (lo cobrado
+  supera a lo liquidado en el total y hay períodos impagos: los cobros no se aplican a otros períodos).
+- **Pendiente**: aplicar los cobros a la deuda más vieja, intereses por mora, PDF del estado de cuenta.
 
 ## Emisión de recibos de cuota sindical
 

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuenta Corriente — Empleadores{% endblock %}
+
+{#
+  Bandeja de la cuenta corriente de empleadores (cc_emp.bandeja): lo liquidado
+  de cuota sindical contra lo cobrado, por CUIT. Saldo = Liquidado − Cobrado:
+  positivo, el empleador debe (en rojo); negativo, pagó de más (en verde).
+  «Vencido» = el saldo de los períodos cuyo vencimiento pasó. Los filtros van
+  al servidor; buscar un empleador manda sobre el filtro de saldo.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuenta Corriente de Empleadores</h1>
+    <p>Cuota sindical: lo liquidado por período contra lo cobrado con recibos.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if filas %}
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Liquidado</div><div class="kpi-val monto importe-danger">{{ tot.liquidado | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Cobrado</div><div class="kpi-val monto importe-ok">{{ tot.cobrado | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if tot.saldo > 0.01 else 'ok' }}">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo</div>
+      <div class="kpi-val monto {{ 'importe-danger' if tot.saldo > 0.01 else ('importe-ok' if tot.saldo < -0.01 else '') }}">{{ tot.saldo | miles }}</div>
+      <div class="kpi-sub">{{ filas|length }} empleador(es)</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Vencido</div><div class="kpi-val monto importe-pendiente">{{ tot.vencido | miles }}</div>
+      <div class="kpi-sub">Períodos con saldo y el vencimiento pasado</div></div></div>
+</div>
+{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('cc_emp.bandeja') }}" class="filter-bar" id="frm-filtros">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar empleador</span>
+      <input type="search" name="q" value="{{ f.q }}" placeholder="Razón social, nombre de fantasía o CUIT…"
+             class="filter-input" oninput="debounceBuscarCC(this)">
+      {% if f.q %}<span class="campo-ayuda">Buscando empleador: se ignora el filtro de saldo.</span>{% endif %}
+    </label>
+    {% call ui.filtro('Saldo') %}<select name="saldo" class="filtro-srv" onchange="this.form.submit()">
+      <option value="deuda" {{ 'selected' if f.saldo == 'deuda' }}>Con deuda</option>
+      <option value="favor" {{ 'selected' if f.saldo == 'favor' }}>Pagaron de más</option>
+      <option value="todos" {{ 'selected' if f.saldo == 'todos' }}>Todos con movimientos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Período desde') %}<input type="month" name="desde" class="filtro-srv" value="{{ f.desde | periodo if f.desde else '' }}">{% endcall %}
+    {% call ui.filtro('Período hasta') %}<input type="month" name="hasta" class="filtro-srv" value="{{ f.hasta | periodo if f.hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm" title="Aplicar filtro">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('cc_emp.bandeja') }}" class="btn btn-secondary btn-sm" title="Quitar filtros">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count"></span>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar a Excel</button>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+    {% if f.desde or f.hasta %}
+    <span class="campo-ayuda" style="flex-basis:100%;">Con un rango de períodos solo cuenta lo de esos períodos: los cobros sin período quedan afuera.</span>
+    {% endif %}
+  </form>
+
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cc-emp"
+           data-exportar="Cuenta corriente de empleadores{{ ' ' ~ (f.desde | periodo) if f.desde }}{{ ' a ' ~ (f.hasta | periodo) if f.hasta }}">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort style="width:60px;">Acciones</th>
+          <th>Empleador</th>
+          <th style="width:112px;">CUIT</th>
+          <th class="th-center" data-tipo="n" style="width:70px;" title="Períodos liquidados">Períodos</th>
+          <th class="th-center" style="width:84px;">Últ. liq.</th>
+          <th class="th-right" style="width:124px;">Liquidado</th>
+          <th class="th-center" data-tipo="n" style="width:70px;">Recibos</th>
+          <th class="th-right" style="width:124px;">Cobrado</th>
+          <th class="th-right" style="width:124px;" data-orden="desc">Saldo</th>
+          <th class="th-center" data-tipo="n" style="width:76px;" title="Períodos con saldo a pagar">Con deuda</th>
+          <th class="th-right" style="width:124px;" title="Saldo de los períodos cuyo vencimiento ya pasó">Vencido</th>
+          <th class="th-right" style="width:110px;" title="Cobros sin período: suman al cobrado, no cancelan ningún período">Sin período</th>
+          <th class="th-center" style="width:88px;">Últ. pago</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in filas %}
+        {% set saldo = (e.saldo or 0) | float %}
+        <tr>
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('cc_emp.estado_cuenta', cuit=e.cuit), titulo='Ver estado de cuenta') }}
+          </div></td>
+          <td class="td-fuerte">{{ e.razon_social or '' }}{% if not e.razon_social %}<span class="chip chip-alerta">no está en Empleadores</span>{% endif %}
+            {% if e.nombre_fantasia and e.razon_social and e.nombre_fantasia|lower != e.razon_social|lower %} <span class="chico muted">({{ e.nombre_fantasia }})</span>{% endif %}</td>
+          <td class="td-mono td-muted">{{ e.cuit }}</td>
+          <td class="td-center">{{ e.periodos }}</td>
+          <td class="td-center td-mono">{{ e.ultimo_liq | periodo if e.ultimo_liq else '—' }}</td>
+          <td class="td-right importe-danger" data-num="{{ e.liquidado or 0 }}">{% if e.liquidado %}{{ e.liquidado | miles }}{% else %}—{% endif %}</td>
+          <td class="td-center">{{ e.recibos }}</td>
+          <td class="td-right importe-ok" data-num="{{ e.cobrado or 0 }}">{% if e.cobrado %}{{ e.cobrado | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ saldo }}">
+            <span class="{{ 'importe-danger' if saldo > 0.01 else ('importe-ok' if saldo < -0.01 else 'saldo-cero') }}"
+                  title="{{ 'Debe' if saldo > 0.01 else ('Pagó de más' if saldo < -0.01 else 'Sin saldo') }}">
+              {% if saldo|abs > 0.01 %}{{ saldo | miles }}{% else %}—{% endif %}</span>
+          </td>
+          <td class="td-center">{{ e.periodos_deuda or '—' }}</td>
+          <td class="td-right" data-num="{{ e.vencido or 0 }}">{% if e.vencido %}<span class="importe-pendiente">{{ e.vencido | miles }}</span>{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ e.sin_periodo or 0 }}">{% if e.sin_periodo %}{{ e.sin_periodo | miles }}{% else %}—{% endif %}</td>
+          <td class="td-center td-muted">{{ e.ultimo_pago.strftime('%d/%m/%Y') if e.ultimo_pago else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="13" class="no-data">No hay empleadores con ese saldo.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+var _ccTimer = null;
+function debounceBuscarCC(inp) {
+  clearTimeout(_ccTimer);
+  _ccTimer = setTimeout(function () { inp.closest('form').submit(); }, 400);
+}
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-cc-emp', { pageSize: 50 });
+});
+</script>
+{% endblock %}
