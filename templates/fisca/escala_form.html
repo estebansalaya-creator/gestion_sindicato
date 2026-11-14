@@ -15,7 +15,7 @@
     <p>Rige desde su período hasta el mes anterior a la siguiente; la anterior se cierra sola.</p>
   </div>
   <div class="page-header-acciones">
-    {{ ui.boton('Volver', 'secondary', icono_='volver', href=url_for('fisca_esc.lista', ver=editando or None)) }}
+    {{ ui.boton('Volver', 'secondary', icono_='volver', href=url_for('fisca_esc.ficha', desde=editando) if editando else url_for('fisca_esc.lista')) }}
   </div>
 </div>
 

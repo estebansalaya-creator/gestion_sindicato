@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Escala {{ sel.periodo_desde | periodo }}{% endblock %}
+
+{#
+  Ficha de una escala salarial (fisca_esc.ficha): el básico, la comida y el
+  conformado de cada antigüedad, y cuánto subió contra la escala anterior.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Escala salarial desde {{ sel.periodo_desde | periodo }}</h1>
+    <p>{{ 'Vigente' if sel.abierta else 'Hasta ' ~ (sel.periodo_hasta | periodo) }} · {{ origenes[sel.origen][0] }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Vigencias', 'secondary', icono_='volver', href=url_for('fisca_esc.lista')) }}
+    {% if sel.anterior %}{{ ui.boton('Anterior (' ~ (sel.anterior | periodo) ~ ')', 'secondary', href=url_for('fisca_esc.ficha', desde=sel.anterior)) }}{% endif %}
+    {% if posterior %}{{ ui.boton('Siguiente (' ~ (posterior | periodo) ~ ')', 'secondary', href=url_for('fisca_esc.ficha', desde=posterior)) }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {{ ui.card_head('Escala desde ' ~ (sel.periodo_desde | periodo),
+                  nota=('vigente' if sel.abierta else 'hasta ' ~ (sel.periodo_hasta | periodo)) ~ ' · ' ~ origenes[sel.origen][0]) }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Desde', sel.periodo_desde | periodo, mono=True) }}
+      {{ dato('Hasta', 'vigente' if sel.abierta else (sel.periodo_hasta | periodo), mono=True) }}
+      {{ dato('Almuerzo diario', '$ ' ~ ((sel.almuerzo or 0) | miles), mono=True) }}
+      {{ dato('Comida (' ~ dias ~ ' días)', '$ ' ~ (((sel.almuerzo or 0) * dias) | miles), mono=True) }}
+      {{ dato('Aumento sobre la anterior', ((factor | string) | replace('.', ',')) ~ ' %' if factor is not none else '—') }}
+    </div>
+    {% if baja %}{{ ui.aviso('El básico baja al subir la antigüedad en ' ~ (baja | join(', ')) ~ ' años: puede ser un error de la escala de origen.', 'warning') }}{% endif %}
+    {% if raros %}{{ ui.aviso('Contra la escala anterior, no suben en la misma proporción que el resto: ' ~ (raros | join(', ')) ~ ' años.', 'warning') }}{% endif %}
+  </div>
+  {% call ui.barra_filtros('Buscar…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-escala" data-exportar="Escala salarial {{ sel.periodo_desde | periodo }}">
+      <thead><tr>
+        <th>Antigüedad</th><th class="th-right">Básico</th><th class="th-right">Comida ({{ dias }} días)</th>
+        <th class="th-right">Conformado</th><th class="th-right">Aumento</th>
+      </tr></thead>
+      <tbody>
+        {% for f in filas %}
+        <tr class="{{ 'fila-alerta' if f.antiguedad in baja or f.antiguedad in raros }}">
+          <td data-num="{{ f.antiguedad }}">{{ 'Inicial' if f.antiguedad == 0 else (f.antiguedad ~ (' año' if f.antiguedad == 1 else ' años')) }}</td>
+          <td class="td-right td-fuerte" data-num="{{ f.basico }}">{{ f.basico | miles }}</td>
+          <td class="td-right" data-num="{{ f.almuerzo * dias }}">{{ (f.almuerzo * dias) | miles }}</td>
+          <td class="td-right" data-num="{{ f.conformado }}">{{ f.conformado | miles }}</td>
+          <td class="td-right td-muted" data-num="{{ f.aumento or 0 }}">{{ ((f.aumento | string) | replace('.', ',')) ~ ' %' if f.aumento is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+  {% if sel.origen == 'manual' %}
+  <div class="card-body form-acciones">
+    {{ ui.boton('Corregir', 'secondary', icono_='editar', href=url_for('fisca_esc.editar', desde=sel.periodo_desde)) }}
+    {{ ui.boton('Nueva escala a partir de esta', icono_='agregar', href=url_for('fisca_esc.nueva', base=sel.periodo_desde)) }}
+  </div>
+  {% else %}
+  <div class="card-body form-acciones">
+    {{ ui.boton('Nueva escala a partir de esta', icono_='agregar', href=url_for('fisca_esc.nueva', base=sel.periodo_desde)) }}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

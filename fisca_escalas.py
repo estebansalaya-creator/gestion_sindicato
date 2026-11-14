@@ -1,7 +1,8 @@
 """
 fisca_escalas.py — Fiscalización de Cuotas › Escalas Salariales (menú 9).
 
-    /fiscalizacion/escalas                      vigencias y la escala elegida: ?ver=AAAAMM
+    /fiscalizacion/escalas                      las vigencias
+    /fiscalizacion/escalas/<desde>              la escala de una vigencia: básico, comida y conformado
     /fiscalizacion/escalas/nueva                GET (?base=AAAAMM) / POST: alta de una vigencia
     /fiscalizacion/escalas/<desde>/editar       GET / POST: corrige una cargada acá
     /fiscalizacion/escalas/<desde>/eliminar     POST: borra una cargada acá
@@ -184,25 +185,44 @@ def lista():
     salida = _guardia()
     if salida:
         return salida
+    ver = periodo_de(request.args.get("ver"))
+    if ver:  # los enlaces viejos ?ver= van a la ficha
+        return redirect(url_for("fisca_esc.ficha", desde=ver))
     with get_connection() as conn:
         with conn.cursor() as cur:
             if _falta_esquema(cur):
                 flash(f"!Falta correr {SQL_ESQUEMA} en esta base.")
-                return render_template("fisca/escalas.html", vigs=[], sel=None, filas=[], origenes=ORIGENES)
+                return render_template("fisca/escalas.html", vigs=[], origenes=ORIGENES)
             vigs = vigencias(cur)
-            ver = periodo_de(request.args.get("ver")) or (vigs[0]["periodo_desde"] if vigs else None)
-            sel = next((v for v in vigs if v["periodo_desde"] == ver), None)
-            filas = escala(cur, ver) if sel else []
-            ant = escala(cur, sel["anterior"]) if sel and sel["anterior"] else []
+    return render_template("fisca/escalas.html", vigs=vigs, origenes=ORIGENES)
+
+
+@fisca_esc_bp.route("/escalas/<desde>")
+def ficha(desde):
+    salida = _guardia()
+    if salida:
+        return salida
+    d = periodo_de(desde)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            vigs = vigencias(cur) if not _falta_esquema(cur) else []
+            sel = next((v for v in vigs if v["periodo_desde"] == d), None)
+            if not sel:
+                flash(f"!No hay una escala desde {periodo_txt(d) or desde}.")
+                return redirect(url_for("fisca_esc.lista"))
+            filas = escala(cur, d)
+            ant = escala(cur, sel["anterior"]) if sel["anterior"] else []
     previo = {f["antiguedad"]: Decimal(f["basico"]) for f in ant}
     for f in filas:
         f["conformado"] = conformado(f["basico"], f["almuerzo"])
         p = previo.get(f["antiguedad"])
         f["aumento"] = ((Decimal(f["basico"]) / p - 1) * 100).quantize(CENT) if p else None
     fac, raros = factor(_basicos(ant), _basicos(filas)) if ant and len(ant) == len(filas) else (None, [])
-    return render_template("fisca/escalas.html", vigs=vigs, sel=sel, filas=filas, origenes=ORIGENES,
+    idx = vigs.index(sel)
+    return render_template("fisca/escala_ficha.html", sel=sel, filas=filas, origenes=ORIGENES,
                            baja=bajan(_basicos(filas)), raros=raros,
-                           factor=((fac - 1) * 100).quantize(CENT) if fac else None, dias=DIAS_COMIDA)
+                           factor=((fac - 1) * 100).quantize(CENT) if fac else None, dias=DIAS_COMIDA,
+                           posterior=vigs[idx - 1]["periodo_desde"] if idx > 0 else None)
 
 
 def _leer_form(form) -> tuple[dict, list[str]]:
@@ -298,7 +318,7 @@ def _formulario(editar: str | None):
             actual = escala(cur, editar) if editar else []
     if editar and (not actual or actual[0]["origen"] != "manual"):
         flash("!Esa escala no existe o vino de AEDA: las de AEDA no se corrigen acá.")
-        return redirect(url_for("fisca_esc.lista", ver=editar))
+        return redirect(url_for("fisca_esc.lista"))
 
     if request.method == "GET":
         if actual:
@@ -339,7 +359,7 @@ def _formulario(editar: str | None):
         return _form(e, errores, [], editar, vigs, bases)
     flash(f"Escala desde {periodo_txt(e['desde'])} {'corregida' if editar else 'grabada'}."
           + (" Se grabó con avisos." if avisos else ""))
-    return redirect(url_for("fisca_esc.lista", ver=e["desde"]))
+    return redirect(url_for("fisca_esc.ficha", desde=e["desde"]))
 
 
 @fisca_esc_bp.route("/escalas/nueva", methods=["GET", "POST"])
@@ -368,7 +388,7 @@ def eliminar(desde):
             if not r["n"] or r["o"] != "manual":
                 conn.rollback()
                 flash("!Esa escala no existe o vino de AEDA: las de AEDA no se borran acá.")
-                return redirect(url_for("fisca_esc.lista", ver=d))
+                return redirect(url_for("fisca_esc.lista"))
             cur.execute("DELETE FROM fisca_escala_salarial WHERE periodo_desde = %s AND origen = 'manual'", (d,))
             ant = anterior_a(cur, d)
             if ant:

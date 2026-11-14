@@ -134,7 +134,7 @@ repetiría en la URL lo que dice el dominio.
                              /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
 /fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=);
                              /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
-/fiscalizacion/escalas       vigencias y la escala elegida, ?ver=AAAAMM; /nueva (?base=AAAAMM) GET/POST;
+/fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
                              /descartar POST, /planilla.xlsx)
