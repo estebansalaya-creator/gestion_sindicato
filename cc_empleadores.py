@@ -4,6 +4,7 @@ aplicación de cobros a las cuotas.
 
     /empleadores/cc                              bandeja: empleadores con su saldo (menú 12)
     /empleadores/cc/<cuit>                       estado de cuenta del CUIT, por período, con los cobros
+    /empleadores/cc/<cuit>/<periodo>             la cuota de un período: liquidación, cobros aplicados, afiliados
     /empleadores/cc/aplicaciones                 aplicar y desaplicar (menú 13); ?cuit= un empleador
     /empleadores/cc/aplicaciones/aplicar         POST
     /empleadores/cc/aplicaciones/<id>/desaplicar POST
@@ -35,6 +36,7 @@ from decimal import Decimal
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 import fisca_aplicaciones as fa
+import fisca_liquidacion as fl
 from db import get_connection, puede, usuario_actual, validasesion
 from pagos_datos import leer_importe
 
@@ -240,6 +242,58 @@ def estado_cuenta(cuit):
                            puede_liq=puede("/fiscalizacion/liquidacion"), puede_rec=puede("/fiscalizacion/recibos"),
                            puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"),
                            puede_empleador=puede("/empleadores"), puede_aplicar=puede(URL_APLIC))
+
+
+@cc_emp_bp.route("/<cuit>/<periodo>")
+def periodo(cuit, periodo):
+    """La cuota de un período, dentro de la cuenta corriente: la liquidación,
+    lo aplicado y el saldo, los cobros que la cancelan, los cobros de ese
+    período que siguen sin aplicar y los afiliados liquidados."""
+    salida = _guardia(URL)
+    if salida:
+        return salida
+    cuit, per = _cuit(cuit), periodo_de(periodo)
+    if not (cuit and per):
+        flash("!El CUIT o el período no son válidos.")
+        return redirect(url_for("cc_emp.bandeja"))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if fa.falta_esquema(cur):
+                flash(AVISO_ESQUEMA)
+                return redirect(url_for("cc_emp.bandeja"))
+            # La vigente; si no hay, la última anulada (para ver por qué).
+            cur.execute(f"""SELECT l.*, e.razon_social, e.id AS id_empresa, u.nombre AS usuario,
+                                   {fa.sql_aplicado_liq('l')} AS aplicado
+                              FROM fisca_liquidacion l
+                              LEFT JOIN p_empresas e ON e.CUIT = CAST(l.cuit AS UNSIGNED)
+                              LEFT JOIN s_usuarios u ON u.id = l.id_usuario
+                             WHERE l.cuit = %s AND l.periodo = %s
+                             ORDER BY l.estado = 'vigente' DESC, l.id DESC LIMIT 1""", (cuit, per))
+            liq = cur.fetchone()
+            if not liq:
+                flash(f"!El CUIT {cuit} no tiene liquidación de {per[:4]}-{per[4:]}.")
+                return redirect(url_for("cc_emp.estado_cuenta", cuit=cuit))
+            cur.execute("""SELECT d.*, COALESCE(d.apellido_nombres, a.apellido_nombres) AS nombre
+                             FROM fisca_liquidacion_detalle d
+                             LEFT JOIN p_afiliados a ON a.id_afiliado = d.id_afiliado
+                            WHERE d.id_liquidacion = %s
+                            ORDER BY d.fuente = 'sin_ddjj', nombre, d.cuil""", (liq["id"],))
+            detalle = cur.fetchall()
+            aplicadas = [a for a in fa.aplicaciones_de(cur, cuit) if a["id_liquidacion"] == liq["id"]]
+            pendientes = [c for c in fa.cobros_de(cur, cuit) if c["per"] == per and c["sin_aplicar"] > Decimal("0.01")]
+    liq["importe"], liq["aplicado"] = _d(liq["importe"]), _d(liq["aplicado"])
+    vigente = liq["estado"] == "vigente"
+    liq["saldo"] = liq["importe"] - liq["aplicado"] if vigente else Decimal("0")
+    hoy = datetime.date.today()
+    mora = ((hoy - liq["vencimiento"]).days
+            if vigente and liq["vencimiento"] and liq["saldo"] > Decimal("0.01") and liq["vencimiento"] < hoy else None)
+    return render_template("empleadores/cc_periodo.html", cuit=cuit, liq=liq, detalle=detalle, aplicadas=aplicadas,
+                           pendientes=pendientes, mora=mora, origenes=fl.ORIGENES, origen_tipo=fl.ORIGEN_TIPO,
+                           fuentes=fl.FUENTES, fuente_tipo=fl.FUENTE_TIPO, origenes_aplic=fa.ORIGENES,
+                           volver=request.args.get("volver") if (request.args.get("volver") or "").startswith(URL) else None,
+                           puede_aplicar=puede(URL_APLIC), puede_rec=puede("/fiscalizacion/recibos"),
+                           puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"),
+                           puede_empleador=puede("/empleadores"), puede_padron=puede("/afiliados/padron"))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

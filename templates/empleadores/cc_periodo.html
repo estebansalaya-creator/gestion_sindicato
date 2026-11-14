@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuota {{ liq.periodo | periodo }} · {{ cuit }}{% endblock %}
+
+{#
+  La cuota de un período dentro de la cuenta corriente del empleador
+  (cc_emp.periodo): la liquidación con lo aplicado y el saldo, los cobros que
+  la cancelan (fisca_aplicacion), los cobros de ese período que todavía no se
+  aplicaron y los afiliados liquidados. Se abre en la misma pestaña, desde el
+  estado de cuenta; «Volver» regresa con los mismos filtros.
+#}
+{% macro dato(lbl, val, mono=False, clase='') -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }} {{ clase }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% macro enlace_cobro(id_orden, clase) -%}
+  {%- if clase == 'cuota_sindical' and puede_rec -%}
+    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=id_orden), titulo='Ver el recibo') }}
+  {%- elif puede_ingreso -%}
+    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=id_orden), titulo='Ver la orden de ingreso') }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuota sindical {{ liq.periodo | periodo }}</h1>
+    <p>{{ liq.razon_social or 'Empleador que no está en Empleadores' }} · CUIT <span class="mono">{{ cuit }}</span></p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Estado de cuenta', 'secondary', href=volver or url_for('cc_emp.estado_cuenta', cuit=cuit), icono_='volver') }}
+    {% if puede_aplicar %}{{ ui.boton('Aplicar / desaplicar', 'secondary', href=url_for('cc_emp.aplicaciones', cuit=cuit)) }}{% endif %}
+    {% if puede_empleador and liq.id_empresa %}{{ ui.boton('Ficha del empleador', 'secondary', href=url_for('empleadores.abm_empleadores', edit=liq.id_empresa)) }}{% endif %}
+    {{ ui.boton('Imprimir', 'secondary', onclick='window.print()', icono_='imprimir') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if liq.estado == 'anulada' %}{{ ui.aviso(liq.observaciones or 'Liquidación anulada: no forma parte de la cuenta corriente.', 'danger') }}
+{% elif liq.observaciones %}{{ ui.aviso(liq.observaciones, 'info') }}{% endif %}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Liquidado</div><div class="kpi-val monto importe-danger">{{ liq.importe | miles }}</div>
+      <div class="kpi-sub">{{ origenes.get(liq.origen, liq.origen) }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Aplicado</div><div class="kpi-val monto importe-ok">{{ liq.aplicado | miles }}</div>
+      <div class="kpi-sub">{{ aplicadas | rejectattr('muerta') | list | length }} cobro(s)</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if liq.saldo > 0.01 else 'ok' }}">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo</div>
+      <div class="kpi-val monto {{ 'importe-danger' if liq.saldo > 0.01 else ('importe-ok' if liq.saldo < -0.01 else '') }}">{{ liq.saldo | miles }}</div>
+      <div class="kpi-sub">{{ 'Impago' if liq.saldo > 0.01 else ('Aplicado de más' if liq.saldo < -0.01 else 'Cancelada') }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Vencimiento</div><div class="kpi-val">{{ liq.vencimiento.strftime('%d/%m/%Y') if liq.vencimiento else '—' }}</div>
+      <div class="kpi-sub">{% if mora is not none %}{{ mora }} día(s) de mora{% else %}Sin mora{% endif %}</div></div></div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Liquidación', nota=origenes.get(liq.origen, liq.origen)) }}
+  <div class="card-body">
+    <div class="datos">
+      {% set lsd = liq.origen == 'lsd' %}
+      {{ dato('Activos del empleador', liq.afiliados_activos) }}
+      {{ dato('En el archivo' if lsd else 'Con DDJJ', liq.activos_con_ddjj) }}
+      {{ dato('No están en el archivo' if lsd else 'Sin DDJJ', liq.activos_sin_ddjj) }}
+      {{ dato('% en el archivo' if lsd else '% con DDJJ', (('%.2f'|format(liq.porc_ddjj|float)).replace('.', ',') ~ ' %') if liq.porc_ddjj is not none else 'Sin activos') }}
+      {{ dato('Afiliados liquidados', liq.afiliados) }}
+      {{ dato('Remuneración', '$ ' ~ ((liq.remuneracion or 0) | miles), mono=True) }}
+      {{ dato('Alícuota', ('%.2f'|format(liq.alicuota|float)).replace('.', ',') ~ ' %') }}
+      {% if liq.aeda_importe is not none %}{{ dato('Liquidado por AEDA', '$ ' ~ (liq.aeda_importe | miles) ~ ' · ' ~ (liq.aeda_afiliados or 0) ~ ' afiliado(s)', mono=True) }}{% endif %}
+      {{ dato('Liquidada', liq.fecha.strftime('%d/%m/%Y') ~ (' · ' ~ liq.usuario if liq.usuario else '')) }}
+      {{ dato('Estado', 'Anulada' if liq.estado == 'anulada' else 'Vigente') }}
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cobros aplicados a esta cuota', nota='$ ' ~ (liq.aplicado | miles)) }}
+  {{ ui.barra_filtros('Buscar por número o motivo…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-aplic" data-exportar="Cobros aplicados {{ cuit }} {{ liq.periodo | periodo }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-center" data-orden="asc">Fecha del cobro</th><th>Número</th><th class="th-center">Período del cobro</th>
+        <th class="th-center">Aplicado</th><th class="th-center">Origen</th><th>Observaciones</th><th class="th-right">Importe</th>
+      </tr></thead>
+      <tbody>
+        {% for a in aplicadas %}
+        <tr class="{{ 'fila-baja' if a.muerta }}">
+          <td><div class="acciones">{{ enlace_cobro(a.id_orden, a.clase) }}</div></td>
+          <td class="td-center" data-num="{{ a.fecha_cobro.toordinal() if a.fecha_cobro else 0 }}">{{ a.fecha_cobro.strftime('%d/%m/%Y') if a.fecha_cobro else '—' }}</td>
+          <td class="td-wrap"><span class="td-mono">{{ a.nro_orden or a.id_orden }}</span>{% if a.muerta %}<span class="td-motivo">No cuenta: {{ a.muerta }}</span>{% endif %}</td>
+          <td class="td-center td-mono">{{ a.periodo_cobro | periodo if a.periodo_cobro else '—' }}</td>
+          <td class="td-center" data-num="{{ a.fecha.toordinal() if a.fecha else 0 }}">{{ a.fecha.strftime('%d/%m/%Y') if a.fecha else '' }}</td>
+          <td class="td-center">{{ ui.estado(origenes_aplic.get(a.origen, a.origen), 'info' if a.origen == 'manual' else 'neutro') }}</td>
+          <td class="td-muted td-wrap">{{ a.observaciones or '' }}{% if a.usuario %}<div class="chico">{{ a.usuario }}</div>{% endif %}</td>
+          <td class="td-right td-fuerte" data-num="{{ a.importe }}">{{ a.importe | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Ningún cobro está aplicado a esta cuota.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% if pendientes %}
+<div class="card">
+  {{ ui.card_head('Cobros de este período sin aplicar', nota='$ ' ~ ((pendientes | sum(attribute='sin_aplicar')) | miles) ~ ' a favor del empleador'
+                  ~ (' · se aplican desde Aplicación de Cobros' if puede_aplicar else '')) }}
+  {{ ui.barra_filtros('Buscar por número o motivo…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-pend" data-exportar="Cobros sin aplicar {{ cuit }} {{ liq.periodo | periodo }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-center" data-orden="asc">Fecha</th><th>Número</th><th>Motivo</th>
+        <th class="th-right">Importe</th><th class="th-right">Aplicado</th><th class="th-right">Sin aplicar</th>
+      </tr></thead>
+      <tbody>
+        {% for c in pendientes %}
+        <tr>
+          <td><div class="acciones">{{ enlace_cobro(c.id_orden, c.clase) }}</div></td>
+          <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
+          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td>{{ c.motivo or '—' }}</td>
+          <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+          <td class="td-right" data-num="{{ c.aplicado }}">{{ c.aplicado | miles if c.aplicado else '—' }}</td>
+          <td class="td-right td-fuerte importe-pendiente" data-num="{{ c.sin_aplicar }}">{{ c.sin_aplicar | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Afiliados', nota=detalle | length ~ ' renglón(es)') }}
+  {% call ui.barra_filtros('Buscar por CUIL o nombre…', tam_pagina=50) %}
+    {% call ui.filtro('DDJJ') %}<select class="filtro" id="f-fuente">
+      <option value="">Todos</option>
+      {% for k, t in fuentes.items() if k in detalle | map(attribute='fuente') | list %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Del empleador') %}<select class="filtro" id="f-activo">
+      <option value="">Todos</option>
+      <option value="1">Activos del empleador</option>
+      <option value="0">Sin relación laboral con él</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-detalle" data-exportar="Cuota sindical {{ liq.periodo | periodo }} {{ cuit }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>CUIL</th><th>Apellido y nombres</th><th>DDJJ</th><th>Activo del empleador</th>
+        <th class="th-right">Remuneración</th><th class="th-right">Cuota</th>
+      </tr></thead>
+      <tbody>
+        {% for d in detalle %}
+        <tr data-fuente="{{ d.fuente }}" data-activo="{{ d.activo }}">
+          <td><div class="acciones">
+            {% if d.id_afiliado and puede_padron %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=d.id_afiliado), titulo='Ver el afiliado') }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ d.cuil }}</td>
+          <td>{{ d.nombre or '' }}{% if not d.id_afiliado %} {{ ui.estado('No está en el padrón', 'warn') }}{% endif %}</td>
+          <td>{{ ui.estado(fuentes.get(d.fuente, d.fuente), fuente_tipo.get(d.fuente, 'neutro')) }}</td>
+          <td>{% if d.fuente == 'aeda' %}<span class="muted">—</span>{% else %}{{ ui.si_no(d.activo) }}{% endif %}</td>
+          <td class="td-right" data-num="{{ d.remuneracion }}">{{ (d.remuneracion or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ d.cuota }}">{{ (d.cuota or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">Sin renglones.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-aplic', { pageSize: 20 });
+  if (document.getElementById('tbl-pend')) gestion_admTable('tbl-pend', { pageSize: 20 });
+  var fFuente = document.getElementById('f-fuente'), fActivo = document.getElementById('f-activo');
+  gestion_admTable('tbl-detalle', { pageSize: 50, filtroExtra: function (tr) {
+    if (fFuente.value && tr.dataset.fuente !== fFuente.value) return false;
+    if (fActivo.value && tr.dataset.activo !== fActivo.value) return false;
+    return true; } });
+});
+</script>
+{% endblock %}

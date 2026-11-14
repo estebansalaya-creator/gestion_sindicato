@@ -27,9 +27,9 @@
 
 {% macro enlace_cobro(c) -%}
   {%- if c.clase == 'cuota_sindical' and puede_rec -%}
-    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo', blank=True) }}
+    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo') }}
   {%- elif puede_ingreso -%}
-    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso', blank=True) }}
+    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso') }}
   {%- endif -%}
 {%- endmacro %}
 
@@ -132,7 +132,7 @@
         {% set l = x.liq %}
         <tr>
           <td><div class="acciones">
-            {% if l and puede_liq %}{{ ui.accion('ver', href=url_for('fisca_liq.liquidacion_ficha', id_liq=l.id), titulo='Ver la liquidación', blank=True) }}{% endif %}
+            {{ ui.accion('ver', href=url_for('cc_emp.periodo', cuit=cuit, periodo=x.periodo, volver=request.full_path), titulo='Ver la cuota del período') }}
           </div></td>
           <td class="td-center td-mono">{{ x.periodo | periodo }}</td>
           <td class="td-center">{{ x.vencimiento.strftime('%d/%m/%Y') if x.vencimiento else '—' }}</td>

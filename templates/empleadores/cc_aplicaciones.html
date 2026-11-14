@@ -35,9 +35,9 @@
 
 {% macro enlace_cobro(c) -%}
   {%- if c.clase == 'cuota_sindical' and puede_rec -%}
-    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo', blank=True) }}
+    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo') }}
   {%- elif puede_ingreso -%}
-    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso', blank=True) }}
+    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso') }}
   {%- endif -%}
 {%- endmacro %}
 

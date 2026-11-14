@@ -145,7 +145,8 @@ repetiría en la URL lo que dice el dominio.
 /login /logout /menu
 /empleadores         ABM, ?edit=ID
 /empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
-                     (?desde, ?hasta, ?con_saldo=1); /aplicaciones (?cuit=), /aplicaciones/aplicar,
+                     (?desde, ?hasta, ?con_saldo=1); /<cuit>/<periodo> la cuota del período (?volver);
+                     /aplicaciones (?cuit=), /aplicaciones/aplicar,
                      /aplicaciones/<id>/desaplicar, /aplicaciones/automatica POST
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
 /afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
@@ -530,6 +531,10 @@ Saldo = Debe − Haber, positivo = debe (rojo), negativo = pagó de más (verde)
   (lo anterior al «desde» es el saldo anterior), días de mora y lo que había liquidado AEDA; debajo, los cobros con lo
   aplicado, lo sin aplicar y a qué períodos, con enlace al recibo o a la orden de ingreso. Botón «Cuenta corriente» en
   la ficha del empleador.
+- **La cuota de un período** (`/empleadores/cc/<cuit>/<periodo>`, `cc_periodo.html`, pedido del 14/11/2026): el «ver»
+  del estado de cuenta abre en la misma pestaña (no la ficha de Liquidación en otra) la liquidación con lo aplicado y
+  el saldo, los cobros aplicados, los cobros de ese período sin aplicar y los afiliados; «Estado de cuenta» vuelve con
+  los mismos filtros. Las pantallas de la cuenta corriente no abren pestañas nuevas.
 - Al 14/11/2026, desde 202401 y antes de las aplicaciones: 456 CUIT, liquidado $ 1.763,7 M, cobrado $ 2.269,8 M.
 - **Pendiente**: intereses por mora, PDF del estado de cuenta.
 
