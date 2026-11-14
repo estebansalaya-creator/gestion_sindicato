@@ -103,6 +103,7 @@ gestion_sindicato/
   contable_oseda.py       lectura en vivo (solo lectura) de las DDJJ de OSEDA en contable de Railway
   cruce_nomina_ddjj.py    qué empleadores tienen toda su nómina de AEDA en la DDJJ de OSEDA (planillas en logs/)
   cruce_atributo_aeda.py  si los titulares activos de AEDA tienen la marca «AEDA» en el padrón de OSEDA (logs/)
+  antiguedad_ddjj.py      antigüedad de los afiliados por la DDJJ de OSEDA (oseda.dbo.afi_redapo) contra el ingreso del padrón (logs/)
   adjuntos/               comprobantes de reintegros y el logo (SIND_ADJUNTOS); NO va al repositorio
   .env                    variables del entorno — NO va al repositorio
   .env.example            plantilla versionada
@@ -591,6 +592,12 @@ cumplidos y la última DDJJ de OSEDA de ese CUIL **para ese CUIT** con su remune
   (el más nuevo con al menos el 80 % de las filas del anterior) y en una ventana de 6. Estados: en la DDJJ, en otro
   período, con otro empleador, no está. «100 %» = todos sus afiliados en su DDJJ del período. Deja el resumen y dos
   planillas (empleadores y afiliados) en `logs/`.
+- **Antigüedad por DDJJ** (`antiguedad_ddjj.py`, pedido del 14/11/2026, no escribe nada): para cada titular activo
+  con relación vigente, el tramo actual de DDJJ de ESE empleador en `oseda.dbo.afi_redapo` del SQL Server de origen
+  (no `f_ddjj_procesada` de contable, que descartó períodos: afi_redapo va desde 199607), cortado por más de 2 meses
+  seguidos sin DDJJ, contra `fecha_inicio` del padrón: coincide, DDJJ anterior, DDJJ posterior, sin fecha, sin DDJJ;
+  sugiere la más antigua. Al 14/11/2026: 1.573 de 1.907 tienen DDJJ de su empleador. El archivo del LSD no trae la
+  fecha de ingreso: solo el registro 05, que es de los trabajadores eventuales.
 - **Marca AEDA en OSEDA** (`cruce_atributo_aeda.py`, pedido del 11/11/2026, no escribe nada): los titulares del
   padrón contra `p_afiliados` de contable y su atributo «AEDA — Afiliado al Gremio» (`p_atributos_por_afiliado`, por
   rótulo). Resultado por CUIL: correcto, falta la marca, de baja en OSEDA, familiar en OSEDA, no está en OSEDA, y
