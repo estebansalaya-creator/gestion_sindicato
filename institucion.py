@@ -185,10 +185,13 @@ def _leer_form(form) -> tuple[dict, list[str]]:
         if alic is None or not (0 < alic <= 100):
             errores.append("La alícuota de la cuota sindical tiene que ser un porcentaje mayor que 0 y hasta 100.")
         v["cuota_alicuota"] = alic
-        dia = (form.get("cuota_dia_vto") or "").strip()
-        if not dia.isdigit() or not (1 <= int(dia) <= 31):
-            errores.append("El día de vencimiento de la cuota sindical va de 1 a 31.")
-        v["cuota_dia_vto"] = int(dia) if dia.isdigit() else None
+        # El vencimiento ya no se configura: es el del F.931 del CUIT (fisca_intereses.py).
+    if "acta_plazo_dias" in form:
+        plazo = (form.get("acta_plazo_dias") or "").strip()
+        if plazo and not (plazo.isdigit() and 0 < int(plazo) <= 365):
+            errores.append("El plazo para pagar el acta va de 1 a 365 días.")
+        v["acta_plazo_dias"] = int(plazo) if plazo.isdigit() else None
+        v["acta_lugar_pago"] = (form.get("acta_lugar_pago") or "").strip()[:300] or None
     return v, errores
 
 

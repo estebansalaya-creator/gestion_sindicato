@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Actas de Fiscalización{% endblock %}
+
+{#
+  Lista de actas de fiscalización (fisca_acta.actas). Un acta nueva se arma
+  para un CUIT: desde acá o desde el estado de cuenta del empleador. Filtros al
+  servidor: estado y buscar; en el navegador se ordena, pagina y exporta.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Actas de Fiscalización</h1>
+    <p>La deuda de cuota sindical de un empleador, con los intereses resarcitorios de ARCA desde el vencimiento del F.931.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/fiscalizacion/acuerdos') %}{{ ui.boton('Acuerdos de pago', 'secondary', href=url_for('fisca_acta.acuerdos')) }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {{ ui.card_head('Acta nueva', 'para un empleador: se calcula con lo que dice hoy su cuenta corriente') }}
+  <form method="get" action="{{ url_for('fisca_acta.acta_nueva') }}" class="filter-bar">
+    {% call ui.filtro('CUIT del empleador') %}<input type="text" name="cuit" class="mono" size="15" inputmode="numeric" placeholder="30-12345678-9" required>{% endcall %}
+    {{ ui.boton('Calcular', submit=True, chico=True) }}
+  </form>
+</div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('fisca_acta.actas') }}" class="filter-bar">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+      <input type="search" name="q" value="{{ q }}" class="filter-input" placeholder="Número, razón social o CUIT…"></label>
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro-srv" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, v in estados.items() %}<option value="{{ k }}" {{ 'selected' if estado == k }}>{{ v[0] }}</option>{% endfor %}
+    </select>{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if q or estado %}<a href="{{ url_for('fisca_acta.actas') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}<button type="button" class="btn btn-secondary btn-sm" disabled>{{ ui.icono('quitar_filtro') }}Quitar filtro</button>{% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count"></span>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar a Excel</button>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+  </form>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-actas" data-exportar="Actas de fiscalización">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Acta</th><th class="th-center">Fecha</th><th>Empleador</th><th>CUIT</th>
+        <th class="th-center">Períodos</th><th class="th-center">Intereses al</th>
+        <th class="th-right">Deuda</th><th class="th-right">Intereses</th><th class="th-right">Total</th>
+        <th>Estado</th><th>Acuerdo</th><th>Inspector</th>
+      </tr></thead>
+      <tbody>
+        {% for a in filas %}
+        <tr class="{{ 'fila-baja' if a.estado == 'anulada' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_acta.acta', id_acta=a.id), titulo='Ver el acta') }}
+            {% if a.estado != 'anulada' %}{{ ui.accion('pdf', href=url_for('fisca_acta.acta_pdf', id_acta=a.id), titulo='PDF del acta') }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ a.nro_acta }}</td>
+          <td class="td-center" data-num="{{ a.fecha_acta.toordinal() }}">{{ a.fecha_acta.strftime('%d/%m/%Y') }}</td>
+          <td class="td-fuerte">{{ a.razon_social or '' }}</td>
+          <td class="td-mono td-muted">{{ a.cuit }}</td>
+          <td class="td-center td-mono">{% if a.per_min %}{{ a.per_min | periodo }}{% if a.per_max != a.per_min %} a {{ a.per_max | periodo }}{% endif %} <span class="chico muted">({{ a.periodos }})</span>{% else %}—{% endif %}</td>
+          <td class="td-center">{{ a.fecha_calculo.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ a.deuda }}">{{ a.deuda | miles }}</td>
+          <td class="td-right" data-num="{{ a.interes }}">{{ a.interes | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ a.total }}">{{ a.total | miles }}</td>
+          <td>{{ ui.estado(estados[a.estado][0], estados[a.estado][1]) }}</td>
+          <td>{% if a.acuerdo %}<span class="td-mono">{{ a.acuerdo }}</span> {{ ui.estado(estados_acuerdo[a.estado_acuerdo][0], estados_acuerdo[a.estado_acuerdo][1]) }}{% else %}—{% endif %}</td>
+          <td class="chico">{{ a.inspector or '' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="13" class="no-data">No hay actas{{ ' con ese filtro' if q or estado }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-actas', { pageSize: 50 }); });
+</script>
+{% endblock %}

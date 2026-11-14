@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Acuerdos de Pago{% endblock %}
+
+{#
+  Lista de acuerdos de pago (fisca_acta.acuerdos). Un acuerdo se carga sobre un
+  acta cerrada, desde la ficha del acta.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Acuerdos de Pago</h1>
+    <p>La deuda de un acta de fiscalización cerrada, en cuotas. Se cargan desde el acta.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/fiscalizacion/actas') %}{{ ui.boton('Actas', 'secondary', href=url_for('fisca_acta.actas')) }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  <form method="get" action="{{ url_for('fisca_acta.acuerdos') }}" class="filter-bar">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+      <input type="search" class="filter-input" placeholder="Número, acta, razón social o CUIT…"></label>
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro-srv" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, v in estados.items() %}<option value="{{ k }}" {{ 'selected' if estado == k }}>{{ v[0] }}</option>{% endfor %}
+    </select>{% endcall %}
+    <button type="button" class="btn btn-primary btn-sm btn-filtrar">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if estado %}<a href="{{ url_for('fisca_acta.acuerdos') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}<button type="button" class="btn btn-secondary btn-sm btn-quitar-filtro" disabled>{{ ui.icono('quitar_filtro') }}Quitar filtro</button>{% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count"></span>
+      <button type="button" class="btn btn-excel btn-sm btn-exportar">{{ ui.icono('planilla') }}Exportar a Excel</button>
+      <select class="page-size-select" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}">{{ n }} por pág.</option>{% endfor %}
+        <option value="9999">Todos</option>
+      </select>
+    </div>
+  </form>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-acuerdos" data-exportar="Acuerdos de pago">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Acuerdo</th><th class="th-center">Fecha</th><th>Empleador</th><th>CUIT</th><th>Acta</th>
+        <th class="th-right">Deuda</th><th class="th-right">Interés financ.</th><th class="th-right">Total</th>
+        <th class="th-center" data-tipo="n">Cuotas</th><th class="th-center">Primera</th><th class="th-center">Última</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for x in filas %}
+        <tr class="{{ 'fila-baja' if x.estado == 'anulado' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_acta.acuerdo', id_acta=x.id_acta, id=x.id), titulo='Ver el acuerdo') }}
+            {% if x.estado != 'anulado' %}{{ ui.accion('pdf', href=url_for('fisca_acta.acuerdo_pdf', id_acuerdo=x.id), titulo='PDF del acuerdo') }}{% endif %}
+          </div></td>
+          <td class="td-mono">{{ x.nro_acuerdo }}</td>
+          <td class="td-center" data-num="{{ x.fecha_acuerdo.toordinal() }}">{{ x.fecha_acuerdo.strftime('%d/%m/%Y') }}</td>
+          <td class="td-fuerte">{{ x.razon_social or '' }}</td>
+          <td class="td-mono td-muted">{{ x.cuit }}</td>
+          <td class="td-mono">{{ x.nro_acta }}</td>
+          <td class="td-right" data-num="{{ x.monto_deuda }}">{{ x.monto_deuda | miles }}</td>
+          <td class="td-right" data-num="{{ x.interes_financiacion }}">{{ x.interes_financiacion | miles if x.interes_financiacion else '—' }}</td>
+          <td class="td-right td-fuerte" data-num="{{ x.monto_total }}">{{ x.monto_total | miles }}</td>
+          <td class="td-center">{{ x.cantidad_cuotas }}</td>
+          <td class="td-center">{{ x.primera.strftime('%d/%m/%Y') if x.primera else '—' }}</td>
+          <td class="td-center">{{ x.ultima.strftime('%d/%m/%Y') if x.ultima else '—' }}</td>
+          <td>{{ ui.estado(estados[x.estado][0], estados[x.estado][1]) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="13" class="no-data">No hay acuerdos de pago{{ ' en ese estado' if estado }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-acuerdos', { pageSize: 50 }); });
+</script>
+{% endblock %}

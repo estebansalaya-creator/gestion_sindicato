@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Acta {{ a.nro_acta }} · {{ a.cuit }}{% endblock %}
+
+{#
+  Acta de fiscalización (fisca_acta.acta_nueva / fisca_acta.acta): la deuda de
+  cuota sindical del empleador con los intereses resarcitorios de ARCA.
+  Nueva: lo calculado con los datos del formulario («Recalcular» vuelve a
+  pedirlo, sin guardar). Abierta: lo grabado; «Guardar y recalcular» lo rehace
+  con los datos de hoy. Cerrada o anulada: solo lectura. Ver fisca_actas.py.
+#}
+
+{% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
+<div class="kpi-card"><div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div><div>
+  <div class="kpi-lbl">{{ rotulo }}</div>
+  <div class="kpi-val monto {{ clase }}">{{ valor }}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+</div></div>
+{%- endmacro %}
+
+{% block content %}
+{% set est = estados[a.estado] %}
+<div class="page-header">
+  <div>
+    <h1>Acta de fiscalización {% if a.id %}{{ a.nro_acta }}{% else %}nueva{% endif %} {{ ui.estado(est[0], est[1]) }}</h1>
+    <p>{{ a.razon_social or '(no está en Empleadores)' }} · CUIT <span class="mono">{{ a.cuit }}</span></p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Actas', 'secondary', href=url_for('fisca_acta.actas'), icono_='volver') }}
+    {% if puede_cc %}{{ ui.boton('Cuenta corriente', 'secondary', href=url_for('cc_emp.estado_cuenta', cuit=a.cuit)) }}{% endif %}
+    {% if a.id and a.estado != 'anulada' %}{{ ui.boton('PDF', 'pdf', href=url_for('fisca_acta.acta_pdf', id_acta=a.id), icono_='pdf') }}{% endif %}
+    {% if a.id and a.estado == 'cerrada' and puede_acuerdo %}
+      {{ ui.boton('Acuerdo de pago', href=url_for('fisca_acta.acuerdo', id_acta=a.id)) }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if error %}{{ ui.aviso(error, 'danger') }}{% endif %}
+{% if a.estado == 'anulada' %}
+  {{ ui.aviso('Anulada el ' ~ (a.anulado.strftime('%d/%m/%Y') if a.anulado else '') ~ (' por ' ~ a.usuario_anulacion if a.usuario_anulacion else '') ~ ': ' ~ (a.motivo_anulacion or ''), 'danger') }}
+{% elif a.estado == 'cerrada' %}
+  {{ ui.aviso('Cerrada el ' ~ (a.cerrado.strftime('%d/%m/%Y') if a.cerrado else '') ~ (' por ' ~ a.usuario_cierre if a.usuario_cierre else '') ~ ': la deuda quedó firme y no se recalcula.', 'info') }}
+{% elif not a.id %}
+  {{ ui.aviso('Todavía no está guardada. Revisá el cálculo; «Guardar acta» la numera y la deja abierta para corregirla hasta cerrarla.', 'info') }}
+{% endif %}
+
+<form method="post" action="{{ url_for('fisca_acta.acta_guardar') }}" id="form-acta" class="card">
+  <input type="hidden" name="id" value="{{ a.id or '' }}">
+  <input type="hidden" name="cuit" value="{{ a.cuit }}">
+  <fieldset class="solo-lectura" {{ 'disabled' if not editable }}>
+  <div class="card-body">
+    <div class="bloque">
+      <div class="bloque-titulo">Cálculo</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label for="fecha_calculo">Intereses hasta <span class="req">*</span></label>
+          <input type="date" name="fecha_calculo" id="fecha_calculo" required value="{{ a.fecha_calculo.isoformat() if a.fecha_calculo else '' }}">
+          <small class="campo-ayuda">La fecha de cálculo del resarcitorio.</small></div>
+        <div class="campo" style="--span:3;"><label for="periodo_desde">Período desde</label>
+          <input type="month" name="periodo_desde" id="periodo_desde" value="{{ a.periodo_desde | periodo if a.periodo_desde else '' }}">
+          <small class="campo-ayuda">Vacío: desde el primero con deuda.</small></div>
+        <div class="campo" style="--span:3;"><label for="periodo_hasta">Período hasta</label>
+          <input type="month" name="periodo_hasta" id="periodo_hasta" value="{{ a.periodo_hasta | periodo if a.periodo_hasta else '' }}">
+          <small class="campo-ayuda">Vacío: hasta el último vencido.</small></div>
+        <div class="campo" style="--span:3;"><label>&nbsp;</label>
+          <label class="campo-check"><input type="checkbox" name="con_pagos_tarde" value="1" {{ 'checked' if a.con_pagos_tarde }}> Reclamar el interés de lo pagado fuera de término</label>
+          <input type="hidden" name="con_pagos_tarde" value="0"></div>
+      </div>
+    </div>
+
+    <div class="bloque">
+      <div class="bloque-titulo">Acta</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label for="fecha_acta">Fecha <span class="req">*</span></label>
+          <input type="date" name="fecha_acta" id="fecha_acta" required value="{{ a.fecha_acta.isoformat() if a.fecha_acta else '' }}"></div>
+        <div class="campo" style="--span:2;"><label for="hora_acta">Hora</label>
+          <input type="time" name="hora_acta" id="hora_acta" value="{{ a.hora_acta or '' }}"></div>
+        <div class="campo" style="--span:5;"><label for="inspector">Inspector <span class="req">*</span></label>
+          <input type="text" name="inspector" id="inspector" maxlength="150" list="lista-inspectores" value="{{ a.inspector or '' }}" autocomplete="off"></div>
+        <div class="campo" style="--span:2;"><label for="inspector_dni">DNI del inspector</label>
+          <input type="text" name="inspector_dni" id="inspector_dni" maxlength="20" value="{{ a.inspector_dni or '' }}"></div>
+      </div>
+      <datalist id="lista-inspectores">{% for i in inspectores %}<option value="{{ i.inspector }}" data-dni="{{ i.dni or '' }}">{% endfor %}</datalist>
+    </div>
+
+    <div class="bloque">
+      <div class="bloque-titulo">Empleador</div>
+      <div class="campos">
+        <div class="campo" style="--span:6;"><label for="domicilio">Domicilio</label>
+          <input type="text" name="domicilio" id="domicilio" maxlength="300" value="{{ a.domicilio or '' }}"></div>
+        <div class="campo" style="--span:6;"><label for="actividad">Actividad</label>
+          <input type="text" name="actividad" id="actividad" maxlength="200" value="{{ a.actividad or '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="telefono">Teléfono</label>
+          <input type="text" name="telefono" id="telefono" maxlength="100" value="{{ a.telefono or '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="email">Correo</label>
+          <input type="text" name="email" id="email" maxlength="150" value="{{ a.email or '' }}"></div>
+        <div class="campo" style="--span:4;"></div>
+        <div class="campo" style="--span:5;"><label for="representante">Atiende por el empleador</label>
+          <input type="text" name="representante" id="representante" maxlength="200" value="{{ a.representante or '' }}" placeholder="Apellido y nombre"></div>
+        <div class="campo" style="--span:3;"><label for="representante_dni">DNI</label>
+          <input type="text" name="representante_dni" id="representante_dni" maxlength="20" value="{{ a.representante_dni or '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="representante_cargo">Cargo</label>
+          <input type="text" name="representante_cargo" id="representante_cargo" maxlength="100" value="{{ a.representante_cargo or '' }}"></div>
+      </div>
+    </div>
+
+    <div class="bloque">
+      <div class="bloque-titulo">Intimación de pago</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label for="fecha_pago">Pagar hasta</label>
+          <input type="date" name="fecha_pago" id="fecha_pago" value="{{ a.fecha_pago.isoformat() if a.fecha_pago else '' }}"></div>
+        <div class="campo" style="--span:9;"><label for="lugar_pago">Lugar de pago</label>
+          <input type="text" name="lugar_pago" id="lugar_pago" maxlength="300" value="{{ a.lugar_pago or '' }}"></div>
+        <div class="campo" style="--span:12;"><label for="observaciones">Observaciones</label>
+          <textarea name="observaciones" id="observaciones" maxlength="1000" rows="2">{{ a.observaciones or '' }}</textarea></div>
+      </div>
+    </div>
+  </div>
+  </fieldset>
+  {% if editable %}
+  <div class="form-acciones">
+    {% if not a.id %}
+      <button type="submit" class="btn btn-secondary" formmethod="get" formaction="{{ url_for('fisca_acta.acta_nueva') }}"
+              formnovalidate title="Vuelve a calcular con estos datos, sin guardar">{{ ui.icono('historial') }}Recalcular</button>
+      {{ ui.boton('Guardar acta', submit=True) }}
+    {% else %}
+      {{ ui.boton('Guardar y recalcular', submit=True) }}
+    {% endif %}
+  </div>
+  {% endif %}
+</form>
+
+{% if calc %}
+{% set t = calc.totales %}
+<div class="kpi-row">
+  {{ kpi('dinero', 'danger', 'Deuda', t.saldo | miles, 'importe-danger', (calc.periodos | length) ~ ' período(s)') }}
+  {{ kpi('reloj', 'warn', 'Interés del saldo', t.interes_saldo | miles, 'importe-pendiente',
+         ('Tasa al ' ~ a.fecha_calculo.strftime('%d/%m/%Y') ~ ': ' ~ ('%.2f'|format(calc.tasa_hoy.resarcitorio|float)).replace('.', ',') ~ ' % mensual') if calc.tasa_hoy else '') }}
+  {{ kpi('reloj', 'warn', 'Interés de pagos tarde', t.interes_pagos | miles, 'importe-pendiente', 'Lo cobrado después del vencimiento') }}
+  {{ kpi('planilla', 'danger', 'Total del acta', t.total | miles, 'importe-danger') }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Deuda por período', 'vencimiento del F.931 del CUIT · resarcitorio de ARCA hasta el ' ~ a.fecha_calculo.strftime('%d/%m/%Y')) }}
+  {{ ui.barra_filtros('Buscar por período…', 50) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-periodos" data-exportar="Acta {{ a.nro_acta }} {{ a.cuit }}">
+      <thead><tr>
+        <th class="th-center" data-orden="asc">Período</th><th class="th-center">Vencimiento</th>
+        <th class="th-right">Liquidado</th><th class="th-right">Pagado en término</th><th class="th-right">Pagado tarde</th>
+        <th class="th-right">Saldo</th><th class="th-center" data-tipo="n">Días de mora</th>
+        <th class="th-right">Int. saldo</th><th class="th-right">Int. pagos tarde</th><th class="th-right">Total</th>
+      </tr></thead>
+      <tbody>
+        {% for p in calc.periodos %}
+        <tr>
+          <td class="td-center td-mono">{{ p.periodo | periodo }}</td>
+          <td class="td-center">{{ p.vencimiento.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ p.liquidado }}">{{ p.liquidado | miles }}</td>
+          <td class="td-right" data-num="{{ p.pagado_termino }}">{{ p.pagado_termino | miles if p.pagado_termino else '—' }}</td>
+          <td class="td-right" data-num="{{ p.pagado_tarde }}">{{ p.pagado_tarde | miles if p.pagado_tarde else '—' }}</td>
+          <td class="td-right importe-danger" data-num="{{ p.saldo }}">{{ p.saldo | miles if p.saldo else '—' }}</td>
+          <td class="td-center">{{ p.dias_mora }}</td>
+          <td class="td-right" data-num="{{ p.interes_saldo }}">{{ p.interes_saldo | miles if p.interes_saldo else '—' }}</td>
+          <td class="td-right" data-num="{{ p.interes_pagos }}">{{ p.interes_pagos | miles if p.interes_pagos else '—' }}</td>
+          <td class="td-right td-fuerte" data-num="{{ p.total }}">{{ p.total | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">Nada que reclamar: ningún período vencido con saldo{{ ' ni pagado fuera de término' if a.con_pagos_tarde }}.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% set pagos = [] %}{% for p in calc.periodos %}{% for g in p.pagos %}{% set _ = pagos.append((p.periodo, g)) %}{% endfor %}{% endfor %}
+{% if pagos %}
+<div class="card">
+  {{ ui.card_head('Pagos fuera de término', 'el resarcitorio de cada cobro, del vencimiento a la fecha en que se cobró') }}
+  {{ ui.barra_filtros('Buscar por período o número…', 50) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-pagos" data-exportar="Pagos fuera de término {{ a.nro_acta }} {{ a.cuit }}">
+      <thead><tr>
+        <th class="th-center" data-orden="asc">Período</th><th>Cobro</th><th class="th-center">Fecha</th>
+        <th class="th-right">Importe aplicado</th><th class="th-center" data-tipo="n">Días</th><th class="th-right">Interés</th>
+      </tr></thead>
+      <tbody>
+        {% for per, g in pagos %}
+        <tr>
+          <td class="td-center td-mono">{{ per | periodo }}</td>
+          <td class="td-mono">{{ g.nro_orden or g.id_orden }}</td>
+          <td class="td-center" data-num="{{ g.fecha_cobro.toordinal() }}">{{ g.fecha_cobro.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ g.importe }}">{{ g.importe | miles }}</td>
+          <td class="td-center">{{ g.dias }}</td>
+          <td class="td-right td-fuerte" data-num="{{ g.interes }}">{{ g.interes | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+{% endif %}
+
+{% if calc.afuera %}
+{{ ui.aviso('No entran por estar en un acta cerrada: ' ~ (calc.afuera | map(attribute='periodo') | map('periodo') | join(', '))
+            ~ ' (' ~ (calc.afuera | map(attribute='nro_acta') | unique | join(', ')) ~ '). Para volver a reclamarlos, anulá esa acta.', 'warning') }}
+{% endif %}
+{% endif %}
+
+{% if a.acuerdos %}
+<div class="card">
+  {{ ui.card_head('Acuerdos de pago') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" data-sin-orden>
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Acuerdo</th><th>Estado</th><th class="th-center">Cuotas</th><th class="th-right">Total</th></tr></thead>
+      <tbody>
+        {% for x in a.acuerdos %}
+        <tr>
+          <td><div class="acciones">{% if puede_acuerdo %}{{ ui.accion('ver', href=url_for('fisca_acta.acuerdo', id_acta=a.id, id=x.id), titulo='Ver el acuerdo') }}{% endif %}</div></td>
+          <td class="td-mono">{{ x.nro_acuerdo }}</td>
+          <td>{{ ui.estado(estados_acuerdo[x.estado][0], estados_acuerdo[x.estado][1]) }}</td>
+          <td class="td-center">{{ x.cantidad_cuotas }}</td>
+          <td class="td-right">{{ x.monto_total | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if a.id and a.estado != 'anulada' %}
+<div class="card">
+  {{ ui.card_head('Estado del acta') }}
+  <div class="card-body">
+    <div class="form-acciones">
+      {% if a.estado == 'abierta' %}
+      <form method="post" action="{{ url_for('fisca_acta.acta_cerrar', id_acta=a.id) }}" class="form-en-linea"
+            onsubmit="return confirm('¿Cerrar el acta? La deuda queda firme y ya no se recalcula.');">
+        {{ ui.boton('Cerrar acta', submit=True) }}
+      </form>
+      {% endif %}
+      {{ ui.boton('Anular acta', 'danger', onclick="abrirModal('modal-anular')", icono_='baja') }}
+    </div>
+    <p class="campo-ayuda">{% if a.estado == 'abierta' %}Mientras está abierta se corrige y se recalcula. Al cerrarla, la deuda queda firme y se puede cargar el acuerdo de pago.{% else %}Anularla deja sus períodos libres para otra acta; no se puede con un acuerdo vigente.{% endif %}</p>
+  </div>
+</div>
+
+<div class="modal" id="modal-anular">
+  <form method="post" action="{{ url_for('fisca_acta.acta_anular', id_acta=a.id) }}" class="modal-caja">
+    <div class="modal-titulo">Anular el acta {{ a.nro_acta }}</div>
+    <div class="campos">
+      <div class="campo" style="--span:12;"><label for="motivo">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="motivo" maxlength="255" required></div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+      {{ ui.boton('Anular', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  if (document.getElementById('tbl-periodos')) gestion_admTable('tbl-periodos', { pageSize: 50 });
+  if (document.getElementById('tbl-pagos')) gestion_admTable('tbl-pagos', { pageSize: 50 });
+  // Elegido un inspector de la lista, su DNI.
+  var insp = document.getElementById('inspector'), dni = document.getElementById('inspector_dni');
+  if (insp) insp.addEventListener('change', function () {
+    var o = Array.from(document.querySelectorAll('#lista-inspectores option')).find(function (x) { return x.value === insp.value; });
+    if (o && o.dataset.dni && !dni.value) dni.value = o.dataset.dni;
+  });
+});
+</script>
+{% endblock %}

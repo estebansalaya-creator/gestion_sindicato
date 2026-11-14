@@ -52,6 +52,9 @@
     {% if puede_aplicar %}
     {{ ui.boton('Aplicar / desaplicar', 'secondary', href=url_for('cc_emp.aplicaciones', cuit=cuit)) }}
     {% endif %}
+    {% if puede_actas %}
+    {{ ui.boton('Acta de fiscalización', href=url_for('fisca_acta.acta_nueva', cuit=cuit)) }}
+    {% endif %}
     {{ ui.boton('Cuenta Corriente', 'secondary', href=url_for('cc_emp.bandeja'), icono_='volver') }}
   </div>
 </div>
@@ -134,7 +137,8 @@
           <td><div class="acciones">
             {{ ui.accion('ver', href=url_for('cc_emp.periodo', cuit=cuit, periodo=x.periodo, volver=request.full_path), titulo='Ver la cuota del período') }}
           </div></td>
-          <td class="td-center td-mono">{{ x.periodo | periodo }}</td>
+          <td class="td-center td-mono">{{ x.periodo | periodo }}
+            {%- if x.acta %}<div>{% if puede_actas %}<a href="{{ url_for('fisca_acta.acta', id_acta=x.acta.id) }}" class="chip {{ 'chip-alerta' if x.acta.estado == 'abierta' }}" title="Reclamado en el acta {{ x.acta.nro_acta }} ({{ x.acta.estado }})">{{ x.acta.nro_acta }}</a>{% else %}<span class="chip">{{ x.acta.nro_acta }}</span>{% endif %}</div>{% endif %}</td>
           <td class="td-center">{{ x.vencimiento.strftime('%d/%m/%Y') if x.vencimiento else '—' }}</td>
           <td>{{ origenes.get(l.origen, l.origen) }}</td>
           <td class="td-center">{% if l %}{{ l.afiliados or 0 }}{% if l.afiliados_activos is not none %} / {{ l.afiliados_activos }}{% endif %}{% else %}—{% endif %}</td>

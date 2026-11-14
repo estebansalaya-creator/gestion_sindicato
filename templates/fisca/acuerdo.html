@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Acuerdo de pago {{ x.nro_acuerdo }}{% endblock %}
+
+{#
+  Acuerdo de pago de un acta cerrada (fisca_acta.acuerdo). La deuda es el total
+  del acta; el interés de financiación se escribe a mano y el cronograma se
+  propone en cuotas iguales (los centavos en la última), editables. Al guardar,
+  el total financiado es la suma de las cuotas y el interés lo que esa suma
+  tiene por encima de la deuda; un cronograma que no la cubre no se graba.
+#}
+
+{% block content %}
+{% set est = estados[x.estado] %}
+<div class="page-header">
+  <div>
+    <h1>Acuerdo de pago {% if x.id %}{{ x.nro_acuerdo }}{% else %}nuevo{% endif %} {{ ui.estado(est[0], est[1]) }}</h1>
+    <p>{{ a.razon_social or '' }} · CUIT <span class="mono">{{ a.cuit }}</span> · Acta <span class="mono">{{ a.nro_acta }}</span></p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Acta', 'secondary', href=url_for('fisca_acta.acta', id_acta=a.id), icono_='volver') }}
+    {{ ui.boton('Acuerdos', 'secondary', href=url_for('fisca_acta.acuerdos')) }}
+    {% if x.id and x.estado != 'anulado' %}{{ ui.boton('PDF', 'pdf', href=url_for('fisca_acta.acuerdo_pdf', id_acuerdo=x.id), icono_='pdf') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if x.estado != 'vigente' %}
+  {{ ui.aviso(est[0] ~ (' el ' ~ x.fecha_estado.strftime('%d/%m/%Y') if x.fecha_estado else '') ~ (' por ' ~ x.usuario_estado if x.usuario_estado else '') ~ (': ' ~ x.motivo_estado if x.motivo_estado else '') ~ '. No se modifica.', 'warning' if x.estado != 'anulado' else 'danger') }}
+{% endif %}
+
+<form method="post" action="{{ url_for('fisca_acta.acuerdo_guardar', id_acta=a.id) }}" id="form-acuerdo" class="card">
+  <input type="hidden" name="id" value="{{ x.id or '' }}">
+  <fieldset class="solo-lectura" {{ 'disabled' if not editable }}>
+  <div class="card-body">
+    <div class="bloque">
+      <div class="bloque-titulo">Deuda</div>
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label for="fecha_acuerdo">Fecha del acuerdo <span class="req">*</span></label>
+          <input type="date" name="fecha_acuerdo" id="fecha_acuerdo" required value="{{ x.fecha_acuerdo.isoformat() if x.fecha_acuerdo else '' }}"></div>
+        <div class="campo" style="--span:3;"><label>Deuda del acta</label>
+          <input type="text" class="importe" id="deuda" value="{{ a.total | miles }}" readonly tabindex="-1" data-valor="{{ a.total }}">
+          <small class="campo-ayuda">Deuda {{ a.deuda | miles }} + intereses {{ (a.interes_saldo + a.interes_pagos) | miles }} al {{ a.fecha_calculo.strftime('%d/%m/%Y') }}.</small></div>
+        <div class="campo" style="--span:3;"><label for="interes">Interés de financiación</label>
+          <input type="text" class="inp-importe" id="interes" inputmode="decimal" value="{{ '%.2f'|format(x.interes_financiacion|float) }}">
+          <small class="campo-ayuda">A mano. Se reparte en las cuotas al generar el cronograma.</small></div>
+        <div class="campo" style="--span:3;"><label>Total a financiar</label>
+          <input type="text" class="importe" id="total" readonly tabindex="-1"></div>
+      </div>
+    </div>
+
+    <div class="bloque">
+      <div class="bloque-titulo">Cronograma</div>
+      <div class="campos">
+        <div class="campo" style="--span:2;"><label for="cant">Cuotas</label>
+          <input type="number" id="cant" min="1" max="120" step="1" value="{{ x.cantidad_cuotas or 1 }}"></div>
+        <div class="campo" style="--span:3;"><label for="primera">Vencimiento de la 1.ª</label>
+          <input type="date" id="primera" value="{{ x.cuotas[0].vencimiento.isoformat() if x.cuotas else '' }}"></div>
+        <div class="campo" style="--span:3;"><label>&nbsp;</label>
+          {{ ui.boton('Generar cuotas iguales', 'secondary', onclick='generar()') }}</div>
+        <div class="campo" style="--span:4;"><label>&nbsp;</label>
+          {{ ui.boton('Agregar cuota', 'secondary', onclick='agregar()', icono_='agregar') }}</div>
+      </div>
+      <div class="data-table-wrap">
+        <table class="data-table carga" id="tbl-cuotas" data-sin-orden>
+          <thead><tr><th class="th-center" style="width:80px;">Cuota</th><th>Vencimiento</th><th class="th-right">Importe</th>
+            {% if editable %}<th class="col-acciones" data-no-sort></th>{% endif %}</tr></thead>
+          <tbody id="cuotas">
+            {% for c in x.cuotas %}
+            <tr>
+              <td class="td-center nro">{{ c.nro_cuota }}<input type="hidden" name="cuota_nro" value="{{ c.nro_cuota }}"></td>
+              <td><input type="date" name="cuota_fecha" value="{{ c.vencimiento.isoformat() }}"></td>
+              <td class="td-right"><input type="text" name="cuota_importe" class="inp-importe" inputmode="decimal" value="{{ '%.2f'|format(c.importe|float) }}" oninput="totales()"></td>
+              {% if editable %}<td><div class="acciones">{{ ui.accion('borrar', onclick='quitar(this)', titulo='Quitar la cuota') }}</div></td>{% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+          <tfoot><tr><td></td><td class="td-right td-fuerte">Suma de las cuotas</td><td class="td-right td-fuerte" id="suma">0,00</td>{% if editable %}<td></td>{% endif %}</tr></tfoot>
+        </table>
+      </div>
+      <small class="campo-ayuda" id="aviso-cuotas"></small>
+    </div>
+
+    <div class="bloque">
+      <div class="bloque-titulo">Pago y firmantes</div>
+      <div class="campos">
+        <div class="campo" style="--span:4;"><label for="forma_pago">Forma de pago</label>
+          <input type="text" name="forma_pago" id="forma_pago" maxlength="150" value="{{ x.forma_pago or '' }}" placeholder="Transferencia a la cuenta del sindicato"></div>
+        <div class="campo" style="--span:8;"><label for="lugar_pago">Lugar de pago</label>
+          <input type="text" name="lugar_pago" id="lugar_pago" maxlength="300" value="{{ x.lugar_pago or '' }}"></div>
+        <div class="campo" style="--span:5;"><label for="representante">Firma por el empleador</label>
+          <input type="text" name="representante" id="representante" maxlength="200" value="{{ x.representante or '' }}"></div>
+        <div class="campo" style="--span:3;"><label for="representante_dni">DNI</label>
+          <input type="text" name="representante_dni" id="representante_dni" maxlength="20" value="{{ x.representante_dni or '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="representante_cargo">Cargo</label>
+          <input type="text" name="representante_cargo" id="representante_cargo" maxlength="100" value="{{ x.representante_cargo or '' }}"></div>
+        <div class="campo" style="--span:12;"><label for="observaciones">Observaciones</label>
+          <textarea name="observaciones" id="observaciones" maxlength="1000" rows="2">{{ x.observaciones or '' }}</textarea></div>
+      </div>
+      <p class="campo-ayuda">{{ texto }}</p>
+    </div>
+  </div>
+  </fieldset>
+  {% if editable %}
+  <div class="form-acciones">{{ ui.boton('Guardar acuerdo', submit=True) }}</div>
+  {% endif %}
+</form>
+
+{% if x.id and x.estado == 'vigente' %}
+<div class="card">
+  {{ ui.card_head('Estado del acuerdo', 'queda registrado quién y por qué') }}
+  <form method="post" action="{{ url_for('fisca_acta.acuerdo_estado', id_acuerdo=x.id) }}" class="card-body"
+        onsubmit="return confirm('¿Cambiar el estado del acuerdo? Ya no se va a poder modificar.');">
+    <div class="campos">
+      <div class="campo" style="--span:3;"><label for="accion">Pasar a</label>
+        <select name="accion" id="accion">
+          <option value="cancelar">Cancelado (pagado)</option>
+          <option value="judicializar">Judicializado</option>
+          <option value="anular">Anulado (cargado por error)</option>
+        </select></div>
+      <div class="campo" style="--span:7;"><label for="motivo">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="motivo" maxlength="255" required></div>
+      <div class="campo" style="--span:2;"><label>&nbsp;</label>{{ ui.boton('Aplicar', 'danger', submit=True) }}</div>
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<template id="tpl-borrar">{{ ui.accion('borrar', onclick='quitar(this)', titulo='Quitar la cuota') }}</template>
+<script>
+function num(t) { t = (t || '').trim(); if (!t) return 0; return parseFloat(t.indexOf(',') >= 0 ? t.replace(/\./g, '').replace(',', '.') : t) || 0; }
+function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+var DEUDA = parseFloat(document.getElementById('deuda').dataset.valor) || 0;
+var EDITABLE = {{ 'true' if editable else 'false' }};
+function totales() {
+  var total = Math.round((DEUDA + num(document.getElementById('interes').value)) * 100) / 100;
+  document.getElementById('total').value = plata(total);
+  var suma = 0;
+  document.querySelectorAll('#cuotas input[name="cuota_importe"]').forEach(function (i) { suma += num(i.value); });
+  suma = Math.round(suma * 100) / 100;
+  document.getElementById('suma').textContent = plata(suma);
+  var av = document.getElementById('aviso-cuotas');
+  av.classList.remove('error', 'ok');
+  if (!document.querySelectorAll('#cuotas tr').length) { av.textContent = 'Generá el cronograma o agregá las cuotas.'; return; }
+  if (suma + 0.005 < DEUDA) { av.textContent = 'Las cuotas suman $ ' + plata(suma) + ': no cubren la deuda del acta ($ ' + plata(DEUDA) + '). Así no se puede guardar.'; av.classList.add('error'); }
+  else { av.textContent = 'Interés de financiación que queda: $ ' + plata(suma - DEUDA) + ' (el total financiado es la suma de las cuotas).'; av.classList.add('ok'); }
+}
+function renumerar() {
+  document.querySelectorAll('#cuotas tr').forEach(function (tr, i) {
+    tr.querySelector('.nro').firstChild.nodeValue = (i + 1);
+    tr.querySelector('input[name="cuota_nro"]').value = i + 1;
+  });
+  document.getElementById('cant').value = document.querySelectorAll('#cuotas tr').length || 1;
+  totales();
+}
+function fila(fecha, importe) {
+  var tr = document.createElement('tr');
+  tr.innerHTML = '<td class="td-center nro">0<input type="hidden" name="cuota_nro" value=""></td>'
+    + '<td><input type="date" name="cuota_fecha"></td>'
+    + '<td class="td-right"><input type="text" name="cuota_importe" class="inp-importe" inputmode="decimal"></td>'
+    + '<td><div class="acciones">' + document.getElementById('tpl-borrar').innerHTML + '</div></td>';
+  tr.querySelector('input[name="cuota_fecha"]').value = fecha || '';
+  var imp = tr.querySelector('input[name="cuota_importe"]');
+  imp.value = importe != null ? importe.toFixed(2) : '';
+  imp.addEventListener('input', totales);
+  document.getElementById('cuotas').appendChild(tr);
+  if (window.fmtMilesInit) fmtMilesInit(imp);
+}
+function quitar(btn) { btn.closest('tr').remove(); renumerar(); }
+function agregar() { fila('', null); renumerar(); }
+function sumarMeses(iso, n) {
+  var p = iso.split('-').map(Number), d = new Date(p[0], p[1] - 1 + n, 1);
+  var ultimo = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(p[2], ultimo));
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function generar() {
+  var n = parseInt(document.getElementById('cant').value) || 1, primera = document.getElementById('primera').value;
+  if (!primera) { alert('Poné el vencimiento de la primera cuota.'); return; }
+  var centavos = Math.round((DEUDA + num(document.getElementById('interes').value)) * 100);
+  var base = Math.floor(centavos / n);
+  document.getElementById('cuotas').innerHTML = '';
+  for (var i = 0; i < n; i++) fila(sumarMeses(primera, i), (i === n - 1 ? centavos - base * (n - 1) : base) / 100);
+  renumerar();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('interes').addEventListener('input', totales);
+  if (!EDITABLE) document.querySelectorAll('#tbl-cuotas .btn-accion').forEach(function (b) { b.remove(); });
+  totales();
+});
+</script>
+{% endblock %}

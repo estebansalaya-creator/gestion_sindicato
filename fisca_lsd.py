@@ -69,6 +69,7 @@ from flask import (Blueprint, abort, flash, redirect, render_template, request, 
                    url_for)
 
 import contable_oseda
+import fisca_intereses as FI
 import fisca_liquidacion as FL
 import lsd_lector
 from db import get_connection, puede, usuario_actual, validasesion
@@ -363,7 +364,7 @@ def planilla_de(cur, pres: dict) -> dict:
                        "importe": pres["importe"], "en_archivo": pres["activos_en_archivo"],
                        "activos": pres["afiliados_activos"],
                        "fuera_nomina": sum(1 for l in plan["lineas"] if not l["activo"])}[k]
-    plan["vencimiento"] = FL.vencimiento(plan["periodo"], plan["dia_vto"])
+    plan["vencimiento"] = FI.vencimiento_931(cur, plan["cuit"], plan["periodo"])
     return plan
 
 
@@ -423,7 +424,7 @@ def presentar(cur, id_pres: int, id_usuario: int | None, cuit: str | None = None
     lectura = _leer(pres["archivo"], pres["cuit"])
     plan = calcular(cur, lectura)
     periodo, hoy = plan["periodo"], datetime.date.today()
-    vto = FL.vencimiento(periodo, plan["dia_vto"])
+    vto = FI.vencimiento_931(cur, pres["cuit"], periodo)
 
     cur.execute("""SELECT id, cuit, origen, estado, importe, afiliados, observaciones,
                           aeda_importe, aeda_afiliados, id_aeda

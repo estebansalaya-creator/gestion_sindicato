@@ -45,6 +45,7 @@ from decimal import Decimal
 # importar_aeda carga el .env y trae la conexión a AEDA.
 from importar_aeda import CARPETA_LOGS, _filas, conexion_aeda, limpio, salir, solo_digitos
 
+import fisca_intereses as FI
 from db import get_connection
 
 TOL = Decimal("0.01")
@@ -207,6 +208,10 @@ def _detalle(cur, id_liq, g):
 
 def aplicar(cur, plan: Plan, destino) -> None:
     usuario = destino["usuario"]["id"]
+    # El vencimiento no es el de AEDA (el 20) sino el del F.931 del CUIT (decidido el 14/11/2026).
+    cal = FI.Calendario(cur)
+    for g in plan.nuevas + plan.actualizar:
+        g["vto"] = cal.vencimiento(g["_cuit"], g["_periodo"])
     for g in plan.nuevas:
         cur.execute("""INSERT INTO fisca_liquidacion
                          (cuit, periodo, fecha, vencimiento, alicuota, afiliados, remuneracion, importe, origen,

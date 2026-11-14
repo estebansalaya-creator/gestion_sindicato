@@ -146,15 +146,23 @@
                value="{{ ('%.2f'|format(d.get('cuota_alicuota')|float)).replace('.', ',') if d.get('cuota_alicuota') is not none else '' }}">
         <small class="campo-ayuda">Sobre la Remuneración imponible 5 del F.931.</small>
       </div>
+      {% if 'acta_plazo_dias' in d %}
       <div class="campo" style="--span:3;">
-        <label for="cuota_dia_vto">Día de vencimiento <span class="req">*</span></label>
-        <input type="number" min="1" max="31" name="cuota_dia_vto" id="cuota_dia_vto" required
-               value="{{ d.get('cuota_dia_vto') or '' }}">
-        <small class="campo-ayuda">Del mes siguiente al período.</small>
+        <label for="acta_plazo_dias">Plazo para pagar el acta (días)</label>
+        <input type="number" min="1" max="365" name="acta_plazo_dias" id="acta_plazo_dias"
+               value="{{ d.get('acta_plazo_dias') or '' }}">
+        <small class="campo-ayuda">Propone la fecha de pago del acta de fiscalización.</small>
       </div>
+      <div class="campo" style="--span:6;">
+        <label for="acta_lugar_pago">Lugar de pago del acta y del acuerdo</label>
+        <input type="text" name="acta_lugar_pago" id="acta_lugar_pago" maxlength="300"
+               value="{{ d.get('acta_lugar_pago') or '' }}">
+      </div>
+      {% endif %}
     </div>
-    <p class="campo-ayuda">Los usa la Liquidación de Cuota Sindical. Cambiarlos no toca lo ya liquidado: rige al
-       liquidar o reliquidar un período.</p>
+    <p class="campo-ayuda">La alícuota la usa la Liquidación de Cuota Sindical; cambiarla no toca lo ya liquidado: rige al
+       liquidar o reliquidar un período. La cuota vence el mismo día que el F.931 del empleador, según la terminación de
+       su CUIT (la tabla de vencimientos de ARCA).</p>
   </div>
   {% endif %}
 

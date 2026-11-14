@@ -35,9 +35,10 @@ cambió de empleador en algún momento que no se sabe) no cuenta.
 - Un empleador con activos y ninguno en su DDJJ igual tiene su liquidación, en
   cero y con la nota: es lo que muestra que no declara.
 
-CUOTA = remuneración × alícuota, redondeada al centavo por renglón; vence el día
-fijado del mes siguiente (si el mes es más corto, el último). Alícuota y día
-están en Datos del Sindicato (`s_institucion.cuota_alicuota`, `cuota_dia_vto`).
+CUOTA = remuneración × alícuota, redondeada al centavo por renglón; vence el mismo
+día que el F.931 del CUIT (fisca_intereses.Calendario: arca_vencimientos o la regla
+9/10/11 del mes siguiente al día hábil; decidido el 14/11/2026). La alícuota está en
+Datos del Sindicato (`s_institucion.cuota_alicuota`); `cuota_dia_vto` ya no se usa.
 
 LIQUIDAR Y RELIQUIDAR
 Se liquida un período o un rango (`generar_rango`: las DDJJ de todo el rango se
@@ -67,6 +68,7 @@ import pymysql
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 import contable_oseda
+import fisca_intereses as FI
 from db import get_connection, puede, usuario_actual, validasesion
 
 fisca_liq_bp = Blueprint("fisca_liq", __name__, url_prefix="/fiscalizacion")
@@ -115,6 +117,8 @@ def limites(periodo: str) -> tuple[datetime.date, datetime.date]:
 
 
 def vencimiento(periodo: str, dia: int) -> datetime.date:
+    """El día `dia` del mes siguiente. Ya no se usa para liquidar: la cuota
+    vence con el F.931 del CUIT (fisca_intereses.Calendario)."""
     anio, mes = int(periodo[:4]), int(periodo[4:])
     anio, mes = (anio + 1, 1) if mes == 12 else (anio, mes + 1)
     return datetime.date(anio, mes, min(dia, calendar.monthrange(anio, mes)[1]))
@@ -333,7 +337,8 @@ def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = No
     if solo_cuit:
         calculo = {**calculo, "empleadores": {c: e for c, e in calculo["empleadores"].items() if c == solo_cuit}}
     hoy = datetime.date.today()
-    vto = vencimiento(periodo, calculo["dia_vto"])
+    # El vencimiento es el del F.931 de cada CUIT (fisca_intereses, decidido el 14/11/2026).
+    cal = FI.Calendario(cur)
     r = {"periodo": periodo, "nuevas": 0, "reliquidadas": 0, "iguales": 0, "de_aeda": 0, "anuladas": 0,
          "en_cero": 0, "por_lsd": 0, "importe": Decimal("0")}
 
@@ -348,6 +353,7 @@ def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = No
     for cuit, e in sorted(calculo["empleadores"].items()):
         if cuit in por_lsd:
             continue
+        vto = cal.vencimiento(cuit, periodo)
         ya = existentes.get(cuit)
         aeda = _aeda(ya, hoy) if ya else None
         nota = _nota(e, aeda)

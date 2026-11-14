@@ -35,6 +35,7 @@ from decimal import Decimal
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
+import fisca_actas
 import fisca_aplicaciones as fa
 import fisca_liquidacion as fl
 from db import get_connection, puede, usuario_actual, validasesion
@@ -178,11 +179,13 @@ def estado_cuenta_de(cur, cuit: str, desde: str | None = None, hasta: str | None
             aplicado_a.setdefault(a["id_detalle"], []).append(a["periodo"])
     for c in cobros:
         c["periodos_aplicados"] = sorted(set(aplicado_a.get(c["id_detalle"], [])))
+    actas = fisca_actas.actas_por_periodo(cur, cuit)
 
     periodos = []
     for l in liqs:
         venc = l["vencimiento"]
         periodos.append({"periodo": l["periodo"], "liq": l, "liquidado": l["importe"], "cobrado": l["aplicado"],
+                         "acta": actas.get(l["periodo"]),
                          "saldo": l["saldo"], "vencimiento": venc,
                          "mora": (hoy - venc).days if (venc and l["saldo"] > Decimal("0.01") and venc < hoy) else None})
     sin_aplicar = sum((c["sin_aplicar"] for c in cobros), Decimal("0"))
@@ -241,7 +244,8 @@ def estado_cuenta(cuit):
                            hay_filtros=bool(desde or hasta or solo_saldo),
                            puede_liq=puede("/fiscalizacion/liquidacion"), puede_rec=puede("/fiscalizacion/recibos"),
                            puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"),
-                           puede_empleador=puede("/empleadores"), puede_aplicar=puede(URL_APLIC))
+                           puede_empleador=puede("/empleadores"), puede_aplicar=puede(URL_APLIC),
+                           puede_actas=puede(fisca_actas.URL_ACTAS))
 
 
 @cc_emp_bp.route("/<cuit>/<periodo>")
