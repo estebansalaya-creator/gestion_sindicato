@@ -9,7 +9,9 @@
 -- la siguiente, todas las antigüedades suben en la misma proporción.
 --
 -- Cada vigencia llega hasta el mes anterior a la siguiente; la última
--- (Septiembre 2026) queda abierta (periodo_hasta NULL). Falta 2023-10 a 2024-12.
+-- (Septiembre 2026) queda abierta (periodo_hasta NULL). Confirmado el 14/11/2026: en
+-- los meses sin escala propia (feb, abr, jun, jul, sep y dic 2025, ene, abr y jul
+-- 2026) no hubo aumento. Falta 2023-10 a 2024-12.
 --
 -- Requiere sql/fisca_escalas_20261114.sql. Correrlo ENTERO (Alt+X). Idempotente:
 -- vuelve a dejar los valores de las circulares, sin tocar lo que vino de AEDA.
