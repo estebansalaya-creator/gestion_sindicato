@@ -98,6 +98,7 @@ gestion_sindicato/
   importar_aeda_fondos.py     el libro de bancos y caja de AEDA (adm_movctas): instrumentos, gastos varios,
                               pases, depósitos, recaudación, órdenes de ingreso y valores; ídem, con control de saldos
   importar_aeda_extractos.py  los extractos del Nación que AEDA cargó (adm_bna24) → c_extractos_bancarios; ídem
+  importar_aeda_fisca_escalas.py  las escalas salariales del convenio (fis_escalas) → fisca_escala_salarial; ídem
   contable_oseda.py       lectura en vivo (solo lectura) de las DDJJ de OSEDA en contable de Railway
   cruce_nomina_ddjj.py    qué empleadores tienen toda su nómina de AEDA en la DDJJ de OSEDA (planillas en logs/)
   cruce_atributo_aeda.py  si los titulares activos de AEDA tienen la marca «AEDA» en el padrón de OSEDA (logs/)
