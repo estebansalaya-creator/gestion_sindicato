@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Escalas salariales{% endblock %}
+
+{#
+  Fiscalización de Cuotas → Escalas Salariales (fisca_esc.lista): las vigencias
+  de la escala del convenio y, debajo, la elegida (?ver=AAAAMM) con el básico,
+  la comida y el conformado de cada antigüedad. Las de AEDA se ven; las cargadas
+  acá se corrigen o se borran.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Escalas salariales</h1>
+    <p>El básico por antigüedad y el almuerzo de cada vigencia del convenio (CCT 417/05). Las de AEDA llegan con el importador; las nuevas se cargan acá.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Nueva escala', icono_='agregar', href=url_for('fisca_esc.nueva')) }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {{ ui.card_head('Vigencias', nota=(vigs | length) ~ ' escala(s)') }}
+  {% call ui.barra_filtros('Buscar por período…') %}
+    {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+      <option value="">Todos</option>
+      {% for k, (t, _) in origenes.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-vigencias" data-exportar="Escalas salariales - vigencias">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Desde</th><th>Hasta</th><th>Origen</th>
+        <th class="th-right">Inicial</th><th class="th-right">35 años</th><th class="th-right">Almuerzo</th>
+        <th class="th-right">Aumento</th>
+      </tr></thead>
+      <tbody>
+        {% for v in vigs %}
+        <tr data-origen="{{ v.origen }}" class="{{ 'fila-actual' if sel and v.periodo_desde == sel.periodo_desde }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_esc.lista', ver=v.periodo_desde)) }}
+            {% if v.origen == 'manual' %}
+            {{ ui.accion('editar', href=url_for('fisca_esc.editar', desde=v.periodo_desde)) }}
+            {{ ui.accion('borrar', onclick='confirmarBorrar(this)', datos={'desde': v.periodo_desde, 'texto': v.periodo_desde | periodo}) }}
+            {% endif %}
+          </div></td>
+          <td class="td-mono td-fuerte">{{ v.periodo_desde | periodo }}</td>
+          <td class="td-mono">{{ 'vigente' if v.abierta else (v.periodo_hasta | periodo) }}</td>
+          <td>{{ ui.estado(origenes[v.origen][0], origenes[v.origen][1]) }}</td>
+          <td class="td-right" data-num="{{ v.inicial or 0 }}">{{ (v.inicial or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ v.a35 or 0 }}">{{ (v.a35 or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ v.almuerzo or 0 }}">{{ (v.almuerzo or 0) | miles }}</td>
+          <td class="td-right td-muted" data-num="{{ v.aumento or 0 }}">{{ ((v.aumento | string) | replace('.', ',')) ~ ' %' if v.aumento is not none else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay escalas: se traen de AEDA con importar_aeda_fisca_escalas.py o se cargan con «Nueva escala».</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% if sel %}
+<div class="card">
+  {{ ui.card_head('Escala desde ' ~ (sel.periodo_desde | periodo),
+                  nota=('vigente' if sel.abierta else 'hasta ' ~ (sel.periodo_hasta | periodo)) ~ ' · ' ~ origenes[sel.origen][0]) }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Desde', sel.periodo_desde | periodo, mono=True) }}
+      {{ dato('Hasta', 'vigente' if sel.abierta else (sel.periodo_hasta | periodo), mono=True) }}
+      {{ dato('Almuerzo diario', '$ ' ~ ((sel.almuerzo or 0) | miles), mono=True) }}
+      {{ dato('Comida (' ~ dias ~ ' días)', '$ ' ~ (((sel.almuerzo or 0) * dias) | miles), mono=True) }}
+      {{ dato('Aumento sobre la anterior', ((factor | string) | replace('.', ',')) ~ ' %' if factor is not none else '—') }}
+    </div>
+    {% if baja %}{{ ui.aviso('El básico baja al subir la antigüedad en ' ~ (baja | join(', ')) ~ ' años: puede ser un error de la escala de origen.', 'warning') }}{% endif %}
+    {% if raros %}{{ ui.aviso('Contra la escala anterior, no suben en la misma proporción que el resto: ' ~ (raros | join(', ')) ~ ' años.', 'warning') }}{% endif %}
+  </div>
+  {% call ui.barra_filtros('Buscar…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-escala" data-exportar="Escala salarial {{ sel.periodo_desde | periodo }}">
+      <thead><tr>
+        <th>Antigüedad</th><th class="th-right">Básico</th><th class="th-right">Comida ({{ dias }} días)</th>
+        <th class="th-right">Conformado</th><th class="th-right">Aumento</th>
+      </tr></thead>
+      <tbody>
+        {% for f in filas %}
+        <tr class="{{ 'fila-alerta' if f.antiguedad in baja or f.antiguedad in raros }}">
+          <td data-num="{{ f.antiguedad }}">{{ 'Inicial' if f.antiguedad == 0 else (f.antiguedad ~ (' año' if f.antiguedad == 1 else ' años')) }}</td>
+          <td class="td-right td-fuerte" data-num="{{ f.basico }}">{{ f.basico | miles }}</td>
+          <td class="td-right" data-num="{{ f.almuerzo * dias }}">{{ (f.almuerzo * dias) | miles }}</td>
+          <td class="td-right" data-num="{{ f.conformado }}">{{ f.conformado | miles }}</td>
+          <td class="td-right td-muted" data-num="{{ f.aumento or 0 }}">{{ ((f.aumento | string) | replace('.', ',')) ~ ' %' if f.aumento is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+  {% if sel.origen == 'manual' %}
+  <div class="card-body form-acciones">
+    {{ ui.boton('Corregir', 'secondary', icono_='editar', href=url_for('fisca_esc.editar', desde=sel.periodo_desde)) }}
+    {{ ui.boton('Nueva escala a partir de esta', icono_='agregar', href=url_for('fisca_esc.nueva', base=sel.periodo_desde)) }}
+  </div>
+  {% else %}
+  <div class="card-body form-acciones">
+    {{ ui.boton('Nueva escala a partir de esta', icono_='agregar', href=url_for('fisca_esc.nueva', base=sel.periodo_desde)) }}
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="modal" id="modal-borrar">
+  <div class="modal-caja">
+    <div class="modal-titulo">¿Borrar la escala?</div>
+    <div class="modal-texto" id="borrar-texto"></div>
+    <div class="modal-texto">La escala anterior vuelve a cubrir sus meses.</div>
+    <form method="post" id="form-borrar">
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-borrar')") }}
+        {{ ui.boton('Borrar', 'danger', icono_='borrar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+var URL_BORRAR = "{{ url_for('fisca_esc.eliminar', desde='000000') }}";
+function confirmarBorrar(b) {
+  document.getElementById('borrar-texto').textContent = 'Escala desde ' + b.dataset.texto + '.';
+  document.getElementById('form-borrar').action = URL_BORRAR.replace('000000', b.dataset.desde);
+  abrirModal('modal-borrar');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fo = document.getElementById('f-origen');
+  gestion_admTable('tbl-vigencias', { pageSize: 20, filtroExtra: function (tr) {
+    return !fo.value || tr.dataset.origen === fo.value; } });
+  if (document.getElementById('tbl-escala')) gestion_admTable('tbl-escala', { pageSize: 50 });
+});
+</script>
+{% endblock %}

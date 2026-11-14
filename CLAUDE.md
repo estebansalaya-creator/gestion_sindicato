@@ -39,6 +39,7 @@ gestion_sindicato/
   fisca_liquidacion.py    liquidación de cuota sindical por DDJJ de OSEDA, con los activos del empleador y el % con DDJJ
   fisca_lsd.py            la empresa presenta su Libro de Sueldos Digital por un enlace y la cuota se liquida con él
   fisca_recibos.py        emisión de recibos de cuota sindical desde las acreditaciones del extracto bancario
+  fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
   lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
@@ -133,6 +134,8 @@ repetiría en la URL lo que dice el dominio.
                              /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
 /fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=);
                              /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
+/fiscalizacion/escalas       vigencias y la escala elegida, ?ver=AAAAMM; /nueva (?base=AAAAMM) GET/POST;
+                             /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
                              /descartar POST, /planilla.xlsx)
 /login /logout /menu
@@ -541,6 +544,28 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).
 - **Pendiente**: aplicar los cobros a la cuenta corriente de empleadores e intereses por mora; mandar el recibo por
   mail.
+
+## Escalas salariales del convenio
+
+`fisca_escala_salarial` (`sql/fisca_escalas_20261114.sql`): básico por antigüedad (0 a 35) y almuerzo diario por
+vigencia (desde / hasta AAAAMM; `periodo_hasta` NULL = la vigente). Pantalla `fisca_escalas.py` (menú 9 «Escalas
+Salariales» en Fiscalización de Cuotas, `sql/menu_escalas_20261114.sql`, Administrador y Supervisor; test:
+`python tests/test_fisca_escalas.py`, sin base). Pedido del 14/11/2026.
+
+- **De AEDA**: `importar_aeda_fisca_escalas.py` (`fis_escalas`, 38 vigencias de 2012-10 a 2023-09, origen «aeda»);
+  se ven y no se tocan en la pantalla. AEDA tiene un básico mal cargado: 2022-01, 29 años (96.051,40, menor que el
+  de 28).
+- **Paritaria 2024-2026**: `sql/fisca_escalas_2025_2026_20261114.sql`, 12 escalas de 2025-01 a 2026-09 pasadas de
+  las circulares (origen «manual»). Los meses sin escala propia no tuvieron aumento (confirmado el 14/11/2026).
+  **Falta 2023-10 a 2024-12.**
+- **Conformado** = básico + almuerzo × 22 días (la «comida» del art. 9 CCT 417/05, como en las circulares).
+- **Alta**: rige desde su período hasta el mes anterior a la siguiente (o abierta); la anterior se cierra el mes
+  antes si estaba abierta o la pisaba. No se repite un período ni se parte una de AEDA. Corregir o borrar solo lo
+  cargado acá; al borrar, la anterior vuelve a cubrir esos meses. Los básicos se pegan de una vez (toma solo
+  importes con centavos; «506,404.46» o «506.404,46»; un 37.º es el almuerzo) o se calculan desde otra escala con
+  un %.
+- **Controles** (avisan; «Grabar igual» los pasa): que el básico no baje al subir la antigüedad y que, contra la
+  escala anterior, todas las antigüedades suban en la misma proporción (±0,03 %).
 
 ## Nómina del empleador y DDJJ de OSEDA
 

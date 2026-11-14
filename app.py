@@ -55,6 +55,7 @@ from talonarios import talonarios_bp                            # noqa: E402
 from fisca_liquidacion import fisca_liq_bp                      # noqa: E402
 from fisca_lsd import fisca_lsd_bp, portal_bp                 # noqa: E402
 from fisca_recibos import fisca_rec_bp                          # noqa: E402
+from fisca_escalas import fisca_esc_bp                          # noqa: E402
 from cc_proveedores import cc_prov_bp                           # noqa: E402
 from extractos import extractos_bp                              # noqa: E402
 from conciliacion import conc_bp                                # noqa: E402
@@ -423,6 +424,7 @@ app.register_blueprint(talonarios_bp)
 app.register_blueprint(fisca_liq_bp)
 app.register_blueprint(fisca_lsd_bp)
 app.register_blueprint(fisca_rec_bp)
+app.register_blueprint(fisca_esc_bp)
 # Portal de las empresas (/empresas/<token>): sin sesión, el enlace es la credencial.
 app.register_blueprint(portal_bp)
 app.register_blueprint(cc_prov_bp)

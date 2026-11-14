@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ 'Corregir escala' if editando else 'Nueva escala' }}{% endblock %}
+
+{#
+  Alta o corrección de una escala salarial (fisca_esc.nueva / fisca_esc.editar):
+  período desde, almuerzo diario y los 36 básicos. Los básicos se pegan de una
+  vez (de la planilla o la circular) o se calculan desde otra escala con un
+  porcentaje. Los controles del servidor avisan y se pasan con «Grabar igual».
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ 'Corregir la escala desde ' ~ (editando | periodo) if editando else 'Nueva escala salarial' }}</h1>
+    <p>Rige desde su período hasta el mes anterior a la siguiente; la anterior se cierra sola.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', icono_='volver', href=url_for('fisca_esc.lista', ver=editando or None)) }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{% for a in avisos %}{{ ui.aviso(a, 'warning') }}{% endfor %}
+
+<form method="post" id="form-escala">
+  <div class="card">
+    {{ ui.card_head('Vigencia') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:3"><label for="desde">Rige desde <span class="req">*</span></label>
+          <input type="month" id="desde" name="periodo_desde" value="{{ e.desde_txt if '-' in (e.desde_txt or '') else (e.desde | periodo if e.desde else '') }}" required></div>
+        <div class="campo" style="--span:3"><label for="almuerzo">Almuerzo diario <span class="req">*</span></label>
+          <input type="text" id="almuerzo" name="almuerzo" class="importe" inputmode="decimal" value="{{ e.almuerzo_txt }}" oninput="recalcular()" required>
+          <small class="campo-ayuda">La comida del mes es este importe × {{ dias }} días.</small></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Cargar los básicos de una vez') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:7"><label for="pegar">Pegar de la planilla o la circular</label>
+          <textarea id="pegar" rows="4" placeholder="506,404.46&#10;519,138.74&#10;…  (36 importes; si hay un 37.º, es el almuerzo)"></textarea>
+          <small class="campo-ayuda" id="pegar-ayuda">Toma solo importes con centavos, en orden: «1 año» no cuenta. Sirve «506,404.46» y «506.404,46».</small>
+          <div class="form-acciones">{{ ui.boton('Repartir en la tabla', 'secondary', chico=True, icono_='planilla', onclick='repartir()') }}</div>
+        </div>
+        <div class="campo" style="--span:5"><label for="base">O calcular desde otra escala</label>
+          <div class="fila">
+            <select id="base">{% for v in vigs[:24] %}<option value="{{ v.periodo_desde }}" {{ 'selected' if v.periodo_desde == e.base }}>{{ v.periodo_desde | periodo }}</option>{% endfor %}</select>
+            <input type="text" id="pct" class="importe" inputmode="decimal" placeholder="%">
+            {{ ui.boton('Calcular', 'secondary', chico=True, onclick='calcular()') }}
+          </div>
+          <small class="campo-ayuda">Cada básico de esa escala × (1 + %), redondeado al centavo. Revisalo contra la circular: el aumento puede ir sobre otra base.</small>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Básicos por antigüedad', nota='Comida y conformado se calculan con el almuerzo.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-basicos" data-sin-orden data-exportar="Escala">
+        <thead><tr><th>Antigüedad</th><th class="th-right">Básico</th><th class="th-right">Conformado</th>
+          <th class="th-right">Contra la base</th></tr></thead>
+        <tbody>
+          {% for i in range(n) %}
+          <tr>
+            <td>{{ 'Inicial' if i == 0 else (i ~ (' año' if i == 1 else ' años')) }}</td>
+            <td class="td-right"><input type="text" name="basico" class="importe basico" inputmode="decimal"
+                  value="{{ e.basicos_txt[i] if e.basicos_txt and i < e.basicos_txt | length else '' }}" oninput="recalcular()"
+                  aria-label="Básico {{ i }}"></td>
+            <td class="td-right td-muted conf"></td>
+            <td class="td-right td-muted var"></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Cargados</div><div class="res-card-val" id="res-cant">0 de {{ n }}</div></div>
+      <div><div class="res-card-lbl">Inicial</div><div class="res-card-val mono" id="res-ini">—</div></div>
+      <div><div class="res-card-lbl">35 años</div><div class="res-card-val mono" id="res-35">—</div></div>
+    </div>
+    {% if avisos %}
+    <label class="campo-check"><input type="checkbox" name="grabar_igual" value="1"> Grabar igual</label>
+    {% endif %}
+    {{ ui.boton('Grabar la escala', 'primary', submit=True, icono_='guardar') }}
+  </div>
+</form>
+
+<script>
+var BASES = {{ bases | tojson }}, DIAS = {{ dias }};
+// El separador decimal es el último que aparece (como numero() del servidor).
+function num(t) {
+  t = String(t || '').replace(/[^\d.,\-]/g, '');
+  if (!/\d/.test(t)) return null;
+  var u = Math.max(t.lastIndexOf('.'), t.lastIndexOf(',')), ent = t, dec = '';
+  if (u >= 0 && (t.length - u - 1 === 1 || t.length - u - 1 === 2)) { ent = t.slice(0, u); dec = t.slice(u + 1); }
+  var v = parseFloat(ent.replace(/[.,]/g, '') + '.' + (dec || '0'));
+  return isNaN(v) ? null : Math.round(v * 100) / 100;
+}
+function inputs() { return Array.from(document.querySelectorAll('input.basico')); }
+function repartir() {
+  var t = document.getElementById('pegar').value, m = t.match(/\d[\d.,]*[.,]\d{2}(?!\d)/g) || [];
+  var v = m.map(num).filter(function (x) { return x !== null; }), ins = inputs(), ayuda = document.getElementById('pegar-ayuda');
+  if (v.length < ins.length) { ayuda.textContent = 'Encontré ' + v.length + ' importes y hacen falta ' + ins.length + '.'; ayuda.className = 'campo-ayuda error'; return; }
+  ins.forEach(function (inp, i) { inp.value = numeroAR(v[i]); });
+  if (v.length > ins.length && !document.getElementById('almuerzo').value) document.getElementById('almuerzo').value = numeroAR(v[ins.length]);
+  ayuda.textContent = v.length + ' importes repartidos' + (v.length > ins.length ? ' (el ' + (ins.length + 1) + '.º, como almuerzo)' : '') + '.';
+  ayuda.className = 'campo-ayuda ok';
+  recalcular();
+}
+function calcular() {
+  var b = BASES[document.getElementById('base').value] || [], p = num(document.getElementById('pct').value);
+  if (!b.length || p === null) { alert('Elegí la escala y el porcentaje.'); return; }
+  inputs().forEach(function (inp, i) { if (b[i]) inp.value = numeroAR(Math.round(parseFloat(b[i]) * (1 + p / 100) * 100) / 100); });
+  recalcular();
+}
+function recalcular() {
+  var alm = num(document.getElementById('almuerzo').value) || 0, base = BASES[document.getElementById('base').value] || [];
+  var n = 0, prev = null;
+  inputs().forEach(function (inp, i) {
+    var v = num(inp.value), tr = inp.closest('tr');
+    tr.querySelector('.conf').textContent = v ? numeroAR(v + alm * DIAS) : '';
+    var b = parseFloat(base[i]);
+    tr.querySelector('.var').textContent = v && b ? ((v / b - 1) * 100).toFixed(2).replace('.', ',') + ' %' : '';
+    tr.classList.toggle('fila-alerta', !!(v && prev && v < prev));
+    if (v) { n++; prev = v; }
+  });
+  var ins = inputs();
+  document.getElementById('res-cant').textContent = n + ' de ' + ins.length;
+  document.getElementById('res-ini').textContent = num(ins[0].value) ? pesos(num(ins[0].value)) : '—';
+  document.getElementById('res-35').textContent = num(ins[ins.length - 1].value) ? pesos(num(ins[ins.length - 1].value)) : '—';
+}
+document.getElementById('base') && document.getElementById('base').addEventListener('change', recalcular);
+document.addEventListener('DOMContentLoaded', recalcular);
+</script>
+{% endblock %}
