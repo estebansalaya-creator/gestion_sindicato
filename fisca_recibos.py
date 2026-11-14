@@ -41,8 +41,10 @@ siguiente). Si el importe es exactamente el saldo de un período, va a ese. Si
 no, al mes anterior hasta su saldo y lo que sobra a la deuda más vieja (lo
 decidido para aplicar cobros); lo que todavía sobra, o todo si el mes anterior
 no está liquidado, queda en ese mes («pago sin liquidar»), sin saldo a favor.
-Saldo = lo liquidado vigente (`fisca_liquidacion`) − lo cobrado del CUIT y el
-período (`ingreso_ordenes_detalle.cuit`). Al emitir se puede cambiar todo.
+Saldo = lo liquidado vigente (`fisca_liquidacion`) − lo aplicado a esa cuota
+(`fisca_aplicacion`, fisca_aplicaciones.py). Al emitir se puede cambiar todo;
+cada renglón del recibo queda aplicado a la cuota de su período, hasta su saldo
+(origen «recibo»): lo que sobra queda sin aplicar, a favor del empleador.
 
 ¿YA TIENE RECIBO? (`emparejar`)
 Mientras AEDA siga cobrando, lo que AEDA ya registró entra por
@@ -66,6 +68,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 from xml.sax.saxutils import escape
 
 import conciliacion
+import fisca_aplicaciones as fa
 import movimientos_fondos as mf
 from db import get_connection, puede, usuario_actual, validasesion
 from empleadores import cuit_valido
@@ -186,6 +189,7 @@ ESQUEMA = [
     ("fisca_liquidacion", "afiliados_activos", "sql/fisca_liquidacion_ddjj_20261112.sql"),
     ("ingreso_ordenes_detalle", "cuit", SQL_ESQUEMA),
     ("fisca_cuit_relacionado", "cuit_pagador", SQL_ESQUEMA),
+    ("fisca_aplicacion", "id_detalle", "sql/fisca_aplicaciones_20261114.sql"),
 ]
 
 
@@ -438,15 +442,14 @@ def afiliados_de(cur, cuils) -> dict:
 
 
 def saldos_de(cur, cuits) -> dict:
-    """CUIT → {período: {liquidado, cobrado, saldo}} de lo liquidado vigente."""
+    """CUIT → {período: {liquidado, cobrado, saldo}} de lo liquidado vigente.
+    `cobrado` es lo aplicado a la cuota (fisca_aplicaciones.py)."""
     cuits = sorted({c for c in cuits if c})
     if not cuits:
         return {}
     marcas = ",".join(["%s"] * len(cuits))
     cur.execute(f"""SELECT l.cuit, l.periodo, l.importe AS liquidado, l.vencimiento,
-                           (SELECT COALESCE(SUM(d.importe), 0) FROM ingreso_ordenes_detalle d
-                              JOIN ingreso_ordenes o ON o.id = d.id_orden
-                             WHERE o.estado <> 'anulado' AND d.cuit = l.cuit AND d.periodo = l.periodo) AS cobrado
+                           {fa.sql_aplicado_liq('l')} AS cobrado
                       FROM fisca_liquidacion l
                      WHERE l.estado = 'vigente' AND l.cuit IN ({marcas})""", cuits)
     out = defaultdict(dict)
@@ -647,12 +650,16 @@ def emitir(cur, id_extracto: int, cuit_emp: str, renglones: list[tuple[str, Deci
                    VALUES (%s, 'cuota_sindical', %s, %s, 'confirmado', %s, %s, 'ARS', 'extracto', %s, %s)""",
                 (nro, e["fecham"].year, e["fecham"], e["c_cuentas_de_fondos_id"], total, obs, uid))
     id_orden = cur.lastrowid
+    ids_detalle = []
     for p, imp in sorted(renglones):
         cur.execute("""INSERT INTO ingreso_ordenes_detalle (id_orden, tipo, id_motivo_ingreso, descripcion, importe,
                                                             moneda, periodo, cuit, id_extracto_origen)
                        VALUES (%s, 'ingreso', %s, %s, %s, 'ARS', %s, %s, %s)""",
                     (id_orden, motivo, f"CUOTA SINDICAL {periodo_txt(p)} · {razon} (CUIT {cuit_emp})"[:200],
                      imp, p, cuit_emp, e["id"]))
+        ids_detalle.append(cur.lastrowid)
+    # Cada renglón, a la cuota de su período (hasta su saldo): lo que sobra queda sin aplicar.
+    fa.aplicar_automatico(cur, cuits=[cuit_emp], ids_detalle=ids_detalle, origen_periodo="recibo", id_usuario=uid)
     cur.execute("INSERT INTO ingreso_ordenes_cuentas (id_orden, id_cuenta_fondos, importe) VALUES (%s, %s, %s)",
                 (id_orden, e["c_cuentas_de_fondos_id"], total))
     mf.registrar_ingreso(cur, id_orden)

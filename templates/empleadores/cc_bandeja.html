@@ -6,8 +6,11 @@
   Bandeja de la cuenta corriente de empleadores (cc_emp.bandeja): lo liquidado
   de cuota sindical contra lo cobrado, por CUIT. Saldo = Liquidado − Cobrado:
   positivo, el empleador debe (en rojo); negativo, pagó de más (en verde).
-  «Vencido» = el saldo de los períodos cuyo vencimiento pasó. Los filtros van
-  al servidor; buscar un empleador manda sobre el filtro de saldo.
+  «Vencido» = el saldo de los períodos cuyo vencimiento pasó, con lo aplicado
+  a cada uno (fisca_aplicaciones.py); «Sin aplicar» = lo cobrado que todavía
+  no cancela ningún período. Con un rango de períodos, «Cobrado» es lo aplicado
+  a esos períodos. Los filtros van al servidor; buscar un empleador manda sobre
+  el filtro de saldo.
 #}
 
 {% block content %}
@@ -16,6 +19,11 @@
     <h1>Cuenta Corriente de Empleadores</h1>
     <p>Cuota sindical: lo liquidado por período contra lo cobrado con recibos.</p>
   </div>
+  {% if puede_aplicar %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Aplicación de Cobros', 'secondary', href=url_for('cc_emp.aplicaciones')) }}
+  </div>
+  {% endif %}
 </div>
 
 {{ ui.mensajes() }}
@@ -25,7 +33,8 @@
   <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('dinero', 20) }}</div>
     <div><div class="kpi-lbl">Liquidado</div><div class="kpi-val monto importe-danger">{{ tot.liquidado | miles }}</div></div></div>
   <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
-    <div><div class="kpi-lbl">Cobrado</div><div class="kpi-val monto importe-ok">{{ tot.cobrado | miles }}</div></div></div>
+    <div><div class="kpi-lbl">{{ 'Aplicado' if f.desde or f.hasta else 'Cobrado' }}</div><div class="kpi-val monto importe-ok">{{ tot.cobrado | miles }}</div>
+      {% if tot.sin_aplicar|abs > 0.01 %}<div class="kpi-sub">{{ tot.sin_aplicar | miles }} cobrado sin aplicar</div>{% endif %}</div></div>
   <div class="kpi-card"><div class="kpi-ico {{ 'danger' if tot.saldo > 0.01 else 'ok' }}">{{ ui.icono('planilla', 20) }}</div>
     <div><div class="kpi-lbl">Saldo</div>
       <div class="kpi-val monto {{ 'importe-danger' if tot.saldo > 0.01 else ('importe-ok' if tot.saldo < -0.01 else '') }}">{{ tot.saldo | miles }}</div>
@@ -65,7 +74,7 @@
       </select>
     </div>
     {% if f.desde or f.hasta %}
-    <span class="campo-ayuda" style="flex-basis:100%;">Con un rango de períodos solo cuenta lo de esos períodos: los cobros sin período quedan afuera.</span>
+    <span class="campo-ayuda" style="flex-basis:100%;">Con un rango de períodos: lo liquidado de esos períodos y lo aplicado a ellos. «Sin aplicar» sigue siendo el total del empleador.</span>
     {% endif %}
   </form>
 
@@ -81,11 +90,11 @@
           <th class="th-center" style="width:84px;">Últ. liq.</th>
           <th class="th-right" style="width:124px;">Liquidado</th>
           <th class="th-center" data-tipo="n" style="width:70px;">Recibos</th>
-          <th class="th-right" style="width:124px;">Cobrado</th>
+          <th class="th-right" style="width:124px;">{{ 'Aplicado' if f.desde or f.hasta else 'Cobrado' }}</th>
           <th class="th-right" style="width:124px;" data-orden="desc">Saldo</th>
           <th class="th-center" data-tipo="n" style="width:76px;" title="Períodos con saldo a pagar">Con deuda</th>
           <th class="th-right" style="width:124px;" title="Saldo de los períodos cuyo vencimiento ya pasó">Vencido</th>
-          <th class="th-right" style="width:110px;" title="Cobros sin período: suman al cobrado, no cancelan ningún período">Sin período</th>
+          <th class="th-right" style="width:110px;" title="Lo cobrado que todavía no se aplicó a ninguna cuota: saldo a favor del empleador">Sin aplicar</th>
           <th class="th-center" style="width:88px;">Últ. pago</th>
         </tr>
       </thead>
@@ -111,7 +120,7 @@
           </td>
           <td class="td-center">{{ e.periodos_deuda or '—' }}</td>
           <td class="td-right" data-num="{{ e.vencido or 0 }}">{% if e.vencido %}<span class="importe-pendiente">{{ e.vencido | miles }}</span>{% else %}—{% endif %}</td>
-          <td class="td-right" data-num="{{ e.sin_periodo or 0 }}">{% if e.sin_periodo %}{{ e.sin_periodo | miles }}{% else %}—{% endif %}</td>
+          <td class="td-right" data-num="{{ e.sin_aplicar or 0 }}">{% if e.sin_aplicar|abs > 0.01 %}{% if puede_aplicar %}<a href="{{ url_for('cc_emp.aplicaciones', cuit=e.cuit) }}" title="Aplicarlo">{{ e.sin_aplicar | miles }}</a>{% else %}{{ e.sin_aplicar | miles }}{% endif %}{% else %}—{% endif %}</td>
           <td class="td-center td-muted">{{ e.ultimo_pago.strftime('%d/%m/%Y') if e.ultimo_pago else '—' }}</td>
         </tr>
         {% else %}

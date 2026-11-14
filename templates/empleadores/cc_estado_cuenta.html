@@ -4,8 +4,9 @@
 
 {#
   Estado de cuenta de un empleador (cc_emp.estado_cuenta): un renglón por
-  período, liquidado o cobrado, con el saldo del período y el acumulado;
-  debajo, los cobros. Saldo = Liquidado − Cobrado: positivo, debe (rojo);
+  período liquidado, con lo aplicado, el saldo del período y el acumulado;
+  debajo, los cobros con lo aplicado y lo que les falta aplicar (saldo a favor
+  del empleador, fisca_aplicaciones.py). Saldo = Liquidado − Cobrado: positivo, debe (rojo);
   negativo, pagó de más (verde). Lo anterior al «desde» entra como saldo
   anterior. El acumulado manda el orden: la grilla no se ordena (data-sin-orden).
 #}
@@ -48,6 +49,9 @@
     {% if empresa and puede_empleador %}
     {{ ui.boton('Ficha del empleador', 'secondary', href=url_for('empleadores.abm_empleadores', edit=empresa.id)) }}
     {% endif %}
+    {% if puede_aplicar %}
+    {{ ui.boton('Aplicar / desaplicar', 'secondary', href=url_for('cc_emp.aplicaciones', cuit=cuit)) }}
+    {% endif %}
     {{ ui.boton('Cuenta Corriente', 'secondary', href=url_for('cc_emp.bandeja'), icono_='volver') }}
   </div>
 </div>
@@ -59,19 +63,19 @@
     {{ kpi('historial', '', 'Saldo anterior', ec.anterior | miles, 'importe-danger' if ec.anterior > 0 else 'importe-ok') }}
   {% endif %}
   {{ kpi('dinero', 'danger', 'Liquidado', ec.liquidado | miles, 'importe-danger') }}
-  {{ kpi('dinero', 'ok', 'Cobrado', ec.cobrado | miles, 'importe-ok') }}
+  {{ kpi('dinero', 'ok', 'Aplicado', ec.cobrado | miles, 'importe-ok', 'Lo cobrado que cancela estos períodos') }}
   {{ kpi('planilla', 'danger' if ec.saldo_total > 0.01 else 'ok', 'Saldo', ec.saldo_total | miles,
          'importe-danger' if ec.saldo_total > 0.01 else ('importe-ok' if ec.saldo_total < -0.01 else ''),
          ('Debe — ' ~ ec.periodos_deuda ~ ' período(s) con saldo') if ec.saldo_total > 0.01
          else ('Pagó de más' if ec.saldo_total < -0.01 else 'Sin saldo')) }}
   {{ kpi('reloj', 'warn', 'Vencido', ec.vencido | miles, 'importe-pendiente', 'Períodos con saldo y el vencimiento pasado') }}
-  {% if ec.total_sin_periodo %}
-    {{ kpi('alerta', 'warn', 'Cobrado sin período', ec.total_sin_periodo | miles, '',
-           ec.sin_periodo|length ~ ' cobro(s): restan del saldo, no cancelan ningún período') }}
+  {% if ec.sin_aplicar|abs > 0.01 %}
+    {{ kpi('alerta', 'warn', 'Cobrado sin aplicar', ec.sin_aplicar | miles, '',
+           'Saldo a favor del empleador: resta del saldo, no cancela ningún período') }}
   {% endif %}
 </div>
 {% if desde or hasta %}
-{{ ui.aviso('Los indicadores de liquidado y cobrado son los del rango elegido; el saldo y lo vencido, los de toda la cuenta.', 'info') }}
+{{ ui.aviso('Liquidado y aplicado son los del rango elegido; el saldo, lo vencido y lo sin aplicar, los de toda la cuenta.', 'info') }}
 {% endif %}
 
 <div class="card">
@@ -110,7 +114,7 @@
           <th class="th-center" style="width:84px;" title="Afiliados liquidados / activos del empleador en el período">Afiliados</th>
           <th class="th-right" style="width:124px;">Remuneración</th>
           <th class="th-right" style="width:120px;">Liquidado</th>
-          <th class="th-right" style="width:120px;">Cobrado</th>
+          <th class="th-right" style="width:120px;" title="Lo cobrado que se aplicó a la cuota">Aplicado</th>
           <th class="th-right" style="width:120px;">Saldo</th>
           <th class="th-right" style="width:124px;">Acumulado</th>
           <th class="th-center" style="width:72px;" title="Días desde el vencimiento, si el período tiene saldo">Mora (días)</th>
@@ -132,7 +136,7 @@
           </div></td>
           <td class="td-center td-mono">{{ x.periodo | periodo }}</td>
           <td class="td-center">{{ x.vencimiento.strftime('%d/%m/%Y') if x.vencimiento else '—' }}</td>
-          <td>{% if l %}{{ origenes.get(l.origen, l.origen) }}{% else %}<span class="chip chip-alerta" title="Hay cobros de este período y no hay liquidación vigente">sin liquidar</span>{% endif %}</td>
+          <td>{{ origenes.get(l.origen, l.origen) }}</td>
           <td class="td-center">{% if l %}{{ l.afiliados or 0 }}{% if l.afiliados_activos is not none %} / {{ l.afiliados_activos }}{% endif %}{% else %}—{% endif %}</td>
           <td class="td-right" data-num="{{ l.remuneracion if l else 0 }}">{{ (l.remuneracion | miles) if l and l.remuneracion else '—' }}</td>
           <td class="td-right" data-num="{{ x.liquidado }}">{{ x.liquidado | miles if x.liquidado else '—' }}</td>
@@ -143,7 +147,7 @@
           <td class="td-right" data-num="{{ l.aeda_importe if l and l.aeda_importe else 0 }}">{{ (l.aeda_importe | miles) if l and l.aeda_importe else '—' }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="12" class="no-data">No hay períodos liquidados ni cobrados{{ ' con saldo' if solo_saldo }}.</td></tr>
+        <tr class="no-data-row"><td colspan="12" class="no-data">No hay períodos liquidados{{ ' con saldo' if solo_saldo }}.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -152,7 +156,7 @@
 </div>
 
 <div class="card">
-  {{ ui.card_head('Cobros', 'Recibos de cuota sindical y órdenes de ingreso por fiscalización con el CUIT del empleador' ~ (', de los períodos elegidos' if desde or hasta else '')) }}
+  {{ ui.card_head('Cobros', 'Recibos de cuota sindical y órdenes de ingreso por fiscalización con el CUIT del empleador' ~ (', de los períodos elegidos o aplicados a ellos' if desde or hasta else '')) }}
   {{ ui.barra_filtros('Filtrar cobros…', 50) }}
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-cobros" data-exportar="Cobros {{ cuit }}">
@@ -165,6 +169,9 @@
           <th class="th-center" style="width:84px;">Período</th>
           <th>Descripción</th>
           <th class="th-right" style="width:120px;">Importe</th>
+          <th class="th-right" style="width:120px;">Aplicado</th>
+          <th class="th-right" style="width:120px;" title="Lo que falta aplicar: saldo a favor del empleador">Sin aplicar</th>
+          <th style="width:150px;">Aplicado a</th>
         </tr>
       </thead>
       <tbody>
@@ -177,9 +184,12 @@
           <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
           <td class="chico">{{ c.descripcion or '' }}</td>
           <td class="td-right" data-num="{{ c.importe or 0 }}">{{ (c.importe or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ c.aplicado }}">{{ c.aplicado | miles if c.aplicado else '—' }}</td>
+          <td class="td-right" data-num="{{ c.sin_aplicar }}">{% if c.sin_aplicar|abs > 0.01 %}<span class="importe-pendiente">{{ c.sin_aplicar | miles }}</span>{% else %}—{% endif %}</td>
+          <td class="td-mono chico">{% for p in c.periodos_aplicados %}{{ p | periodo }}{{ ', ' if not loop.last }}{% else %}—{% endfor %}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="7" class="no-data">No hay cobros{{ ' de esos períodos' if desde or hasta }}.</td></tr>
+        <tr class="no-data-row"><td colspan="10" class="no-data">No hay cobros{{ ' de esos períodos' if desde or hasta }}.</td></tr>
         {% endfor %}
       </tbody>
     </table>

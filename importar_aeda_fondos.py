@@ -94,6 +94,7 @@ from decimal import Decimal
 from importar_aeda import CARPETA_LOGS, _filas, conexion_aeda, limpio, normalizar, salir, solo_digitos
 from importar_aeda_tesoreria import _buscar
 
+import fisca_aplicaciones
 import movimientos_fondos as mf
 from numeracion import nro_visible
 from db import get_connection
@@ -821,10 +822,12 @@ def aplicar(cur, plan: Plan, destino: dict) -> None:
                     (o["nro_orden"], o["fecha"].year, o["fecha"], o["importe"], o["observaciones"], usuario,
                      _ahora(o["fecha"])))
         id_orden = cur.lastrowid
+        # El CUIT del empleador en el renglón: es lo que lee la cuenta corriente de empleadores.
+        cuit_det = str(o["_cuit"]).zfill(11) if o.get("_cuit") else None
         cur.execute("""INSERT INTO ingreso_ordenes_detalle (id_orden, tipo, id_motivo_ingreso, descripcion,
-                                                            importe, moneda, periodo)
-                       VALUES (%s, 'ingreso', %s, %s, %s, 'ARS', %s)""",
-                    (id_orden, o["motivo"]["id"], o["descripcion"], o["importe"], o["periodo"]))
+                                                            importe, moneda, periodo, cuit)
+                       VALUES (%s, 'ingreso', %s, %s, %s, 'ARS', %s, %s)""",
+                    (id_orden, o["motivo"]["id"], o["descripcion"], o["importe"], o["periodo"], cuit_det))
         cur.executemany("INSERT INTO ingreso_ordenes_cuentas (id_orden, id_cuenta_fondos, importe) VALUES (%s, %s, %s)",
                         [(id_orden, c, imp) for c, imp in o["cuentas"].items()])
         mf.registrar_ingreso(cur, id_orden)
@@ -833,6 +836,11 @@ def aplicar(cur, plan: Plan, destino: dict) -> None:
         cur.execute("UPDATE ingreso_ordenes SET estado = 'anulado', fecha_anulacion = NOW(), motivo_anulacion = %s, "
                     "id_usuario_anulacion = %s WHERE id = %s", (MOTIVO_ANULADO[:250], usuario, o["id"]))
         mf.anular(cur, "ingreso", o["id"], MOTIVO_ANULADO, usuario)
+
+    # Los cobros nuevos, a la cuota de su período; lo aplicado a los anulados sale
+    # (fisca_aplicaciones.py). Sin el esquema de aplicaciones, no se hace.
+    if (plan.ingresos or plan.anular_ingresos) and not fisca_aplicaciones.falta_esquema(cur):
+        fisca_aplicaciones.aplicar_automatico(cur, id_usuario=usuario)
 
     # Valores de terceros y su historia.
     valor_de = {k: v["id"] for k, v in destino["valores"].items()}

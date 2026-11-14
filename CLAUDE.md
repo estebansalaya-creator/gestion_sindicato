@@ -42,7 +42,9 @@ gestion_sindicato/
   fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
   lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
-  cc_empleadores.py       cuenta corriente de empleadores: cuota sindical liquidada contra lo cobrado, por CUIT y período
+  cc_empleadores.py       cuenta corriente de empleadores y aplicación de cobros a las cuotas (pantallas)
+  fisca_aplicaciones.py   qué cobro cancela qué cuota (fisca_aplicacion): aplicar, desaplicar, aplicación automática
+  aplicar_cobros.py       la aplicación automática por consola; simula por defecto, --aplicar graba
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
   afiliados_metricas.py   métricas del padrón: indicadores, altas y bajas, pirámide, empleadores, controles
@@ -143,7 +145,8 @@ repetiría en la URL lo que dice el dominio.
 /login /logout /menu
 /empleadores         ABM, ?edit=ID
 /empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
-                     (?desde, ?hasta, ?con_saldo=1)
+                     (?desde, ?hasta, ?con_saldo=1); /aplicaciones (?cuit=), /aplicaciones/aplicar,
+                     /aplicaciones/<id>/desaplicar, /aplicaciones/automatica POST
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
 /afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
                      listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
@@ -470,7 +473,7 @@ Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por
   reliquidada. AEDA liquidaba ≈250-340 afiliados por mes; por DDJJ son ≈1.300.
 - **Sin cobros** (decidido el 11/11/2026): `fis_deudaaplic` está vacía y `fis_cobros` no se aplica a la deuda. La
   cuenta corriente de empleadores, primera etapa (12/11/2026): saldo = liquidado − cobrado, sin aplicar
-  (`logs/saldos_empleadores_*.xlsx`). Falta aplicar los cobros e intereses por mora.
+  (`logs/saldos_empleadores_*.xlsx`). Los cobros se aplican a las cuotas desde el 14/11/2026 (ver «Aplicación de cobros a las cuotas»); faltan los intereses por mora.
 
 ## Presentación del Libro de Sueldos Digital (cuota sindical)
 
@@ -515,21 +518,46 @@ el empleador completaba a mano («no era nada seguro»).
 ## Cuenta corriente de empleadores
 
 `cc_empleadores.py` (`/empleadores/cc`, menú 12 «Cuenta Corriente» en Empleadores, Administrador, Supervisor y
-Operador; pedido del 14/11/2026). Solo lectura. Por CUIT y período: **Debe** = la `fisca_liquidacion` vigente (DDJJ,
-LSD, nómina o AEDA); **Haber** = renglones de órdenes de ingreso no anuladas con ese `ingreso_ordenes_detalle.cuit` y
+Operador; pedido del 14/11/2026). Por CUIT y período: **Debe** = la `fisca_liquidacion` vigente (DDJJ, LSD, nómina o
+AEDA); **Haber** = los cobros: renglones de órdenes de ingreso no anuladas con ese `ingreso_ordenes_detalle.cuit` y
 clase `cuota_sindical` o motivo CUOTA SINDICAL / INGRESOS POR FISCALIZACION (los recibos y los AEDA-RC / AEDA-OI).
-Saldo = Debe − Haber, positivo = debe (rojo), negativo = pagó de más (verde): la regla de `fisca_recibos.saldos_de`.
+Saldo = Debe − Haber, positivo = debe (rojo), negativo = pagó de más (verde).
 
-- **Por período**: un cobro sin período, o con uno que no es AAAAMM (AEDA tiene 252505), suma al cobrado y no
-  cancela ningún período; un período pagado de más no compensa otro. «Vencido» = saldo de los períodos con el
-  vencimiento pasado. Con un rango de períodos la bandeja cuenta solo lo de esos períodos.
-- **Estado de cuenta** (`/empleadores/cc/<cuit>`): un renglón por período liquidado o cobrado (los cobrados sin
-  liquidación, «sin liquidar»), con saldo, acumulado (lo anterior al «desde» es el saldo anterior), días de mora y lo
-  que había liquidado AEDA; debajo, los cobros con enlace al recibo o a la orden de ingreso. Botón «Cuenta corriente»
-  en la ficha del empleador.
-- Al 14/11/2026, desde 202401: 456 CUIT, liquidado $ 1.763,7 M, cobrado $ 2.269,8 M, vencido $ 344,1 M (lo cobrado
-  supera a lo liquidado en el total y hay períodos impagos: los cobros no se aplican a otros períodos).
-- **Pendiente**: aplicar los cobros a la deuda más vieja, intereses por mora, PDF del estado de cuenta.
+- **Qué cobro cancela qué cuota lo dicen las aplicaciones** (ver abajo): saldo del período = liquidado − aplicado;
+  lo cobrado sin aplicar es saldo a favor del empleador. «Vencido» = saldo de los períodos con el vencimiento pasado.
+  Con un rango de períodos la bandeja cuenta lo liquidado de esos períodos y lo aplicado a ellos.
+- **Estado de cuenta** (`/empleadores/cc/<cuit>`): un renglón por período liquidado con lo aplicado, saldo, acumulado
+  (lo anterior al «desde» es el saldo anterior), días de mora y lo que había liquidado AEDA; debajo, los cobros con lo
+  aplicado, lo sin aplicar y a qué períodos, con enlace al recibo o a la orden de ingreso. Botón «Cuenta corriente» en
+  la ficha del empleador.
+- Al 14/11/2026, desde 202401 y antes de las aplicaciones: 456 CUIT, liquidado $ 1.763,7 M, cobrado $ 2.269,8 M.
+- **Pendiente**: intereses por mora, PDF del estado de cuenta.
+
+## Aplicación de cobros a las cuotas
+
+`fisca_aplicaciones.py` (datos) + las pantallas de `cc_empleadores.py` (`/empleadores/cc/aplicaciones`, menú 13
+«Aplicación de Cobros», Administrador y Supervisor; `sql/fisca_aplicaciones_20261114.sql`; pedido del 14/11/2026).
+`fisca_aplicacion`: qué importe de un cobro (`id_detalle`, un renglón de `ingreso_ordenes_detalle`) cancela qué
+liquidación (`id_liquidacion`); uno por par (`uq_fisca_aplic`, aplicar otra vez el mismo par acumula). Origen
+`periodo` (automática, a su período), `deuda_vieja`, `recibo` (al emitirlo) o `manual`.
+
+- **Solo cuentan** las aplicaciones de órdenes no anuladas a liquidaciones vigentes del mismo CUIT
+  (`sql_aplicado_cobro`, `sql_aplicado_liq`). La liquidación se reliquida en la misma fila (`generar` hace UPDATE),
+  así que lo aplicado sigue a su cuota.
+- **Aplicar** (pantalla, de a uno): una cuota con saldo + un cobro sin aplicar, hasta el menor de los dos; se revalida
+  en el servidor con las dos filas bloqueadas. **Desaplicar**: entera o en parte, motivo obligatorio, el rastro en
+  `fisca_aplicacion_baja`.
+- **Aplicación automática** (`aplicar_automatico`; botón por empleador o de todos, `aplicar_cobros.py` por consola):
+  1) saca lo aplicado a órdenes o liquidaciones anuladas y recorta lo automático de una cuota que se reliquidó por
+  menos (lo más nuevo primero; lo manual no se toca, se avisa «aplicado de más»); 2) cada cobro a su propio período,
+  hasta el saldo; 3) con «deuda vieja», lo que sobra a la deuda más vieja del CUIT, de los cobros más viejos a los más
+  nuevos y solo a períodos ya empezados al cobrar; un cobro de un período todavía sin liquidar espera su liquidación.
+- **La primera vez**: después del script SQL, `python aplicar_cobros.py --aplicar` (o el botón). Hasta entonces ningún
+  cobro cancela ninguna cuota y la cuenta corriente muestra todo impago.
+- **Quién aplica solo**: la emisión de recibos (cada renglón a la cuota de su período, origen `recibo`) e
+  `importar_aeda_fondos.py` (los cobros nuevos, y saca lo de los anulados). Desde el 14/11/2026 ese importador graba
+  también el CUIT en el renglón (antes iba solo en la descripción; el script SQL completa los que faltaban).
+- `fisca_recibos.saldos_de` (lo que sugiere `distribuir`) usa lo aplicado, no lo cobrado por período.
 
 ## Emisión de recibos de cuota sindical
 
@@ -565,8 +593,7 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   AEDA cobró), 3 «¿ya tiene?» (AEDA-OI).
 - **Lote**: solo lo «sin recibo» con empleador seguro (mismo CUIT o relacionado), con los períodos que muestra la
   grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).
-- **Pendiente**: aplicar los cobros a la cuenta corriente de empleadores e intereses por mora; mandar el recibo por
-  mail.
+- **Pendiente**: intereses por mora; mandar el recibo por mail.
 
 ## Escalas salariales del convenio
 

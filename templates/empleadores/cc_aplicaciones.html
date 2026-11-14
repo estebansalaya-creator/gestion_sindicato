@@ -1,0 +1,349 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Aplicación de Cobros{% endblock %}
+
+{#
+  Aplicación de cobros a las cuotas (cc_emp.aplicaciones): qué parte de cada
+  cobro cancela qué período de cuota sindical (fisca_aplicaciones.py).
+
+  Sin CUIT: los empleadores con cobros sin aplicar y cuotas con saldo, abrir
+  cualquier otro por su CUIT y la aplicación automática de todos. Con CUIT:
+  las cuotas con saldo, los cobros sin aplicar, el formulario y las
+  aplicaciones registradas (con desaplicar), un bloque debajo del otro. Se
+  elige una cuota y un cobro; el importe propuesto es el menor de los dos.
+  Aplicar no mueve fondos ni cambia el saldo del empleador: cambia qué
+  períodos quedan impagos.
+#}
+
+{% macro form_automatica(cuit=None) -%}
+<form method="post" action="{{ url_for('cc_emp.automatica') }}" class="filter-bar"
+      onsubmit="return confirm({{ ('¿Aplicar automáticamente los cobros de este empleador?' if cuit else '¿Aplicar automáticamente los cobros de TODOS los empleadores?') | tojson }});">
+  {% if cuit %}<input type="hidden" name="cuit" value="{{ cuit }}">{% endif %}
+  <input type="hidden" name="volver" value="{{ request.full_path }}">
+  <label class="filtro-check" title="Si no se marca, cada cobro va solo a su propio período">
+    <input type="checkbox" name="deuda_vieja" value="1"> Lo que sobra, a la deuda más vieja
+  </label>
+  {{ ui.boton('Aplicar automáticamente', 'secondary', submit=True, chico=True) }}
+  <span class="campo-ayuda" style="flex-basis:100%;">
+    Cada cobro va primero a su propio período, hasta el saldo de la cuota. Marcando la casilla, lo que sobra va a la
+    deuda más vieja del empleador, solo a períodos que ya habían empezado cuando se cobró; un cobro de un período
+    todavía no liquidado espera su liquidación. También saca lo aplicado a órdenes o liquidaciones anuladas y recorta
+    lo automático de una cuota que se reliquidó por menos. Lo aplicado a mano no lo toca.
+  </span>
+</form>
+{%- endmacro %}
+
+{% macro enlace_cobro(c) -%}
+  {%- if c.clase == 'cuota_sindical' and puede_rec -%}
+    {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo', blank=True) }}
+  {%- elif puede_ingreso -%}
+    {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso', blank=True) }}
+  {%- endif -%}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Aplicación de Cobros</h1>
+    <p>{% if cuit %}{{ empresa.razon_social if empresa else '(no está en Empleadores)' }} · CUIT <span class="mono">{{ cuit }}</span>
+       {%- else %}Qué cobro cancela qué período de cuota sindical: aplicar lo cobrado sin aplicar, o desaplicar lo aplicado.{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if cuit %}
+      {{ ui.boton('Cambiar empleador', 'secondary', href=url_for('cc_emp.aplicaciones'), icono_='volver') }}
+      {% if puede_cc %}{{ ui.boton('Estado de cuenta', 'secondary', href=url_for('cc_emp.estado_cuenta', cuit=cuit)) }}{% endif %}
+    {% elif puede_cc %}
+      {{ ui.boton('Cuenta corriente', 'secondary', href=url_for('cc_emp.bandeja'), icono_='volver') }}
+    {% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if falta_esquema %}
+{# El aviso ya salió en los mensajes. #}
+{% elif not cuit %}
+{# ══ Sin CUIT ══ #}
+<div class="card">
+  {{ ui.card_head('Aplicación automática', 'de todos los empleadores') }}
+  {{ form_automatica() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Empleadores con algo para aplicar', 'cobros sin aplicar de un lado y cuotas con saldo del otro') }}
+  {{ ui.barra_filtros('Buscar por razón social o CUIT…', 50) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-sug" data-exportar="Empleadores con cobros para aplicar">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Empleador</th><th style="width:112px;">CUIT</th>
+        <th class="th-right" data-tipo="n" style="width:80px;">Cobros</th>
+        <th class="th-right" style="width:124px;">Sin aplicar</th>
+        <th class="th-right" data-tipo="n" style="width:80px;">Cuotas</th>
+        <th class="th-right" style="width:124px;">Deuda</th>
+        <th class="th-right" style="width:124px;" data-orden="desc" title="El menor de los dos: lo que se puede cancelar">Aplicable</th>
+      </tr></thead>
+      <tbody>
+        {% for s in sugeridos %}
+        <tr>
+          <td><div class="acciones">{{ ui.boton('Aplicar', href=url_for('cc_emp.aplicaciones', cuit=s.cuit), chico=True) }}</div></td>
+          <td class="td-fuerte">{{ s.razon_social or '' }}{% if not s.razon_social %}<span class="chip chip-alerta">no está en Empleadores</span>{% endif %}</td>
+          <td class="td-mono">{{ s.cuit }}</td>
+          <td class="td-right">{{ s.cobros | int }}</td>
+          <td class="td-right importe-ok" data-num="{{ s.sin_aplicar or 0 }}">{{ (s.sin_aplicar or 0) | miles }}</td>
+          <td class="td-right">{{ s.cuotas }}</td>
+          <td class="td-right importe-danger" data-num="{{ s.deuda or 0 }}">{{ (s.deuda or 0) | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ s.aplicable or 0 }}">{{ (s.aplicable or 0) | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Ningún empleador tiene cobros sin aplicar y cuotas con saldo a la vez.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Otro empleador', 'para revisar o desaplicar lo que ya está aplicado') }}
+  <form method="get" action="{{ url_for('cc_emp.aplicaciones') }}" class="filter-bar">
+    {% call ui.filtro('CUIT') %}<input type="text" name="cuit" class="mono" size="14" inputmode="numeric" placeholder="30-12345678-9" required>{% endcall %}
+    {{ ui.boton('Abrir', submit=True, chico=True) }}
+  </form>
+</div>
+
+{% else %}
+{# ══ Con CUIT ══ #}
+{% if de_mas %}
+{{ ui.aviso('Hay ' ~ de_mas|length ~ ' cuota(s) con más aplicado que su importe (se reliquidaron por menos): '
+            ~ (de_mas | map(attribute='periodo') | map('periodo') | join(', '))
+            ~ '. Desaplicá la diferencia abajo, o usá la aplicación automática si lo aplicado no es manual.', 'warning') }}
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Cuotas con saldo', '$ ' ~ ((cuotas | sum(attribute='saldo')) | miles) ~ ' · elegí una') }}
+  {{ ui.barra_filtros('Buscar por período…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cuotas" data-exportar="Cuotas con saldo {{ cuit }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Elegir</th>
+        <th class="th-center" data-orden="asc">Período</th><th class="th-center">Vencimiento</th>
+        <th class="th-right">Liquidado</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
+      </tr></thead>
+      <tbody>
+        {% for l in cuotas %}
+        <tr data-id="{{ l.id }}" data-saldo="{{ l.saldo }}" data-ref="Cuota {{ l.periodo | periodo }}">
+          <td><input type="radio" name="sel-cuota" aria-label="Elegir la cuota {{ l.periodo | periodo }}" onchange="elegir('cuota', this)"></td>
+          <td class="td-center td-mono">{{ l.periodo | periodo }}</td>
+          <td class="td-center">{{ l.vencimiento.strftime('%d/%m/%Y') if l.vencimiento else '—' }}</td>
+          <td class="td-right" data-num="{{ l.importe }}">{{ l.importe | miles }}</td>
+          <td class="td-right {{ 'td-muted' if not l.aplicado }}" data-num="{{ l.aplicado }}">{{ l.aplicado | miles }}</td>
+          <td class="td-right td-fuerte importe-danger" data-num="{{ l.saldo }}">{{ l.saldo | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">No tiene cuotas con saldo.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cobros sin aplicar', '$ ' ~ ((cobros | sum(attribute='sin_aplicar')) | miles) ~ ' · elegí uno') }}
+  {{ ui.barra_filtros('Buscar por número, período o descripción…') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cobros" data-exportar="Cobros sin aplicar {{ cuit }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Elegir</th>
+        <th class="th-center" data-orden="asc">Fecha</th><th>Número</th><th>Motivo</th><th class="th-center">Período</th>
+        <th>Descripción</th><th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Sin aplicar</th>
+      </tr></thead>
+      <tbody>
+        {% for c in cobros %}
+        <tr data-id="{{ c.id_detalle }}" data-saldo="{{ c.sin_aplicar }}" data-ref="{{ c.nro_orden or c.id_orden }} del {{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}">
+          <td><div class="acciones"><input type="radio" name="sel-cobro" aria-label="Elegir el cobro {{ c.nro_orden }}" onchange="elegir('cobro', this)">{{ enlace_cobro(c) }}</div></td>
+          <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
+          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td>{{ c.motivo or '—' }}</td>
+          <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
+          <td class="chico">{{ c.descripcion or '' }}</td>
+          <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+          <td class="td-right {{ 'td-muted' if not c.aplicado }}" data-num="{{ c.aplicado }}">{{ c.aplicado | miles }}</td>
+          <td class="td-right td-fuerte importe-ok" data-num="{{ c.sin_aplicar }}">{{ c.sin_aplicar | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene cobros sin aplicar.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<form method="post" action="{{ url_for('cc_emp.aplicar') }}" id="form-aplicar" class="card">
+  {{ ui.card_head('Aplicar', 'Elegí una cuota y un cobro. El importe propuesto es el menor de los dos; podés bajarlo para aplicar una parte.') }}
+  <input type="hidden" name="cuit" value="{{ cuit }}">
+  <input type="hidden" name="id_liquidacion" id="id_liquidacion">
+  <input type="hidden" name="id_detalle" id="id_detalle">
+  <div class="card-body">
+    <div class="campos">
+      <div class="campo" style="--span:4;"><label>Cuota elegida</label><input type="text" id="lbl-cuota" value="—" readonly tabindex="-1"></div>
+      <div class="campo" style="--span:4;"><label>Cobro elegido</label><input type="text" id="lbl-cobro" value="—" readonly tabindex="-1"></div>
+      <div class="campo" style="--span:4;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
+        <input type="text" name="importe" id="importe" class="inp-importe" inputmode="decimal" autocomplete="off" disabled>
+        <small class="campo-ayuda" id="aviso">Elegí una cuota y un cobro para habilitar la aplicación.</small></div>
+      <div class="campo" style="--span:12;"><label for="f-obs">Observaciones</label>
+        <input type="text" name="observaciones" id="f-obs" maxlength="255"></div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    {{ ui.boton('Aplicar', submit=True, id='btn-aplicar') }}
+  </div>
+</form>
+
+<div class="card">
+  {{ ui.card_head('Aplicación automática', 'de este empleador') }}
+  {{ form_automatica(cuit) }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Aplicaciones registradas', 'desaplicar deja el cobro otra vez sin aplicar y la cuota otra vez con saldo') }}
+  {% call ui.barra_filtros('Buscar por período, número u observación…') %}
+    {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+      <option value="">Todos</option>
+      {% for k, v in origenes.items() %}<option value="{{ k }}">{{ v }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-aplic" data-exportar="Aplicaciones {{ cuit }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-center" data-orden="asc">Cuota</th><th class="th-center">Fecha</th><th>Cobro</th>
+        <th class="th-center">Origen</th><th>Observaciones</th><th class="th-right">Importe</th>
+      </tr></thead>
+      <tbody>
+        {% for a in aplicadas %}
+        <tr data-origen="{{ a.origen }}" class="{{ 'fila-baja' if a.muerta }}">
+          <td><div class="acciones">
+            {{ ui.accion('desaplicar', onclick='desaplicar(this)', datos={
+                 'url': url_for('cc_emp.desaplicar', id_aplic=a.id), 'importe': '%.2f' % (a.importe | float),
+                 'cuota': a.periodo | periodo, 'cobro': (a.nro_orden or a.id_orden | string)}) }}
+          </div></td>
+          <td class="td-center td-mono">{{ a.periodo | periodo }}</td>
+          <td class="td-center" data-num="{{ a.fecha.toordinal() if a.fecha else 0 }}">{{ a.fecha.strftime('%d/%m/%Y') if a.fecha else '' }}</td>
+          <td class="td-wrap"><span class="td-mono">{{ a.nro_orden or a.id_orden }}</span>
+            <span class="chico muted">del {{ a.fecha_cobro.strftime('%d/%m/%Y') if a.fecha_cobro else '—' }}{% if a.periodo_cobro %} · período {{ a.periodo_cobro | periodo }}{% endif %}</span>
+            {%- if a.muerta %}<span class="td-motivo">No cuenta: {{ a.muerta }}</span>{% endif %}</td>
+          <td class="td-center">{{ ui.estado(origenes.get(a.origen, a.origen), 'info' if a.origen == 'manual' else 'neutro') }}</td>
+          <td class="td-muted td-wrap">{{ a.observaciones or '' }}{% if a.usuario %}<div class="chico">{{ a.usuario }}</div>{% endif %}</td>
+          <td class="td-right td-fuerte" data-num="{{ a.importe }}">{{ a.importe | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">Este empleador no tiene aplicaciones registradas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="modal" id="modal-desaplicar">
+  <form method="post" id="form-desaplicar" class="modal-caja ancha" novalidate>
+    <input type="hidden" name="cuit" value="{{ cuit }}">
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <div class="modal-titulo">Desaplicar <span id="md-sujeto"></span></div>
+    <div class="modal-texto">El cobro vuelve a quedar sin aplicar y la cuota vuelve a tener saldo. No se mueven fondos ni cambia
+      el saldo del empleador: cambia qué períodos quedan impagos.</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="md-importe">Importe a desaplicar <span class="req">*</span></label>
+        <input type="text" name="importe" id="md-importe" class="inp-importe" inputmode="decimal" autocomplete="off">
+        <small class="campo-ayuda" id="md-tope"></small>
+      </div>
+      <div class="campo" style="--span:8;">
+        <label for="md-motivo">Motivo <span class="req">*</span></label>
+        <input type="text" name="motivo" id="md-motivo" maxlength="255" autocomplete="off"
+               placeholder="Ej.: el pago era de otro período">
+      </div>
+    </div>
+    <div class="alert alert-danger oculto" id="md-error" role="alert"></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-desaplicar')") }}
+      {{ ui.boton('Desaplicar', 'danger', icono_='baja', submit=True) }}
+    </div>
+  </form>
+</div>
+
+<script>
+function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+var sel = { cuota: null, cobro: null };
+function elegir(lado, radio) {
+  var tr = radio.closest('tr'), tabla = lado === 'cuota' ? 'tbl-cuotas' : 'tbl-cobros';
+  document.querySelectorAll('#' + tabla + ' tbody tr').forEach(function (x) { x.classList.remove('fila-actual'); });
+  tr.classList.add('fila-actual');
+  sel[lado] = { id: tr.dataset.id, saldo: parseFloat(tr.dataset.saldo), ref: tr.dataset.ref };
+  var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  document.getElementById('id_liquidacion').value = sel.cuota ? sel.cuota.id : '';
+  document.getElementById('id_detalle').value = sel.cobro ? sel.cobro.id : '';
+  document.getElementById('lbl-cuota').value = sel.cuota ? sel.cuota.ref + ' · ' + plata(sel.cuota.saldo) : '—';
+  document.getElementById('lbl-cobro').value = sel.cobro ? sel.cobro.ref + ' · ' + plata(sel.cobro.saldo) : '—';
+  if (sel.cuota && sel.cobro) {
+    var tope = Math.min(sel.cuota.saldo, sel.cobro.saldo);
+    inp.disabled = false;
+    inp.dataset.tope = tope;
+    inp.value = tope.toFixed(2);
+    fmtMilesInit(inp);
+    aviso.textContent = 'Máximo aplicable: ' + plata(tope);
+  }
+}
+document.getElementById('form-aplicar').addEventListener('submit', function (ev) {
+  var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
+  var tope = parseFloat(inp.dataset.tope || '0');
+  var error = !(sel.cuota && sel.cobro) ? 'Elegí una cuota y un cobro.'
+            : !(v > 0) ? 'El importe tiene que ser mayor que cero.'
+            : v > tope + 0.01 ? 'El importe no puede superar ' + plata(tope) + '.' : '';
+  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); }
+});
+(function () {
+  var form = document.getElementById('form-desaplicar'), inp = document.getElementById('md-importe');
+  var mot = document.getElementById('md-motivo'), err = document.getElementById('md-error'), tope = 0;
+  function error(t) { err.textContent = t; err.classList.toggle('oculto', !t); }
+  window.desaplicar = function (btn) {
+    var d = btn.dataset;
+    tope = parseFloat(d.importe) || 0;
+    form.action = d.url;
+    document.getElementById('md-sujeto').textContent = d.cobro + ' → cuota ' + d.cuota;
+    inp.value = tope.toFixed(2);
+    fmtMilesInit(inp);
+    document.getElementById('md-tope').textContent = 'Aplicado: ' + plata(tope) + '. Un importe menor desaplica una parte.';
+    mot.value = '';
+    error('');
+    abrirModal('modal-desaplicar');
+    setTimeout(function () { mot.focus(); }, 0);
+  };
+  form.addEventListener('submit', function (ev) {
+    var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
+    if (!(v > 0)) { ev.preventDefault(); error('El importe tiene que ser mayor que cero.'); inp.focus(); }
+    else if (v > tope + 0.005) { ev.preventDefault(); error('No se puede desaplicar más de lo aplicado (' + plata(tope) + ').'); inp.focus(); }
+    else if (!mot.value.trim()) { ev.preventDefault(); error('Escribí el motivo: queda registrado junto con quién desaplicó.'); mot.focus(); }
+  });
+})();
+</script>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  ['tbl-sug', 'tbl-cuotas', 'tbl-cobros'].forEach(function (id) {
+    if (document.getElementById(id)) gestion_admTable(id, { pageSize: id === 'tbl-sug' ? 50 : 20 });
+  });
+  var fOrigen = document.getElementById('f-origen');
+  if (document.getElementById('tbl-aplic')) {
+    gestion_admTable('tbl-aplic', { pageSize: 20, filtroExtra: function (tr) {
+      return !fOrigen.value || tr.dataset.origen === fOrigen.value;
+    } });
+  }
+});
+</script>
+{% endblock %}

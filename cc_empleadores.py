@@ -1,28 +1,28 @@
 """
-cc_empleadores.py — Cuenta corriente de empleadores (cuota sindical).
+cc_empleadores.py — Cuenta corriente de empleadores (cuota sindical) y
+aplicación de cobros a las cuotas.
 
-    /empleadores/cc                 bandeja: empleadores con su saldo (menú 12)
-    /empleadores/cc/<cuit>          estado de cuenta del CUIT, por período, con los recibos
+    /empleadores/cc                              bandeja: empleadores con su saldo (menú 12)
+    /empleadores/cc/<cuit>                       estado de cuenta del CUIT, por período, con los cobros
+    /empleadores/cc/aplicaciones                 aplicar y desaplicar (menú 13); ?cuit= un empleador
+    /empleadores/cc/aplicaciones/aplicar         POST
+    /empleadores/cc/aplicaciones/<id>/desaplicar POST
+    /empleadores/cc/aplicaciones/automatica      POST (un CUIT o todos)
 
-Lo que el empleador tiene que pagar contra lo que pagó, por CUIT y período:
+Lo que el empleador tiene que pagar contra lo que pagó:
 
     Debe    la liquidación vigente de cuota sindical (`fisca_liquidacion`, por
             DDJJ de OSEDA, Libro de Sueldos Digital, nómina o AEDA)
-    Haber   lo cobrado: renglones de órdenes de ingreso no anuladas con el CUIT
-            del empleador (`ingreso_ordenes_detalle.cuit`) y motivo cuota
-            sindical o ingresos por fiscalización (los recibos de Emisión de
-            Recibos y los «AEDA-RC» / «AEDA-OI» que trajo importar_aeda_fondos.py)
+    Haber   lo cobrado: los cobros de fisca_aplicaciones.py (recibos de cuota
+            sindical, AEDA-RC, ingresos por fiscalización con el CUIT)
 
     Saldo = Debe − Haber: positivo, el empleador debe; negativo, pagó de más.
 
-Es la regla de `fisca_recibos.saldos_de`. Lo cobrado se mira por período: un
-cobro sin período (o con uno que no es AAAAMM, como el 252505 de AEDA) entra
-en el saldo total pero no cancela ningún período; un período pagado de más no
-compensa otro. «Vencido» = saldo de los períodos cuyo vencimiento ya pasó.
-Todavía no hay aplicación de cobros a la deuda ni intereses por mora.
-
-Solo lectura: lo cobrado se carga en Emisión de Recibos; lo liquidado, en
-Liquidación de Cuota Sindical o con la presentación del LSD.
+Qué cobro cancela qué período lo dicen las aplicaciones (`fisca_aplicacion`):
+saldo del período = liquidado − aplicado; lo cobrado sin aplicar es saldo a
+favor del empleador, todavía sin período. «Vencido» = saldo de los períodos
+cuyo vencimiento ya pasó. Lo liquidado se carga en Liquidación de Cuota
+Sindical o con la presentación del LSD; lo cobrado, en Emisión de Recibos.
 """
 
 from __future__ import annotations
@@ -34,37 +34,24 @@ from decimal import Decimal
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
-from db import get_connection, puede, validasesion
+import fisca_aplicaciones as fa
+from db import get_connection, puede, usuario_actual, validasesion
+from pagos_datos import leer_importe
 
 log = logging.getLogger(__name__)
 
 cc_emp_bp = Blueprint("cc_emp", __name__, url_prefix="/empleadores/cc")
 
 URL = "/empleadores/cc"
-#: Motivos de ingreso que son pagos del empleador (además de toda orden de clase cuota_sindical).
-MOTIVOS_COBRO = ("CUOTA SINDICAL", "INGRESOS POR FISCALIZACION")
-#: Un período válido: AAAAMM.
-RE_PERIODO_SQL = "'^(19|20)[0-9]{2}(0[1-9]|1[0-2])$'"
+URL_APLIC = "/empleadores/cc/aplicaciones"
 ORIGENES = {"ddjj": "DDJJ OSEDA", "lsd": "Libro de Sueldos", "nomina": "Nómina", "aeda": "AEDA"}
-
-# Lo cobrado, renglón por renglón. `per` es el período si es válido; si no, NULL.
-SQL_COBROS = f"""
-    SELECT d.id AS id_detalle, d.id_orden, d.cuit, d.importe, d.descripcion,
-           CASE WHEN d.periodo REGEXP {RE_PERIODO_SQL} THEN d.periodo END AS per,
-           d.periodo AS periodo_cargado, o.fecha, o.nro_orden, o.clase, o.origen,
-           m.descripcion AS motivo
-      FROM ingreso_ordenes_detalle d
-      JOIN ingreso_ordenes o ON o.id = d.id_orden
-      LEFT JOIN c_motivos_de_ingreso m ON m.id = d.id_motivo_ingreso
-     WHERE o.estado <> 'anulado' AND d.cuit REGEXP '^[0-9]{{11}}$'
-       AND (o.clase = 'cuota_sindical' OR m.descripcion IN ({', '.join(['%s'] * len(MOTIVOS_COBRO))}))
-"""
+AVISO_ESQUEMA = "!Falta correr sql/fisca_aplicaciones_20261114.sql en la base (DBeaver, como root)."
 
 
-def _guardia():
+def _guardia(*urls):
     if not validasesion():
         return redirect(url_for("login"))
-    if not puede(URL):
+    if not any(puede(u) for u in urls):
         flash("!No tenés permiso para esa pantalla.")
         return redirect(url_for("menu"))
     return None
@@ -72,6 +59,15 @@ def _guardia():
 
 def _d(v) -> Decimal:
     return Decimal(str(v or 0))
+
+
+def _uid():
+    return (usuario_actual() or {}).get("id")
+
+
+def _cuit(v) -> str | None:
+    t = re.sub(r"\D", "", v or "")
+    return t if len(t) == 11 else None
 
 
 def periodo_de(texto) -> str | None:
@@ -101,48 +97,42 @@ def _rango(alias: str, campo: str, f: dict, params: list) -> str:
 
 
 def consultar_bandeja(cur, f: dict) -> list[dict]:
-    """Un renglón por CUIT con liquidaciones o cobros. Con un rango de períodos,
-    solo lo de esos períodos (los cobros sin período quedan afuera)."""
-    # Los parámetros, en el orden en que aparecen en el texto: el CTE de los
-    # cobros (los motivos), las liquidaciones, los cobros y los períodos.
-    p_liq, p_cob, p_per = [], [], []
+    """Un renglón por CUIT con liquidaciones o cobros. Sin rango, el saldo es
+    liquidado − cobrado. Con un rango de períodos es lo liquidado de esos
+    períodos menos lo aplicado a ellos (`cobrado` pasa a ser lo aplicado)."""
+    con_rango = bool(f["desde"] or f["hasta"])
+    p_liq = []
     r_liq = _rango("l", "periodo", f, p_liq)
-    r_cob = (" AND c.per IS NOT NULL" + _rango("c", "per", f, p_cob)) if (f["desde"] or f["hasta"]) else ""
-    r_per = _rango("l", "periodo", f, p_per)
-    params = list(MOTIVOS_COBRO) + p_liq + p_cob + p_per
+    params = list(fa.MOTIVOS_COBRO) + p_liq
     where, having = "", {"deuda": "saldo > 0.01", "favor": "saldo < -0.01"}.get(f["saldo"], "1 = 1")
     if f["q"]:
         digitos = re.sub(r"\D", "", f["q"])
         where = "WHERE (e.razon_social LIKE %s OR e.nombre_fantasia LIKE %s" + (" OR t.cuit LIKE %s)" if digitos else ")")
         params += [f"%{f['q']}%"] * 2 + ([f"%{digitos}%"] if digitos else [])
         having = "1 = 1"
+    cobrado = "COALESCE(liq.aplicado, 0)" if con_rango else "COALESCE(cobt.cobrado, 0)"
     cur.execute(f"""
-        WITH cob AS ({SQL_COBROS}),
-        liq AS (SELECT l.cuit, SUM(l.importe) AS liquidado, COUNT(*) AS periodos, MAX(l.periodo) AS ultimo_liq,
-                       SUM(l.aeda_importe) AS aeda
-                  FROM fisca_liquidacion l WHERE l.estado = 'vigente'{r_liq} GROUP BY l.cuit),
-        cobt AS (SELECT c.cuit, SUM(c.importe) AS cobrado, COUNT(DISTINCT c.id_orden) AS recibos,
-                        MAX(c.fecha) AS ultimo_pago, SUM(CASE WHEN c.per IS NULL THEN c.importe ELSE 0 END) AS sin_periodo
-                   FROM cob c WHERE 1 = 1{r_cob} GROUP BY c.cuit),
-        per AS (SELECT l.cuit, l.importe - COALESCE(x.imp, 0) AS saldo, l.vencimiento
-                  FROM fisca_liquidacion l
-                  LEFT JOIN (SELECT cuit, per, SUM(importe) AS imp FROM cob WHERE per IS NOT NULL GROUP BY cuit, per) x
-                         ON x.cuit = l.cuit AND x.per = l.periodo
-                 WHERE l.estado = 'vigente'{r_per}),
-        adeu AS (SELECT cuit, SUM(saldo > 0.01) AS periodos_deuda,
-                        SUM(CASE WHEN saldo > 0.01 AND vencimiento < CURDATE() THEN saldo ELSE 0 END) AS vencido
-                   FROM per GROUP BY cuit),
-        t AS (SELECT cuit FROM liq UNION SELECT cuit FROM cobt)
+        WITH cob AS ({fa.SQL_COBROS}),
+        lq AS (SELECT l.cuit, l.periodo, l.importe, l.vencimiento, {fa.sql_aplicado_liq('l')} AS aplicado
+                 FROM fisca_liquidacion l WHERE l.estado = 'vigente'{r_liq}),
+        liq AS (SELECT cuit, SUM(importe) AS liquidado, SUM(aplicado) AS aplicado, COUNT(*) AS periodos,
+                       MAX(periodo) AS ultimo_liq, SUM(importe - aplicado > 0.01) AS periodos_deuda,
+                       SUM(CASE WHEN importe - aplicado > 0.01 AND vencimiento < CURDATE()
+                                THEN importe - aplicado ELSE 0 END) AS vencido
+                  FROM lq GROUP BY cuit),
+        cobt AS (SELECT c.cuit, SUM(c.importe) AS cobrado, SUM(c.importe - c.aplicado) AS sin_aplicar,
+                        COUNT(DISTINCT c.id_orden) AS recibos, MAX(c.fecha) AS ultimo_pago
+                   FROM cob c GROUP BY c.cuit),
+        t AS (SELECT cuit FROM liq UNION SELECT cuit FROM cobt{' WHERE 1 = 0' if con_rango else ''})
         SELECT t.cuit, e.id AS id_empresa, e.razon_social, e.nombre_fantasia,
-               COALESCE(liq.liquidado, 0) AS liquidado, COALESCE(cobt.cobrado, 0) AS cobrado,
-               COALESCE(liq.liquidado, 0) - COALESCE(cobt.cobrado, 0) AS saldo,
+               COALESCE(liq.liquidado, 0) AS liquidado, {cobrado} AS cobrado,
+               COALESCE(liq.liquidado, 0) - {cobrado} AS saldo,
                COALESCE(liq.periodos, 0) AS periodos, liq.ultimo_liq, COALESCE(cobt.recibos, 0) AS recibos,
-               cobt.ultimo_pago, COALESCE(cobt.sin_periodo, 0) AS sin_periodo,
-               COALESCE(adeu.periodos_deuda, 0) AS periodos_deuda, COALESCE(adeu.vencido, 0) AS vencido
+               cobt.ultimo_pago, COALESCE(cobt.sin_aplicar, 0) AS sin_aplicar,
+               COALESCE(liq.periodos_deuda, 0) AS periodos_deuda, COALESCE(liq.vencido, 0) AS vencido
           FROM t
           LEFT JOIN liq  ON liq.cuit = t.cuit
           LEFT JOIN cobt ON cobt.cuit = t.cuit
-          LEFT JOIN adeu ON adeu.cuit = t.cuit
           LEFT JOIN p_empresas e ON e.CUIT = CAST(t.cuit AS UNSIGNED)
           {where}
         HAVING {having}
@@ -152,16 +142,22 @@ def consultar_bandeja(cur, f: dict) -> list[dict]:
 
 @cc_emp_bp.route("")
 def bandeja():
-    salida = _guardia()
+    salida = _guardia(URL)
     if salida:
         return salida
     f = _filtros_bandeja(request.args)
     with get_connection() as conn:
         with conn.cursor() as cur:
-            filas = consultar_bandeja(cur, f)
-    tot = {k: sum((_d(x[k]) for x in filas), Decimal("0")) for k in ("liquidado", "cobrado", "saldo", "vencido")}
+            if fa.falta_esquema(cur):
+                flash(AVISO_ESQUEMA)
+                filas = []
+            else:
+                filas = consultar_bandeja(cur, f)
+    tot = {k: sum((_d(x[k]) for x in filas), Decimal("0"))
+           for k in ("liquidado", "cobrado", "saldo", "vencido", "sin_aplicar")}
     return render_template("empleadores/cc_bandeja.html", filas=filas, f=f, tot=tot,
-                           hay_filtros=bool(f["q"] or f["saldo"] != "deuda" or f["desde"] or f["hasta"]))
+                           hay_filtros=bool(f["q"] or f["saldo"] != "deuda" or f["desde"] or f["hasta"]),
+                           puede_aplicar=puede(URL_APLIC))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -169,70 +165,71 @@ def bandeja():
 # ─────────────────────────────────────────────────────────────────────────────
 
 def estado_cuenta_de(cur, cuit: str, desde: str | None = None, hasta: str | None = None) -> dict:
-    """Los períodos del CUIT (liquidados o cobrados) con su saldo y el acumulado,
-    y los cobros. Lo anterior a `desde` entra como saldo anterior."""
+    """Los períodos liquidados del CUIT con lo aplicado, el saldo y el
+    acumulado, y los cobros. Lo anterior a `desde` entra como saldo anterior."""
     hoy = datetime.date.today()
-    cur.execute("""SELECT l.id, l.periodo, l.vencimiento, l.origen, l.afiliados, l.afiliados_activos,
-                          l.activos_con_ddjj, l.porc_ddjj, l.remuneracion, l.importe, l.aeda_importe,
-                          l.observaciones
-                     FROM fisca_liquidacion l WHERE l.estado = 'vigente' AND l.cuit = %s""", (cuit,))
-    liqs = {x["periodo"]: x for x in cur.fetchall()}
-    cur.execute(SQL_COBROS + " AND d.cuit = %s ORDER BY o.fecha, o.id, d.id", list(MOTIVOS_COBRO) + [cuit])
-    cobros = list(cur.fetchall())
-
-    por_per: dict[str, Decimal] = {}
+    liqs = fa.liquidaciones_de(cur, cuit)
+    cobros = fa.cobros_de(cur, cuit)
+    aplicado_a = {}                                   # id_detalle → [período, …]
+    for a in fa.aplicaciones_de(cur, cuit):
+        if not a["muerta"]:
+            aplicado_a.setdefault(a["id_detalle"], []).append(a["periodo"])
     for c in cobros:
-        if c["per"]:
-            por_per[c["per"]] = por_per.get(c["per"], Decimal("0")) + _d(c["importe"])
-    periodos = []
-    for p in sorted(set(liqs) | set(por_per)):
-        l = liqs.get(p)
-        liq, cob = _d(l["importe"]) if l else Decimal("0"), por_per.get(p, Decimal("0"))
-        saldo = liq - cob
-        venc = l["vencimiento"] if l else None
-        periodos.append({"periodo": p, "liq": l, "liquidado": liq, "cobrado": cob, "saldo": saldo,
-                         "vencimiento": venc,
-                         "mora": (hoy - venc).days if (venc and saldo > Decimal("0.01") and venc < hoy) else None})
-    sin_periodo = [c for c in cobros if not c["per"]]
-    total_sin_per = sum((_d(c["importe"]) for c in sin_periodo), Decimal("0"))
+        c["periodos_aplicados"] = sorted(set(aplicado_a.get(c["id_detalle"], [])))
 
+    periodos = []
+    for l in liqs:
+        venc = l["vencimiento"]
+        periodos.append({"periodo": l["periodo"], "liq": l, "liquidado": l["importe"], "cobrado": l["aplicado"],
+                         "saldo": l["saldo"], "vencimiento": venc,
+                         "mora": (hoy - venc).days if (venc and l["saldo"] > Decimal("0.01") and venc < hoy) else None})
+    sin_aplicar = sum((c["sin_aplicar"] for c in cobros), Decimal("0"))
     anterior = sum((x["saldo"] for x in periodos if desde and x["periodo"] < desde), Decimal("0"))
     visibles = [x for x in periodos if (not desde or x["periodo"] >= desde) and (not hasta or x["periodo"] <= hasta)]
     acum = anterior
     for x in visibles:
         acum += x["saldo"]
         x["acumulado"] = acum
-    en_rango = lambda c: c["per"] and (not desde or c["per"] >= desde) and (not hasta or c["per"] <= hasta)  # noqa: E731
+
+    def en_rango(p):
+        return bool(p) and (not desde or p >= desde) and (not hasta or p <= hasta)
+    if desde or hasta:
+        cobros = [c for c in cobros if en_rango(c["per"]) or any(en_rango(p) for p in c["periodos_aplicados"])]
     return {
-        "periodos": visibles, "anterior": anterior,
-        "cobros": [c for c in cobros if en_rango(c) or (not desde and not hasta and not c["per"])],
-        "sin_periodo": sin_periodo, "total_sin_periodo": total_sin_per,
+        "periodos": visibles, "anterior": anterior, "cobros": cobros,
         "liquidado": sum((x["liquidado"] for x in visibles), Decimal("0")),
         "cobrado": sum((x["cobrado"] for x in visibles), Decimal("0")),
-        "saldo_total": sum((x["saldo"] for x in periodos), Decimal("0")) - total_sin_per,
+        "sin_aplicar": sin_aplicar,
+        "saldo_total": sum((x["saldo"] for x in periodos), Decimal("0")) - sin_aplicar,
         "vencido": sum((x["saldo"] for x in periodos if x["mora"] is not None), Decimal("0")),
         "periodos_deuda": sum(1 for x in periodos if x["saldo"] > Decimal("0.01")),
     }
 
 
+def _empresa(cur, cuit: str) -> dict | None:
+    cur.execute("SELECT id, CUIT, razon_social, nombre_fantasia FROM p_empresas WHERE CUIT = %s", (int(cuit),))
+    return cur.fetchone()
+
+
 @cc_emp_bp.route("/<cuit>")
 def estado_cuenta(cuit):
-    salida = _guardia()
+    salida = _guardia(URL)
     if salida:
         return salida
-    cuit = re.sub(r"\D", "", cuit or "")
-    if len(cuit) != 11:
+    cuit = _cuit(cuit)
+    if not cuit:
         flash("!El CUIT tiene que tener 11 dígitos.")
         return redirect(url_for("cc_emp.bandeja"))
     desde, hasta = periodo_de(request.args.get("desde")), periodo_de(request.args.get("hasta"))
     solo_saldo = request.args.get("con_saldo") == "1"
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("""SELECT id, CUIT, razon_social, nombre_fantasia FROM p_empresas WHERE CUIT = %s""",
-                        (int(cuit),))
-            empresa = cur.fetchone()
+            if fa.falta_esquema(cur):
+                flash(AVISO_ESQUEMA)
+                return redirect(url_for("cc_emp.bandeja"))
+            empresa = _empresa(cur, cuit)
             ec = estado_cuenta_de(cur, cuit, desde, hasta)
-    if not empresa and not ec["periodos"] and not ec["cobros"] and not ec["sin_periodo"]:
+    if not empresa and not ec["periodos"] and not ec["cobros"]:
         flash(f"!El CUIT {cuit} no tiene liquidaciones ni cobros de cuota sindical.")
         return redirect(url_for("cc_emp.bandeja"))
     if solo_saldo:
@@ -242,4 +239,144 @@ def estado_cuenta(cuit):
                            hay_filtros=bool(desde or hasta or solo_saldo),
                            puede_liq=puede("/fiscalizacion/liquidacion"), puede_rec=puede("/fiscalizacion/recibos"),
                            puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"),
-                           puede_empleador=puede("/empleadores"))
+                           puede_empleador=puede("/empleadores"), puede_aplicar=puede(URL_APLIC))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Aplicación de cobros
+# ─────────────────────────────────────────────────────────────────────────────
+
+def candidatos(cur) -> list[dict]:
+    """Los CUIT con cobros sin aplicar Y cuotas con saldo: lo que se puede aplicar."""
+    cur.execute(f"""
+        WITH cob AS ({fa.SQL_COBROS}),
+        c AS (SELECT cuit, SUM(importe - aplicado) AS sin_aplicar, SUM(importe - aplicado > 0.01) AS cobros
+                FROM cob GROUP BY cuit HAVING sin_aplicar > 0.01),
+        lq AS (SELECT l.cuit, l.importe - {fa.sql_aplicado_liq('l')} AS saldo
+                 FROM fisca_liquidacion l WHERE l.estado = 'vigente'),
+        l AS (SELECT cuit, SUM(saldo) AS deuda, COUNT(*) AS cuotas FROM lq WHERE saldo > 0.01 GROUP BY cuit)
+        SELECT c.cuit, e.razon_social, e.nombre_fantasia, c.sin_aplicar, c.cobros, l.deuda, l.cuotas,
+               LEAST(c.sin_aplicar, l.deuda) AS aplicable
+          FROM c JOIN l ON l.cuit = c.cuit
+          LEFT JOIN p_empresas e ON e.CUIT = CAST(c.cuit AS UNSIGNED)
+         ORDER BY aplicable DESC""", list(fa.MOTIVOS_COBRO))
+    return list(cur.fetchall())
+
+
+def _pesos(v) -> str:
+    entero, _, dec = f"{float(v or 0):,.2f}".partition(".")
+    return f"$ {entero.replace(',', '.')},{dec}"
+
+
+def _volver_aplic(cuit=None):
+    destino = request.form.get("volver") or ""
+    if destino.startswith("/empleadores/cc"):
+        return redirect(destino)
+    return redirect(url_for("cc_emp.aplicaciones", cuit=cuit) if cuit else url_for("cc_emp.aplicaciones"))
+
+
+@cc_emp_bp.route("/aplicaciones")
+def aplicaciones():
+    salida = _guardia(URL_APLIC)
+    if salida:
+        return salida
+    cuit = _cuit(request.args.get("cuit"))
+    if request.args.get("cuit") and not cuit:
+        flash("!El CUIT tiene que tener 11 dígitos.")
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if fa.falta_esquema(cur):
+                flash(AVISO_ESQUEMA)
+                return render_template("empleadores/cc_aplicaciones.html", cuit=None, sugeridos=[],
+                                       falta_esquema=True, puede_cc=puede(URL))
+            if not cuit:
+                return render_template("empleadores/cc_aplicaciones.html", cuit=None, sugeridos=candidatos(cur),
+                                       puede_cc=puede(URL), falta_esquema=False)
+            empresa = _empresa(cur, cuit)
+            liqs = fa.liquidaciones_de(cur, cuit)
+            cobros = fa.cobros_de(cur, cuit)
+            aplics = fa.aplicaciones_de(cur, cuit)
+    return render_template("empleadores/cc_aplicaciones.html", cuit=cuit, empresa=empresa, falta_esquema=False,
+                           cuotas=[l for l in liqs if l["saldo"] > Decimal("0.01")],
+                           de_mas=[l for l in liqs if l["saldo"] < Decimal("-0.01")],
+                           cobros=[c for c in cobros if c["sin_aplicar"] > Decimal("0.01")],
+                           aplicadas=aplics, origenes=fa.ORIGENES, puede_cc=puede(URL),
+                           puede_rec=puede("/fiscalizacion/recibos"),
+                           puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"))
+
+
+@cc_emp_bp.route("/aplicaciones/aplicar", methods=["POST"])
+def aplicar():
+    salida = _guardia(URL_APLIC)
+    if salida:
+        return salida
+    cuit = _cuit(request.form.get("cuit"))
+    importe = leer_importe(request.form.get("importe"))
+    id_det = request.form.get("id_detalle", type=int)
+    id_liq = request.form.get("id_liquidacion", type=int)
+    if not (id_det and id_liq):
+        flash("!Elegí un cobro y una cuota.")
+        return _volver_aplic(cuit)
+    if importe is None:
+        flash("!El importe no es válido.")
+        return _volver_aplic(cuit)
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                r = fa.aplicar(cur, id_det, id_liq, importe, "manual", _uid(), request.form.get("observaciones"))
+            conn.commit()
+            flash(f"Aplicados {_pesos(r['importe'])} a la cuota de {r['periodo'][:4]}-{r['periodo'][4:]}.")
+        except fa.ErrorAplicacion as e:
+            conn.rollback()
+            flash("!" + str(e))
+        except Exception:
+            conn.rollback()
+            raise
+    return _volver_aplic(cuit)
+
+
+@cc_emp_bp.route("/aplicaciones/<int:id_aplic>/desaplicar", methods=["POST"])
+def desaplicar(id_aplic):
+    salida = _guardia(URL_APLIC)
+    if salida:
+        return salida
+    cuit = _cuit(request.form.get("cuit"))
+    texto = (request.form.get("importe") or "").strip()
+    importe = leer_importe(texto) if texto else None
+    if texto and importe is None:
+        flash("!El importe no es válido.")
+        return _volver_aplic(cuit)
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                r = fa.desaplicar(cur, id_aplic, importe, request.form.get("motivo"), _uid())
+            conn.commit()
+            flash(f"Desaplicados {_pesos(r['importe'])} de la cuota de {r['periodo'][:4]}-{r['periodo'][4:]}: "
+                  "el cobro vuelve a quedar sin aplicar.")
+        except fa.ErrorAplicacion as e:
+            conn.rollback()
+            flash("!" + str(e))
+        except Exception:
+            conn.rollback()
+            raise
+    return _volver_aplic(cuit)
+
+
+@cc_emp_bp.route("/aplicaciones/automatica", methods=["POST"])
+def automatica():
+    salida = _guardia(URL_APLIC)
+    if salida:
+        return salida
+    cuit = _cuit(request.form.get("cuit"))
+    deuda_vieja = request.form.get("deuda_vieja") == "1"
+    with get_connection() as conn:
+        try:
+            with conn.cursor() as cur:
+                r = fa.aplicar_automatico(cur, cuits=[cuit] if cuit else None, deuda_vieja=deuda_vieja,
+                                          id_usuario=_uid())
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+    flash(("!" if r["de_mas"] else "") + fa.texto_resultado(r))
+    return _volver_aplic(cuit)
