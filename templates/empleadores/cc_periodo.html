@@ -14,7 +14,7 @@
 {%- endmacro %}
 
 {% macro enlace_cobro(id_orden, clase) -%}
-  {%- if clase == 'cuota_sindical' and puede_rec -%}
+  {%- if clase in ('cuota_sindical', 'fiscalizacion') and puede_rec -%}
     {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=id_orden), titulo='Ver el recibo') }}
   {%- elif puede_ingreso -%}
     {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=id_orden), titulo='Ver la orden de ingreso') }}
@@ -89,7 +89,7 @@
         <tr class="{{ 'fila-baja' if a.muerta }}">
           <td><div class="acciones">{{ enlace_cobro(a.id_orden, a.clase) }}</div></td>
           <td class="td-center" data-num="{{ a.fecha_cobro.toordinal() if a.fecha_cobro else 0 }}">{{ a.fecha_cobro.strftime('%d/%m/%Y') if a.fecha_cobro else '—' }}</td>
-          <td class="td-wrap"><span class="td-mono">{{ a.nro_orden or a.id_orden }}</span>{% if a.muerta %}<span class="td-motivo">No cuenta: {{ a.muerta }}</span>{% endif %}</td>
+          <td class="td-wrap"><span class="td-mono">{{ a.nro_recibo or a.nro_orden or a.id_orden }}</span>{% if a.muerta %}<span class="td-motivo">No cuenta: {{ a.muerta }}</span>{% endif %}</td>
           <td class="td-center td-mono">{{ a.periodo_cobro | periodo if a.periodo_cobro else '—' }}</td>
           <td class="td-center" data-num="{{ a.fecha.toordinal() if a.fecha else 0 }}">{{ a.fecha.strftime('%d/%m/%Y') if a.fecha else '' }}</td>
           <td class="td-center">{{ ui.estado(origenes_aplic.get(a.origen, a.origen), 'info' if a.origen == 'manual' else 'neutro') }}</td>
@@ -122,7 +122,7 @@
         <tr>
           <td><div class="acciones">{{ enlace_cobro(c.id_orden, c.clase) }}</div></td>
           <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
-          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td class="td-mono">{{ c.nro_recibo or c.nro_orden or c.id_orden }}</td>
           <td>{{ c.motivo or '—' }}</td>
           <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
           <td class="td-right" data-num="{{ c.aplicado }}">{{ c.aplicado | miles if c.aplicado else '—' }}</td>

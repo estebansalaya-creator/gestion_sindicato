@@ -47,6 +47,7 @@ from flask import Blueprint, flash, redirect, render_template, request, session,
 import anulaciones
 import movimientos_fondos as mf
 import pago_anulacion
+import recibos_talonario as RT
 from db import get_connection, puede, tiene_rol, validasesion
 from empleadores import cuit_valido
 from numeracion import proximo_numero, sql_nro_orden_visible, sql_nro_visible
@@ -935,6 +936,14 @@ def anular():
                                 (v, f"Anulación de la orden {oi['nro_orden']}: {motivo}"[:200], id_ref, uid))
                 msg = f"Orden de ingreso {oi['nro_orden']} anulada." + (
                     f" {len(valores)} valor(es) salieron de la cartera." if valores else "")
+                # Un recibo de fiscalización: sus cuotas vuelven a deberse (fisca_recibo_acta.py).
+                if RT.hay_esquema(cur):
+                    cur.execute("SELECT id_acuerdo FROM ingreso_ordenes WHERE id = %s", (id_ref,))
+                    id_acuerdo = (cur.fetchone() or {}).get("id_acuerdo")
+                    if id_acuerdo:
+                        import fisca_recibo_acta
+                        if fisca_recibo_acta.recalcular_acuerdo(cur, id_acuerdo, uid) == "vigente":
+                            msg += " El acuerdo de pago volvió a «vigente»: debe esas cuotas otra vez."
         conn.commit()
         flash(msg)
     except ValueError as e:

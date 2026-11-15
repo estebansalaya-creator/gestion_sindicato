@@ -13,6 +13,7 @@ fisca_actas.py — Actas de fiscalización y acuerdos de pago de cuota sindical.
     /fiscalizacion/actas/<id>/acuerdo/guardar   POST
     /fiscalizacion/acuerdos/<id>/estado      POST: anular, cancelar o judicializar, con motivo
     /fiscalizacion/acuerdos/<id>/pdf
+    /fiscalizacion/acuerdos/<id>/cobrar      GET el formulario, POST emite el recibo de fiscalización (fisca_recibo_acta.py)
     /fiscalizacion/fiscalizadores            ABM (menú 16): ?edit=ID, ?nuevo=1; POST guardar, borrar, baja, reactivar
 
 Portado de gestion_adm (fiscalizacion_routes.acta_* y acuerdo_*), sobre la
@@ -47,7 +48,13 @@ EL ACUERDO (`guardar_acuerdo`)
   cronograma lo propone en cuotas iguales, editables. El total financiado es la
   suma de las cuotas y el interés, lo que esa suma tiene por encima de la deuda
   (la regla de gestion_adm): un cronograma que no cubre la deuda no se graba.
-  Los cobros de las cuotas todavía no se siguen acá.
+
+LOS COBROS (fisca_recibo_acta.py, pedido del 14/11/2026)
+  El recibo de fiscalización es al acta y se imputa a las cuotas del acuerdo,
+  como en OSEDA: desde una acreditación del extracto (Emisión de Recibos) o con
+  «Cobrar» en el acuerdo (cuenta de fondos y fecha). El acuerdo muestra lo
+  pagado y el saldo de cada cuota; sin saldo pasa solo a «cancelado». Con
+  recibos, el acuerdo ya no se modifica.
 """
 
 from __future__ import annotations
@@ -62,6 +69,8 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 import fisca_aplicaciones as fa
 import fisca_intereses as FI
+import fisca_recibo_acta as FRA
+import recibos_talonario as RT
 from db import get_connection, puede, usuario_actual, validasesion
 from numeracion import _proximo
 from pagos_datos import leer_importe
@@ -73,6 +82,7 @@ fisca_acta_bp = Blueprint("fisca_acta", __name__, url_prefix="/fiscalizacion")
 URL_ACTAS = "/fiscalizacion/actas"
 URL_ACUERDOS = "/fiscalizacion/acuerdos"
 URL_FISCALIZADORES = "/fiscalizacion/fiscalizadores"
+URL_RECIBOS = "/fiscalizacion/recibos"
 SQL_ESQUEMA = "sql/fisca_actas_20261114.sql"
 SQL_FISCALIZADORES = "sql/fisca_fiscalizadores_20261114.sql"
 CENT = Decimal("0.01")
@@ -80,6 +90,8 @@ ESTADOS_ACTA = {"abierta": ("Abierta", "warn"), "cerrada": ("Cerrada", "ok"), "a
 ESTADOS_ACUERDO = {"vigente": ("Vigente", "ok"), "anulado": ("Anulado", "danger"), "cancelado": ("Cancelado", "info"),
                    "judicializado": ("Judicializado", "warn")}
 ACCIONES_ACUERDO = {"anular": "anulado", "cancelar": "cancelado", "judicializar": "judicializado"}
+ESTADOS_CUOTA = {"pagada": ("Pagada", "ok"), "parcial": ("Pago parcial", "info"), "vencida": ("Vencida", "danger"),
+                 "pendiente": ("Pendiente", "neutro")}
 
 #: Los textos del documento. Revisarlos con el asesor legal del sindicato.
 TEXTO_DETERMINACION = (
@@ -672,6 +684,11 @@ SQL_ACUERDO = """SELECT x.*, a.nro_acta, a.total AS total_acta, a.estado AS esta
                    LEFT JOIN s_usuarios ue ON ue.id = x.id_usuario_estado"""
 
 
+SQL_COBRADO_ACUERDO = """COALESCE((SELECT SUM(i.importe) FROM fisca_acuerdo_imputacion i
+                                     JOIN ingreso_ordenes o ON o.id = i.id_orden AND o.estado <> 'anulado'
+                                    WHERE i.id_acuerdo = x.id), 0)"""
+
+
 def leer_acuerdo(cur, id_acuerdo: int) -> dict | None:
     cur.execute(SQL_ACUERDO + " WHERE x.id = %s", (id_acuerdo,))
     x = cur.fetchone()
@@ -695,7 +712,8 @@ def acuerdos():
             cur.execute(f"""SELECT x.id, x.nro_acuerdo, x.cuit, x.razon_social, x.fecha_acuerdo, x.monto_deuda,
                                    x.interes_financiacion, x.monto_total, x.cantidad_cuotas, x.estado, x.id_acta, a.nro_acta,
                                    (SELECT MIN(c.vencimiento) FROM fisca_acuerdo_cuota c WHERE c.id_acuerdo = x.id) AS primera,
-                                   (SELECT MAX(c.vencimiento) FROM fisca_acuerdo_cuota c WHERE c.id_acuerdo = x.id) AS ultima
+                                   (SELECT MAX(c.vencimiento) FROM fisca_acuerdo_cuota c WHERE c.id_acuerdo = x.id) AS ultima,
+                                   {SQL_COBRADO_ACUERDO if RT.hay_esquema(cur) else 'NULL'} AS cobrado
                               FROM fisca_acuerdo x JOIN fisca_acta a ON a.id = x.id_acta
                              {'WHERE x.estado = %s' if estado in ESTADOS_ACUERDO else ''}
                              ORDER BY x.id DESC LIMIT 2000""", (estado,) if estado in ESTADOS_ACUERDO else ())
@@ -730,6 +748,11 @@ def acuerdo(id_acta):
                 flash("!El acuerdo de pago se carga sobre un acta cerrada: primero cerrá el acta.")
                 return redirect(url_for("fisca_acta.acta", id_acta=id_acta))
             par = parametros(cur)
+            cobros = None
+            if x and RT.hay_esquema(cur):
+                cobros = FRA.estado_cobro(cur, x)
+                cobros["recibos"] = FRA.recibos_de(cur, x["id"])
+                cobros["vivos"] = sum(1 for r in cobros["recibos"] if r["estado"] != "anulado")
     if not x:
         hoy = datetime.date.today()
         x = {"id": None, "nro_acuerdo": "(se numera al guardar)", "estado": "vigente", "fecha_acuerdo": hoy,
@@ -737,8 +760,13 @@ def acuerdo(id_acta):
              "cantidad_cuotas": 1, "forma_pago": "", "lugar_pago": a["lugar_pago"] or par["lugar"],
              "representante": a["representante"] or "", "representante_dni": a["representante_dni"] or "",
              "representante_cargo": a["representante_cargo"] or "", "observaciones": "", "cuotas": []}
-    return render_template("fisca/acuerdo.html", a=a, x=x, estados=ESTADOS_ACUERDO,
-                           editable=x["estado"] == "vigente", texto=TEXTO_ACUERDO.format(acta=a["nro_acta"]))
+    con_recibos = bool(cobros and cobros["vivos"])
+    return render_template("fisca/acuerdo.html", a=a, x=x, estados=ESTADOS_ACUERDO, cobros=cobros,
+                           editable=x["estado"] == "vigente" and not con_recibos, con_recibos=con_recibos,
+                           estados_cuota=ESTADOS_CUOTA, sin_esquema_cobros=bool(x.get("id")) and cobros is None,
+                           puede_cobrar=bool(cobros and puede(URL_RECIBOS) and x["estado"] in FRA.ESTADOS_COBRABLES
+                                             and cobros["falta_acuerdo"] >= CENT),
+                           puede_recibos=puede(URL_RECIBOS), texto=TEXTO_ACUERDO.format(acta=a["nro_acta"]))
 
 
 def leer_cronograma(form) -> tuple[list[tuple[int, datetime.date, Decimal]], list[str]]:
@@ -801,6 +829,9 @@ def acuerdo_guardar(id_acta):
                         raise ErrorActa("Ese acuerdo no es de esta acta.")
                     if x["estado"] != "vigente":
                         raise ErrorActa("El acuerdo ya no está vigente: no se modifica.")
+                    if RT.hay_esquema(cur) and FRA.tiene_recibos(cur, id_x):
+                        raise ErrorActa("El acuerdo ya tiene recibos: no se modifica. Para rehacerlo, anulá los recibos "
+                                        "(Tesorería → Anulaciones) o anulá el acuerdo y cargá otro.")
                     cur.execute(f"UPDATE fisca_acuerdo SET {', '.join(k + ' = %s' for k in datos)} WHERE id = %s",
                                 list(datos.values()) + [id_x])
                     cur.execute("DELETE FROM fisca_acuerdo_cuota WHERE id_acuerdo = %s", (id_x,))
@@ -857,6 +888,88 @@ def acuerdo_estado(id_acuerdo):
                 conn.commit()
                 flash(f"Acuerdo {x['nro_acuerdo']}: {ESTADOS_ACUERDO[nuevo][0].lower()}.")
     return redirect(url_for("fisca_acta.acuerdo", id_acta=x["id_acta"], id=id_acuerdo))
+
+
+def _cuentas_cobro(cur) -> list[dict]:
+    cur.execute(f"""SELECT id, nombre, tipo_de_cuenta, numero_de_cuenta, predeterminada FROM c_cuentas_de_fondos
+                     WHERE habilitada = 1 AND tipo_de_cuenta IN ({','.join(['%s'] * len(FRA.TIPOS_CUENTA_COBRO))})
+                     ORDER BY predeterminada DESC, tipo_de_cuenta, nombre""", FRA.TIPOS_CUENTA_COBRO)
+    out = list(cur.fetchall())
+    for c in out:
+        c["texto"] = (f"{c['nombre']} · {'Banco' if c['tipo_de_cuenta'] == 'B' else 'Caja'}"
+                      + (f" {c['numero_de_cuenta']}" if c["numero_de_cuenta"] else ""))
+    return out
+
+
+@fisca_acta_bp.route("/acuerdos/<int:id_acuerdo>/cobrar", methods=["GET", "POST"])
+def acuerdo_cobrar(id_acuerdo):
+    """El recibo de fiscalización desde el acuerdo: las cuotas, la cuenta y la
+    fecha (como la cobranza de acuerdos de gestion_adm). Lo que llega por el
+    banco conviene emitirlo desde la acreditación (Emisión de Recibos): queda
+    conciliado."""
+    salida = _guardia(URL_RECIBOS)
+    if salida:
+        return salida
+    from fisca_recibos import leer_imputaciones
+    from tesoreria_movimientos import _fecha_valida
+    errores: list[str] = []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if falta_esquema(cur) or not RT.hay_esquema(cur):
+                flash(f"!Falta correr {RT.SQL_ESQUEMA} en la base (DBeaver, como root).")
+                return redirect(url_for("fisca_acta.acuerdos"))
+            x = leer_acuerdo(cur, id_acuerdo)
+            if not x:
+                flash("!No existe ese acuerdo.")
+                return redirect(url_for("fisca_acta.acuerdos"))
+            volver = url_for("fisca_acta.acuerdo", id_acta=x["id_acta"], id=id_acuerdo)
+            if x["estado"] not in FRA.ESTADOS_COBRABLES:
+                flash(f"!El acuerdo está {ESTADOS_ACUERDO[x['estado']][0].lower()}: no se cobra.")
+                return redirect(volver)
+            est = FRA.estado_cobro(cur, x)
+            if est["falta_acuerdo"] < CENT:
+                flash("!El acuerdo no debe nada.")
+                return redirect(volver)
+            cuentas = _cuentas_cobro(cur)
+    hoy = datetime.date.today()
+    f = request.form
+    fecha = _fecha(f.get("fecha")) if request.method == "POST" else hoy
+    id_cuenta = f.get("id_cuenta", type=int) if request.method == "POST" else next(
+        (c["id"] for c in cuentas if c["predeterminada"]), cuentas[0]["id"] if cuentas else None)
+    obs = " ".join((f.get("observaciones") or "").split())[:250] if request.method == "POST" else ""
+    primera = next((c for c in est["cuotas"] if c["saldo"] >= CENT), None)
+    imput = dict(leer_imputaciones(f)) if request.method == "POST" else (
+        {primera["id"]: primera["saldo"]} if primera else {})
+
+    if request.method == "POST":
+        if not fecha:
+            errores.append("Falta la fecha del cobro.")
+        if not id_cuenta:
+            errores.append("Elegí la cuenta de fondos.")
+        if not errores:
+            conn = get_connection()
+            try:
+                conn.begin()
+                with conn.cursor() as cur:
+                    r = FRA.emitir(cur, id_acuerdo=id_acuerdo, imputaciones=list(imput.items()), uid=_uid(),
+                                   fecha=fecha, id_cuenta=id_cuenta, observaciones=obs or None, fecha_valida=_fecha_valida)
+                conn.commit()
+            except (FRA.ErrorCobro, RT.ErrorTalonario) as ex:
+                conn.rollback()
+                errores.append(str(ex))
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            if not errores:
+                flash(f"Recibo de fiscalización {r['nro']} por {_pesos(r['total'])}: {_pesos(r['capital'])} de cuota "
+                      f"sindical del acta y {_pesos(r['interes'])} de intereses."
+                      + (f" El acuerdo {r['nro_acuerdo']} quedó pagado." if r["acuerdo_cancelado"] else ""))
+                return redirect(url_for("fisca_rec.recibo", id_orden=r["id_orden"]))
+    return render_template("fisca/acuerdo_cobrar.html", x=x, est=est, cuentas=cuentas, fecha=fecha or hoy,
+                           id_cuenta=id_cuenta, obs=obs, imput=imput, errores=errores, estados_cuota=ESTADOS_CUOTA,
+                           volver=volver, hoy=hoy)
 
 
 @fisca_acta_bp.route("/acuerdos/<int:id_acuerdo>/pdf")

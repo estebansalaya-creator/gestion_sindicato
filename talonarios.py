@@ -15,8 +15,9 @@ no existe, se crea desde el mismo formulario, en un diálogo, sin perder lo
 tipeado (`/api/clasificacion`, `/api/tipo`, JSON): queda elegida al volver.
 
 REGLAS (las de gestion_adm, más las de un talonario usado)
-- Usado = emitió algún comprobante (`ultimo_emitido` dentro del rango o filas en
-  `c_comprobantes_emitidos`). Uno usado no se elimina (se deshabilita) y no le
+- Usado = emitió algún comprobante (`ultimo_emitido` dentro del rango, filas en
+  `c_comprobantes_emitidos` o recibos en `ingreso_ordenes.id_talonario`: los de
+  cuota sindical y fiscalización, recibos_talonario.py). Uno usado no se elimina (se deshabilita) y no le
   cambia el punto de venta, la letra, el número desde ni la clasificación: los
   comprobantes emitidos quedarían con un número que el talonario ya no dice.
   El hasta solo crece hasta cubrir lo emitido.
@@ -40,6 +41,7 @@ import re
 import pymysql
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+import recibos_talonario as RT
 from db import get_connection, puede, validasesion
 
 talonarios_bp = Blueprint("talonarios", __name__, url_prefix="/admin/talonarios")
@@ -80,8 +82,13 @@ def _volver(solapa, **kw):
 
 
 def _emitidos(cur, id_tal) -> int:
+    """Comprobantes emitidos más recibos (ingreso_ordenes) del talonario."""
     cur.execute("SELECT COUNT(*) AS n FROM c_comprobantes_emitidos WHERE id_talonario = %s", (id_tal,))
-    return int(cur.fetchone()["n"] or 0)
+    n = int(cur.fetchone()["n"] or 0)
+    if RT.hay_esquema(cur):
+        cur.execute("SELECT COUNT(*) AS n FROM ingreso_ordenes WHERE id_talonario = %s", (id_tal,))
+        n += int(cur.fetchone()["n"] or 0)
+    return n
 
 
 def _usado(cur, t) -> bool:
@@ -254,11 +261,13 @@ def index():
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(f"""
                 SELECT t.*, cl.descripcion AS clasificacion, ct.nombre AS tipo, ct.debito_credito,
                        (t.numero_hasta - t.numero_desde + 1) AS capacidad,
                        GREATEST(LEAST(t.ultimo_emitido, t.numero_hasta) - t.numero_desde + 1, 0) AS usados,
-                       (SELECT COUNT(*) FROM c_comprobantes_emitidos ce WHERE ce.id_talonario = t.id) AS emitidos
+                       (SELECT COUNT(*) FROM c_comprobantes_emitidos ce WHERE ce.id_talonario = t.id)
+                       {'+ (SELECT COUNT(*) FROM ingreso_ordenes io WHERE io.id_talonario = t.id)' if RT.hay_esquema(cur) else ''}
+                         AS emitidos
                   FROM c_talonario t
                   JOIN c_talonario_clasificacion cl ON cl.id = t.c_talonario_clasificacionId
                   JOIN c_contable_comprobante_tipo ct ON ct.id = cl.id_comprobante_tipo
@@ -344,6 +353,9 @@ def _validar_talonario(cur, f) -> list[str]:
                     errores.append(f"El talonario ya emitió comprobantes: no se le cambia {nombre}.")
             cur.execute("SELECT MAX(numero_desde) AS m FROM c_comprobantes_emitidos WHERE id_talonario = %s", (f["id"],))
             mayor = max(cur.fetchone()["m"] or 0, antes["ultimo_emitido"] or 0)
+            if RT.hay_esquema(cur):
+                cur.execute("SELECT MAX(nro_recibo) AS m FROM ingreso_ordenes WHERE id_talonario = %s", (f["id"],))
+                mayor = max(mayor, cur.fetchone()["m"] or 0)
             if f["numero_hasta"] < mayor:
                 errores.append(f"El número hasta no puede quedar por debajo de lo emitido ({mayor}).")
     # Mismo tipo de comprobante, punto de venta y letra: los rangos no se pisan.

@@ -8,6 +8,8 @@
   propone en cuotas iguales (los centavos en la última), editables. Al guardar,
   el total financiado es la suma de las cuotas y el interés lo que esa suma
   tiene por encima de la deuda; un cronograma que no la cubre no se graba.
+  Los cobros (fisca_recibo_acta.py): lo pagado de cada cuota con los recibos de
+  fiscalización y «Cobrar». Con recibos, el acuerdo ya no se modifica.
 #}
 
 {% block content %}
@@ -21,10 +23,13 @@
     {{ ui.boton('Acta', 'secondary', href=url_for('fisca_acta.acta', id_acta=a.id), icono_='volver') }}
     {{ ui.boton('Acuerdos', 'secondary', href=url_for('fisca_acta.acuerdos')) }}
     {% if x.id and x.estado != 'anulado' %}{{ ui.boton('PDF', 'pdf', href=url_for('fisca_acta.acuerdo_pdf', id_acuerdo=x.id), icono_='pdf') }}{% endif %}
+    {% if puede_cobrar %}{{ ui.boton('Cobrar', 'primary', href=url_for('fisca_acta.acuerdo_cobrar', id_acuerdo=x.id), icono_='dinero') }}{% endif %}
   </div>
 </div>
 
 {{ ui.mensajes() }}
+{% if sin_esquema_cobros %}{{ ui.aviso('Falta correr sql/fisca_recibos_talonarios_20261114.sql en la base: hasta entonces no se ven ni se emiten los cobros del acuerdo.', 'warning') }}{% endif %}
+{% if con_recibos and x.estado == 'vigente' %}{{ ui.aviso('El acuerdo ya tiene recibos: el cronograma no se modifica.', 'info') }}{% endif %}
 {% if x.estado != 'vigente' %}
   {{ ui.aviso(est[0] ~ (' el ' ~ x.fecha_estado.strftime('%d/%m/%Y') if x.fecha_estado else '') ~ (' por ' ~ x.usuario_estado if x.usuario_estado else '') ~ (': ' ~ x.motivo_estado if x.motivo_estado else '') ~ '. No se modifica.', 'warning' if x.estado != 'anulado' else 'danger') }}
 {% endif %}
@@ -105,6 +110,53 @@
   <div class="form-acciones">{{ ui.boton('Guardar acuerdo', submit=True) }}</div>
   {% endif %}
 </form>
+
+{% if cobros %}
+<div class="card">
+  {{ ui.card_head('Cobros de las cuotas', nota='Pagado: $ ' ~ (cobros.pagado | miles) ~ ' · falta: $ ' ~ (cobros.falta_acuerdo | miles)
+                  ~ ' · capital del acta que falta (la cuota sindical de sus períodos, hoy): $ ' ~ (cobros.falta_capital | miles)) }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cobros-cuotas" data-exportar="Cuotas {{ x.nro_acuerdo }}" data-sin-orden>
+      <thead><tr><th>Cuota</th><th>Vencimiento</th><th class="th-right">Importe</th><th class="th-right">Pagado</th>
+        <th class="th-right">Saldo</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for c in cobros.cuotas %}{% set ec = estados_cuota[c.estado] %}
+        <tr><td class="td-mono">{{ c.nro_cuota }}</td><td data-valor="{{ c.vencimiento.isoformat() }}">{{ c.vencimiento.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+          <td class="td-right" data-num="{{ c.pagado }}">{{ c.pagado | miles }}</td>
+          <td class="td-right td-fuerte {{ 'importe-danger' if c.saldo >= 0.01 }}" data-num="{{ c.saldo }}">{{ c.saldo | miles }}</td>
+          <td>{{ ui.estado(ec[0], ec[1]) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if cobros.recibos %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-recibos-acuerdo" data-exportar="Recibos {{ x.nro_acuerdo }}">
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Recibo</th><th>Fecha</th><th>Cuotas</th><th>Cuenta</th>
+        <th class="th-right">Importe</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for r in cobros.recibos %}
+        <tr class="{{ 'fila-baja' if r.estado == 'anulado' }}">
+          <td><div class="acciones">{% if puede_recibos %}
+            {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=r.id_orden), titulo='Ver el recibo') }}
+            {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=r.id_orden), titulo='Recibo en PDF', blank=True) }}
+          {% endif %}</div></td>
+          <td class="td-mono">{{ r.nro_recibo or r.nro_orden }}</td>
+          <td data-valor="{{ r.fecha.isoformat() }}">{{ r.fecha.strftime('%d/%m/%Y') }}</td>
+          <td class="td-mono">{{ r.cuotas or '—' }}</td>
+          <td>{{ r.cuenta or '—' }}{% if r.origen == 'extracto' %} <span class="td-muted chico">(extracto)</span>{% endif %}</td>
+          <td class="td-right td-fuerte" data-num="{{ r.importe_total }}">{{ r.importe_total | miles }}</td>
+          <td>{{ ui.estado('Anulado', 'danger') if r.estado == 'anulado' else ui.estado('Vigente', 'ok') }}
+            {% if r.estado == 'anulado' and r.motivo_anulacion %}<div class="chico td-muted">{{ r.motivo_anulacion }}</div>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
 
 {% if x.id and x.estado == 'vigente' %}
 <div class="card">

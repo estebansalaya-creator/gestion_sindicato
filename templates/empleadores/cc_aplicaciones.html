@@ -34,7 +34,7 @@
 {%- endmacro %}
 
 {% macro enlace_cobro(c) -%}
-  {%- if c.clase == 'cuota_sindical' and puede_rec -%}
+  {%- if c.clase in ('cuota_sindical', 'fiscalizacion') and puede_rec -%}
     {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo') }}
   {%- elif puede_ingreso -%}
     {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso') }}
@@ -161,10 +161,10 @@
       </tr></thead>
       <tbody>
         {% for c in cobros %}
-        <tr data-id="{{ c.id_detalle }}" data-saldo="{{ c.sin_aplicar }}" data-ref="{{ c.nro_orden or c.id_orden }} del {{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}">
+        <tr data-id="{{ c.id_detalle }}" data-saldo="{{ c.sin_aplicar }}" data-ref="{{ c.nro_recibo or c.nro_orden or c.id_orden }} del {{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}">
           <td><div class="acciones"><input type="radio" name="sel-cobro" aria-label="Elegir el cobro {{ c.nro_orden }}" onchange="elegir('cobro', this)">{{ enlace_cobro(c) }}</div></td>
           <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
-          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td class="td-mono">{{ c.nro_recibo or c.nro_orden or c.id_orden }}</td>
           <td>{{ c.motivo or '—' }}</td>
           <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
           <td class="chico">{{ c.descripcion or '' }}</td>
@@ -228,11 +228,11 @@
           <td><div class="acciones">
             {{ ui.accion('desaplicar', onclick='desaplicar(this)', datos={
                  'url': url_for('cc_emp.desaplicar', id_aplic=a.id), 'importe': '%.2f' % (a.importe | float),
-                 'cuota': a.periodo | periodo, 'cobro': (a.nro_orden or a.id_orden | string)}) }}
+                 'cuota': a.periodo | periodo, 'cobro': (a.nro_recibo or a.nro_orden or a.id_orden | string)}) }}
           </div></td>
           <td class="td-center td-mono">{{ a.periodo | periodo }}</td>
           <td class="td-center" data-num="{{ a.fecha.toordinal() if a.fecha else 0 }}">{{ a.fecha.strftime('%d/%m/%Y') if a.fecha else '' }}</td>
-          <td class="td-wrap"><span class="td-mono">{{ a.nro_orden or a.id_orden }}</span>
+          <td class="td-wrap"><span class="td-mono">{{ a.nro_recibo or a.nro_orden or a.id_orden }}</span>
             <span class="chico muted">del {{ a.fecha_cobro.strftime('%d/%m/%Y') if a.fecha_cobro else '—' }}{% if a.periodo_cobro %} · período {{ a.periodo_cobro | periodo }}{% endif %}</span>
             {%- if a.muerta %}<span class="td-motivo">No cuenta: {{ a.muerta }}</span>{% endif %}</td>
           <td class="td-center">{{ ui.estado(origenes.get(a.origen, a.origen), 'info' if a.origen == 'manual' else 'neutro') }}</td>

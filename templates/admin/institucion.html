@@ -159,6 +159,24 @@
                value="{{ d.get('acta_lugar_pago') or '' }}">
       </div>
       {% endif %}
+      {% if 'talonario_recibo_cuota' in d %}
+      <div class="campo" style="--span:6;">
+        <label for="talonario_recibo_cuota">Talonario de los recibos de cuota sindical <span class="req">*</span></label>
+        <select name="talonario_recibo_cuota" id="talonario_recibo_cuota" required>
+          <option value="">Elegí…</option>
+          {% for t in talonarios_recibo %}<option value="{{ t.id }}" {{ 'selected' if t.id == d.get('talonario_recibo_cuota') }}>{{ t.texto }}</option>{% endfor %}
+        </select>
+        <small class="campo-ayuda">Los talonarios se administran en Administración del Sistema → Talonarios.</small>
+      </div>
+      <div class="campo" style="--span:6;">
+        <label for="talonario_recibo_fisca">Talonario de los recibos de fiscalización <span class="req">*</span></label>
+        <select name="talonario_recibo_fisca" id="talonario_recibo_fisca" required>
+          <option value="">Elegí…</option>
+          {% for t in talonarios_recibo %}<option value="{{ t.id }}" {{ 'selected' if t.id == d.get('talonario_recibo_fisca') }}>{{ t.texto }}</option>{% endfor %}
+        </select>
+        <small class="campo-ayuda">Se emiten a un acta, a las cuotas de su acuerdo de pago.</small>
+      </div>
+      {% endif %}
     </div>
     <p class="campo-ayuda">La alícuota la usa la Liquidación de Cuota Sindical; cambiarla no toca lo ya liquidado: rige al
        liquidar o reliquidar un período. La cuota vence el mismo día que el F.931 del empleador, según la terminación de

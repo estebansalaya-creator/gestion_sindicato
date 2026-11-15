@@ -7,6 +7,8 @@
   banco, el empleador (el reconocido o el que se elija: ?cuit=), lo que debe por
   período y en qué períodos va el pago. Sugerido: el mes anterior a la
   acreditación, o el período cuyo saldo es exactamente el importe.
+  Si el empleador tiene un acuerdo de pago (?acuerdo=), se puede emitir como
+  recibo de fiscalización: al acta, a las cuotas del acuerdo (fisca_recibo_acta.py).
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -15,7 +17,7 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1>Emitir recibo de cuota sindical</h1>
+    <h1>Emitir recibo de {{ 'fiscalización' if acuerdo else 'cuota sindical' }}</h1>
     <p>La acreditación del {{ e.fecham.strftime('%d/%m/%Y') }} en {{ e.cuenta }} por $ {{ e.credito | miles }}.</p>
   </div>
   <div class="page-header-acciones">{{ ui.boton('Volver', 'secondary', href=volver, icono_='volver') }}</div>
@@ -65,7 +67,90 @@
   </form>
 </div>
 
-{% if razon %}
+{% if razon and acuerdos %}
+<div class="card">
+  {{ ui.card_head('Qué se cobra', nota='El empleador tiene un acuerdo de pago: esta acreditación puede ser una de sus cuotas.') }}
+  <div class="card-body">
+    <div class="fila">
+      {{ ui.boton('Cuota sindical', 'secondary' if acuerdo else 'primary', chico=True,
+                  href=url_for('fisca_rec.emitir_uno', id_extracto=e.id, cuit=elegido, desde=request.values.get('desde'), hasta=request.values.get('hasta'))) }}
+      {% for x in acuerdos %}
+      {{ ui.boton('Fiscalización · ' ~ x.nro_acuerdo ~ ' (acta ' ~ x.nro_acta ~ ') · falta $ ' ~ (x.falta | miles),
+                  'primary' if acuerdo and acuerdo.id == x.id else 'secondary', chico=True,
+                  href=url_for('fisca_rec.emitir_uno', id_extracto=e.id, cuit=elegido, acuerdo=x.id, desde=request.values.get('desde'), hasta=request.values.get('hasta'))) }}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if razon and acuerdo %}
+<form method="post" data-proceso="Emitiendo el recibo…">
+  <input type="hidden" name="accion" value="emitir_fisca">
+  <input type="hidden" name="cuit" value="{{ elegido }}">
+  <input type="hidden" name="acuerdo" value="{{ acuerdo.id }}">
+  <input type="hidden" name="desde" value="{{ request.values.get('desde', '') }}">
+  <input type="hidden" name="hasta" value="{{ request.values.get('hasta', '') }}">
+  <div class="card">
+    {{ ui.card_head('Cuotas del acuerdo ' ~ acuerdo.nro_acuerdo, nota='Acta ' ~ acuerdo.nro_acta ~ '. Tildá las que paga esta acreditación: tienen que sumar su importe.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuotas" data-sin-orden>
+        <thead><tr><th class="col-acciones" data-no-sort></th><th>Cuota</th><th>Vence</th><th class="th-right">Importe</th>
+          <th class="th-right">Pagado</th><th class="th-right">Saldo</th><th>Estado</th><th class="th-right">A pagar</th></tr></thead>
+        <tbody>
+          {% for c in est.cuotas %}{% set ec = estados_cuota[c.estado] %}
+          <tr class="{{ 'fila-apagada' if c.saldo < 0.01 }}">
+            <td>{% if c.saldo >= 0.01 %}<input type="hidden" name="c_id" value="{{ c.id }}">
+              <input type="checkbox" name="c_sel_{{ c.id }}" value="1" {{ 'checked' if c.id in imput }} onchange="recalcularFisca()"
+                     aria-label="Pagar la cuota {{ c.nro_cuota }}">{% endif %}</td>
+            <td class="td-mono">{{ c.nro_cuota }}</td>
+            <td data-valor="{{ c.vencimiento.isoformat() }}">{{ c.vencimiento.strftime('%d/%m/%Y') }}</td>
+            <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+            <td class="td-right" data-num="{{ c.pagado }}">{{ c.pagado | miles }}</td>
+            <td class="td-right td-fuerte {{ 'importe-danger' if c.saldo >= 0.01 }}" data-num="{{ c.saldo }}">{{ c.saldo | miles }}</td>
+            <td>{{ ui.estado(ec[0], ec[1]) }}</td>
+            <td class="td-right">{% if c.saldo >= 0.01 %}<input type="text" inputmode="decimal" class="importe" name="c_importe"
+                 value="{{ (imput.get(c.id) or c.saldo) | miles }}" data-saldo="{{ c.saldo }}" oninput="recalcularFisca()">{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      <p class="campo-ayuda">Falta pagar del acuerdo: $ {{ est.falta_acuerdo | miles }}. Falta del capital (la cuota sindical de los
+        períodos del acta, hoy): $ {{ est.falta_capital | miles }}. Con este pago, $ {{ capital | miles }} van a la cuota sindical
+        de los períodos del acta (del más viejo al más nuevo) y $ {{ interes | miles }} a intereses.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Emitir') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:12"><label for="obs-f">Observaciones</label>
+          <input type="text" id="obs-f" name="observaciones" maxlength="250" value="{{ obs }}"></div>
+        {% if pagador and pagador != elegido and pagador | length == 11 %}
+        <div class="campo" style="--span:12">
+          <label class="campo-check"><input type="checkbox" name="recordar" value="1" {{ 'checked' if recordar }}>
+            Recordar que los pagos de {{ pagador }} son de {{ razon }}</label>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Acreditación</div><div class="res-card-val mono">$ {{ e.credito | miles }}</div></div>
+      <div><div class="res-card-lbl">Cuotas</div><div class="res-card-val mono" id="f-suma">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Diferencia</div><div class="res-card-val mono" id="f-dif">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir el recibo de fiscalización', 'primary', submit=True, icono_='dinero', id='btn-fisca') }}
+  </div>
+</form>
+{% endif %}
+
+{% if razon and not acuerdo %}
 <div class="card">
   {{ ui.card_head('Lo que debe', nota='Lo liquidado vigente menos lo cobrado, por período. El mes anterior a la acreditación es ' ~ (periodo_mes | periodo) ~ '.') }}
   <div class="data-table-wrap">
@@ -181,6 +266,20 @@ function quitarRenglon(b) {
   if (tb.rows.length > 1) b.closest('tr').remove();
   recalcular();
 }
-document.addEventListener('DOMContentLoaded', recalcular);
+function recalcularFisca() {
+  var s = document.getElementById('f-suma'); if (!s) return;
+  var suma = 0;
+  document.querySelectorAll('#tbl-cuotas tbody tr').forEach(function (tr) {
+    var chk = tr.querySelector('input[type=checkbox]'), imp = tr.querySelector('input[name=c_importe]');
+    if (chk && imp && chk.checked) suma += leer(imp.value);
+  });
+  var dif = Math.round((TOTAL - suma) * 100) / 100;
+  s.textContent = pesos(suma);
+  var d = document.getElementById('f-dif');
+  d.textContent = pesos(dif);
+  d.classList.toggle('danger', Math.abs(dif) >= 0.01);
+  document.getElementById('btn-fisca').disabled = Math.abs(dif) >= 0.01 {{ '|| true' if conciliado }};
+}
+document.addEventListener('DOMContentLoaded', function () { recalcular(); recalcularFisca(); });
 </script>
 {% endblock %}

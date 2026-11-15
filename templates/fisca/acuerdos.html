@@ -46,6 +46,7 @@
         <th class="col-acciones" data-no-sort>Acciones</th>
         <th data-orden="desc">Acuerdo</th><th class="th-center">Fecha</th><th>Empleador</th><th>CUIT</th><th>Acta</th>
         <th class="th-right">Deuda</th><th class="th-right">Interés financ.</th><th class="th-right">Total</th>
+        <th class="th-right">Cobrado</th><th class="th-right">Falta</th>
         <th class="th-center" data-tipo="n">Cuotas</th><th class="th-center">Primera</th><th class="th-center">Última</th><th>Estado</th>
       </tr></thead>
       <tbody>
@@ -63,13 +64,16 @@
           <td class="td-right" data-num="{{ x.monto_deuda }}">{{ x.monto_deuda | miles }}</td>
           <td class="td-right" data-num="{{ x.interes_financiacion }}">{{ x.interes_financiacion | miles if x.interes_financiacion else '—' }}</td>
           <td class="td-right td-fuerte" data-num="{{ x.monto_total }}">{{ x.monto_total | miles }}</td>
+          {% set falta = (x.monto_total - x.cobrado) if x.cobrado is not none else none %}
+          <td class="td-right" data-num="{{ x.cobrado or 0 }}">{{ (x.cobrado | miles) if x.cobrado is not none else '—' }}</td>
+          <td class="td-right {{ 'importe-danger' if falta and falta >= 0.01 and x.estado in ('vigente', 'judicializado') }}" data-num="{{ falta or 0 }}">{{ (falta | miles) if falta is not none else '—' }}</td>
           <td class="td-center">{{ x.cantidad_cuotas }}</td>
           <td class="td-center">{{ x.primera.strftime('%d/%m/%Y') if x.primera else '—' }}</td>
           <td class="td-center">{{ x.ultima.strftime('%d/%m/%Y') if x.ultima else '—' }}</td>
           <td>{{ ui.estado(estados[x.estado][0], estados[x.estado][1]) }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="13" class="no-data">No hay acuerdos de pago{{ ' en ese estado' if estado }}.</td></tr>
+        <tr class="no-data-row"><td colspan="15" class="no-data">No hay acuerdos de pago{{ ' en ese estado' if estado }}.</td></tr>
         {% endfor %}
       </tbody>
     </table>

@@ -126,8 +126,10 @@ def _catalogos() -> dict:
             tasas = cur.fetchall()
             cur.execute("SELECT codigo, nombre FROM p_provincia ORDER BY nombre")
             provincias = cur.fetchall()
+            import recibos_talonario as RT
+            talonarios = RT.talonarios(cur) if RT.hay_esquema(cur) else []
     return {"condiciones_iva": condiciones, "tasas_iva": tasas, "provincias": provincias,
-            "regimenes_iibb": REGIMENES_IIBB}
+            "regimenes_iibb": REGIMENES_IIBB, "talonarios_recibo": talonarios}
 
 
 def _leer_form(form) -> tuple[dict, list[str]]:
@@ -192,6 +194,23 @@ def _leer_form(form) -> tuple[dict, list[str]]:
             errores.append("El plazo para pagar el acta va de 1 a 365 días.")
         v["acta_plazo_dias"] = int(plazo) if plazo.isdigit() else None
         v["acta_lugar_pago"] = (form.get("acta_lugar_pago") or "").strip()[:300] or None
+    # Talonarios de los recibos (sql/fisca_recibos_talonarios_20261114.sql).
+    if "talonario_recibo_cuota" in form:
+        import recibos_talonario as RT
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                validos = {t["id"]: t for t in RT.talonarios(cur)}
+        for campo, rotulo in (("talonario_recibo_cuota", "cuota sindical"), ("talonario_recibo_fisca", "fiscalización")):
+            texto = (form.get(campo) or "").strip()
+            v[campo] = int(texto) if texto.isdigit() else None
+            if v[campo] is None:
+                errores.append(f"Elegí el talonario de los recibos de {rotulo}.")
+            elif v[campo] not in validos:
+                errores.append(f"El talonario de los recibos de {rotulo} no es un talonario de recibos.")
+            elif not validos[v[campo]]["habilitado"]:
+                errores.append(f"El talonario de los recibos de {rotulo} está deshabilitado.")
+        if v.get("talonario_recibo_cuota") and v.get("talonario_recibo_cuota") == v.get("talonario_recibo_fisca"):
+            errores.append("Los recibos de cuota sindical y los de fiscalización van en talonarios distintos.")
     return v, errores
 
 

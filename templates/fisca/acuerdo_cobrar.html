@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cobrar {{ x.nro_acuerdo }}{% endblock %}
+
+{#
+  Recibo de fiscalización desde el acuerdo de pago (fisca_acta.acuerdo_cobrar):
+  las cuotas que se pagan y con cuánto, la cuenta de fondos (banco o caja) y la
+  fecha. El recibo es al acta y sale del talonario de fiscalización. Lo que
+  entró por el banco conviene emitirlo desde la acreditación (Emisión de
+  Recibos): así queda conciliado. Ver fisca_recibo_acta.py.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cobrar el acuerdo {{ x.nro_acuerdo }}</h1>
+    <p>{{ x.razon_social or '' }} · CUIT <span class="mono">{{ x.cuit }}</span> · Acta <span class="mono">{{ x.nro_acta }}</span></p>
+  </div>
+  <div class="page-header-acciones">{{ ui.boton('Volver', 'secondary', href=volver, icono_='volver') }}</div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{{ ui.aviso('Si el pago entró por el banco, emitilo desde su acreditación en Emisión de Recibos (eligiendo «Fiscalización»): queda conciliado con el extracto.', 'info') }}
+
+<form method="post" data-proceso="Emitiendo el recibo…">
+  <div class="card">
+    {{ ui.card_head('El cobro') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:3"><label for="fecha">Fecha <span class="req">*</span></label>
+          <input type="date" id="fecha" name="fecha" value="{{ fecha.isoformat() }}" max="{{ hoy.isoformat() }}" required></div>
+        <div class="campo" style="--span:6"><label for="id_cuenta">Cuenta de fondos <span class="req">*</span></label>
+          <select id="id_cuenta" name="id_cuenta" required>
+            <option value="">Elegí…</option>
+            {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.texto }}</option>{% endfor %}
+          </select>
+          <small class="campo-ayuda">Banco o caja. Un cheque se carga con su orden de ingreso en Tesorería.</small></div>
+        <div class="campo" style="--span:12"><label for="obs">Observaciones</label>
+          <input type="text" id="obs" name="observaciones" maxlength="250" value="{{ obs }}"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Cuotas que se pagan', nota='Falta pagar del acuerdo: $ ' ~ (est.falta_acuerdo | miles) ~ '. Del importe, la parte de capital va a la cuota sindical de los períodos del acta (falta $ ' ~ (est.falta_capital | miles) ~ ') y el resto a intereses.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuotas" data-sin-orden>
+        <thead><tr><th class="col-acciones" data-no-sort></th><th>Cuota</th><th>Vence</th><th class="th-right">Importe</th>
+          <th class="th-right">Pagado</th><th class="th-right">Saldo</th><th>Estado</th><th class="th-right">A pagar</th></tr></thead>
+        <tbody>
+          {% for c in est.cuotas %}{% set ec = estados_cuota[c.estado] %}
+          <tr class="{{ 'fila-apagada' if c.saldo < 0.01 }}">
+            <td>{% if c.saldo >= 0.01 %}<input type="hidden" name="c_id" value="{{ c.id }}">
+              <input type="checkbox" name="c_sel_{{ c.id }}" value="1" {{ 'checked' if c.id in imput }} onchange="recalcular()"
+                     aria-label="Pagar la cuota {{ c.nro_cuota }}">{% endif %}</td>
+            <td class="td-mono">{{ c.nro_cuota }}</td>
+            <td data-valor="{{ c.vencimiento.isoformat() }}">{{ c.vencimiento.strftime('%d/%m/%Y') }}</td>
+            <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+            <td class="td-right" data-num="{{ c.pagado }}">{{ c.pagado | miles }}</td>
+            <td class="td-right td-fuerte {{ 'importe-danger' if c.saldo >= 0.01 }}" data-num="{{ c.saldo }}">{{ c.saldo | miles }}</td>
+            <td>{{ ui.estado(ec[0], ec[1]) }}</td>
+            <td class="td-right">{% if c.saldo >= 0.01 %}<input type="text" inputmode="decimal" class="importe" name="c_importe"
+                 value="{{ (imput.get(c.id) or c.saldo) | miles }}" oninput="recalcular()">{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Total del recibo</div><div class="res-card-val mono" id="res-total">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Capital</div><div class="res-card-val mono" id="res-capital">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Intereses</div><div class="res-card-val mono" id="res-interes">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir el recibo', 'primary', submit=True, icono_='dinero', id='btn-emitir') }}
+  </div>
+</form>
+
+<script>
+var FALTA_CAPITAL = {{ est.falta_capital | float }}, FALTA_ACUERDO = {{ est.falta_acuerdo | float }};
+function leer(t) {
+  t = (t || '').replace(/\s|\$/g, '');
+  if (t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  var v = parseFloat(t); return isNaN(v) ? 0 : v;
+}
+// La misma cuenta que fisca_recibo_acta.partir: el servidor la vuelve a hacer al emitir.
+function recalcular() {
+  var total = 0;
+  document.querySelectorAll('#tbl-cuotas tbody tr').forEach(function (tr) {
+    var chk = tr.querySelector('input[type=checkbox]'), imp = tr.querySelector('input[name=c_importe]');
+    if (chk && imp && chk.checked) total += leer(imp.value);
+  });
+  total = Math.round(total * 100) / 100;
+  var capital = 0;
+  if (total > 0 && FALTA_CAPITAL > 0) {
+    capital = (total + 0.01 > FALTA_ACUERDO) ? FALTA_CAPITAL : Math.round(total * FALTA_CAPITAL / FALTA_ACUERDO * 100) / 100;
+    capital = Math.min(capital, FALTA_CAPITAL, total);
+  }
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('res-capital').textContent = pesos(capital);
+  document.getElementById('res-interes').textContent = pesos(Math.round((total - capital) * 100) / 100);
+  document.getElementById('btn-emitir').disabled = total <= 0;
+}
+document.addEventListener('DOMContentLoaded', recalcular);
+</script>
+{% endblock %}

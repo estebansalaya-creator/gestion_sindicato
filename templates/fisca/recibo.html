@@ -1,11 +1,12 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
-{% block title %}Recibo {{ o.nro_orden }}{% endblock %}
+{% block title %}Recibo {{ o.numero }}{% endblock %}
 
 {#
-  Recibo de cuota sindical (fisca_rec.recibo): una orden de ingreso de clase
-  «cuota_sindical» emitida desde una acreditación del extracto. El PDF es el
-  que se le manda al empleador.
+  Recibo (fisca_rec.recibo): una orden de ingreso de clase «cuota_sindical»
+  (desde una acreditación del extracto) o «fiscalizacion» (a un acta, a las
+  cuotas de su acuerdo de pago: fisca_recibo_acta.py), con su número de
+  talonario (recibos_talonario.py). El PDF es el que se le manda al empleador.
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -13,14 +14,22 @@
 
 {% block content %}
 {% set e = o.extracto or {} %}
+{% set fisca = o.clase == 'fiscalizacion' %}
+{% set x = o.acuerdo or {} %}
 <div class="page-header">
   <div>
-    <h1>Recibo {{ o.nro_orden }}</h1>
-    <p>Cuota sindical de {{ (o.empresa or {}).razon_social or o.cuit or '—' }}, acreditada en {{ o.cuenta or '—' }}.</p>
+    <h1>Recibo {{ 'de fiscalización ' if fisca }}<span class="mono">{{ o.numero }}</span></h1>
+    <p>{% if fisca %}Acta {{ x.nro_acta or '—' }}, acuerdo {{ x.nro_acuerdo or '—' }}{% else %}Cuota sindical{% endif %}
+      de {{ (o.empresa or {}).razon_social or o.cuit or '—' }}, {{ 'acreditada' if e else 'cobrada' }} en {{ o.cuenta or '—' }}.</p>
   </div>
   <div class="page-header-acciones">
+    {% if fisca and x and puede_acuerdo %}
+    {{ ui.boton('Acuerdo de pago', 'secondary', href=url_for('fisca_acta.acuerdo', id_acta=x.id_acta, id=x.id), icono_='volver') }}
+    {% endif %}
+    {% if e or not fisca %}
     {{ ui.boton('Emisión de recibos', 'secondary', href=url_for('fisca_rec.lista', cuenta=o.id_cuenta,
                 desde=e.fecham.isoformat() if e.fecham else None, hasta=e.fecham.isoformat() if e.fecham else None), icono_='volver') }}
+    {% endif %}
     {% if puede_ingreso %}{{ ui.boton('Orden de ingreso', 'secondary', href=url_for('tes_mov.ingreso', id_orden=o.id)) }}{% endif %}
     {{ ui.boton('PDF', 'pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=o.id), icono_='pdf', blank=True) }}
   </div>
@@ -28,16 +37,18 @@
 
 {{ ui.mensajes() }}
 {% if o.estado == 'anulado' %}
-  {{ ui.aviso('Anulado el ' ~ (o.fecha_anulacion.strftime('%d/%m/%Y') if o.fecha_anulacion else '—') ~ ' por ' ~ (o.usuario_anulacion or '—') ~ ': ' ~ (o.motivo_anulacion or '') ~ '. La acreditación quedó sin recibo.', 'danger') }}
+  {{ ui.aviso('Anulado el ' ~ (o.fecha_anulacion.strftime('%d/%m/%Y') if o.fecha_anulacion else '—') ~ ' por ' ~ (o.usuario_anulacion or '—') ~ ': ' ~ (o.motivo_anulacion or '') ~ '.' ~ (' La acreditación quedó sin recibo.' if e else '') ~ (' Las cuotas que pagaba vuelven a deberse.' if fisca else ''), 'danger') }}
 {% endif %}
 
 <div class="card">
   {{ ui.card_head('Recibo') }}
   <div class="card-body">
     <p>Recibimos de <b>{{ (o.empresa or {}).razon_social or '—' }}</b> (CUIT {{ o.cuit or '—' }}) la suma de
-      <b>pesos {{ o.en_letras | lower }}</b> ($ {{ o.importe_total | miles }}) en concepto de cuota sindical.</p>
+      <b>pesos {{ o.en_letras | lower }}</b> ($ {{ o.importe_total | miles }})
+      {% if fisca %}en concepto de pago del acuerdo de pago {{ x.nro_acuerdo or '—' }} del acta {{ x.nro_acta or '—' }}{% else %}en concepto de cuota sindical{% endif %}.</p>
     <div class="datos">
-      {{ dato('Número', o.nro_orden, mono=True) }}
+      {{ dato('Número', o.numero, mono=True) }}
+      {% if o.nro_recibo %}{{ dato('Orden de ingreso', o.nro_orden, mono=True) }}{% endif %}
       {{ dato('Fecha', o.fecha.strftime('%d/%m/%Y')) }}
       {{ dato('Importe', '$ ' ~ (o.importe_total | miles), mono=True) }}
       {{ dato('Empleador', (o.empresa or {}).razon_social) }}
@@ -50,10 +61,32 @@
   </div>
 </div>
 
+{% if fisca %}
 <div class="card">
-  {{ ui.card_head('Períodos') }}
+  {{ ui.card_head('Cuotas del acuerdo que paga') }}
   <div class="data-table-wrap">
-    <table class="data-table" data-exportar="Recibo {{ o.nro_orden }}">
+    <table class="data-table" data-exportar="Recibo {{ o.numero }} cuotas">
+      <thead><tr><th>Cuota</th><th>Vencimiento</th><th class="th-right">Importe de la cuota</th><th class="th-right">Pagado con este recibo</th></tr></thead>
+      <tbody>
+        {% for c in o.imputaciones %}
+        <tr><td class="td-mono">{{ c.nro_cuota }} de {{ x.cantidad_cuotas or '—' }}</td>
+          <td data-valor="{{ c.vencimiento.isoformat() }}">{{ c.vencimiento.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right" data-num="{{ c.importe_cuota }}">{{ c.importe_cuota | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ c.importe }}">{{ c.importe | miles }}</td></tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="4" class="no-data">Sin cuotas imputadas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  {{ ui.card_head('Imputación' if fisca else 'Períodos',
+                  nota=('Capital a la cuota sindical de los períodos del acta: $ ' ~ (o.capital | miles) ~ ' · intereses: $ ' ~ (o.interes | miles)) if fisca else '') }}
+  <div class="data-table-wrap">
+    <table class="data-table" data-exportar="Recibo {{ o.numero }}">
       <thead><tr><th>Período</th><th>Descripción</th><th class="th-right">Importe</th></tr></thead>
       <tbody>
         {% for d in o.detalle %}
@@ -65,6 +98,7 @@
   </div>
 </div>
 
+{% if e %}
 <div class="card">
   {{ ui.card_head('La acreditación') }}
   <div class="card-body">
@@ -78,12 +112,25 @@
     <p class="td-muted chico">{{ o.observaciones or '' }}</p>
   </div>
 </div>
+{% else %}
+<div class="card">
+  {{ ui.card_head('Forma de pago') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Cuenta', (o.cuenta or '—') ~ ((' — ' ~ o.numero_de_cuenta) if o.numero_de_cuenta else '')) }}
+      {{ dato('Fecha', o.fecha.strftime('%d/%m/%Y')) }}
+    </div>
+    <p class="td-muted chico">{{ o.observaciones or '' }}</p>
+  </div>
+</div>
+{% endif %}
 
 {% if o.estado != 'anulado' and puede_anular %}
 <div class="card resumen">
   {{ ui.card_head('Anular') }}
   <div class="card-body">
-    <p class="td-muted">Se anula desde Tesorería → Anulaciones, con el motivo. Si quedó conciliado, primero se desvincula en la conciliación. Anulado, la acreditación vuelve a quedar sin recibo.</p>
+    <p class="td-muted">Se anula desde Tesorería → Anulaciones, con el motivo. Si quedó conciliado, primero se desvincula en la conciliación.
+      Anulado, {{ 'las cuotas del acuerdo vuelven a deberse y ' if fisca }}{{ 'la acreditación vuelve a quedar sin recibo' if e else 'sale del libro' }}. El número del talonario no se vuelve a usar.</p>
     <div class="resumen-botones">{{ ui.boton('Ir a Anulaciones', 'secondary', href=url_for('tes_mov.anulaciones_lista', tipo='ingreso', desde=o.fecha.isoformat(), hasta=o.fecha.isoformat())) }}</div>
   </div>
 </div>

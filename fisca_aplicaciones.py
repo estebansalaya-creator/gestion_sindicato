@@ -42,6 +42,8 @@ import datetime
 from collections import defaultdict
 from decimal import Decimal
 
+import recibos_talonario as RT
+
 CENT = Decimal("0.01")
 #: Motivos de ingreso que son pagos del empleador (además de toda orden de clase cuota_sindical).
 MOTIVOS_COBRO = ("CUOTA SINDICAL", "INGRESOS POR FISCALIZACION")
@@ -112,7 +114,7 @@ def falta_esquema(cur) -> bool:
 
 def cobros_de(cur, cuit: str) -> list[dict]:
     cur.execute(SQL_COBROS + " AND d.cuit = %s ORDER BY o.fecha, o.id, d.id", list(MOTIVOS_COBRO) + [cuit])
-    out = list(cur.fetchall())
+    out = RT.completar(cur, cur.fetchall())          # nro_recibo: «X 0001-00000123»
     for c in out:
         c["importe"], c["aplicado"] = _d(c["importe"]), _d(c["aplicado"])
         c["sin_aplicar"] = c["importe"] - c["aplicado"]
@@ -148,7 +150,7 @@ def aplicaciones_de(cur, cuit: str) -> list[dict]:
                      LEFT JOIN s_usuarios u ON u.id = a.id_usuario
                     WHERE d.cuit = %s OR l.cuit = %s
                     ORDER BY l.periodo, o.fecha, a.id""", (cuit, cuit))
-    out = list(cur.fetchall())
+    out = RT.completar(cur, cur.fetchall())
     for a in out:
         a["importe"] = _d(a["importe"])
         a["muerta"] = ("la orden de ingreso está anulada" if a["estado_orden"] == "anulado"

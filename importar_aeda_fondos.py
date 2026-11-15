@@ -96,6 +96,7 @@ from importar_aeda_tesoreria import _buscar
 
 import fisca_aplicaciones
 import movimientos_fondos as mf
+import recibos_talonario as RT
 from numeracion import nro_visible
 from db import get_connection
 
@@ -813,15 +814,33 @@ def aplicar(cur, plan: Plan, destino: dict) -> None:
                     "id_usuario_anulacion = %s WHERE id = %s", (MOTIVO_ANULADO, usuario, m["id"]))
         mf.anular(cur, "movimiento", m["id"], MOTIVO_ANULADO, usuario)
 
-    # Ingresos.
+    # Ingresos. Los cobros (AEDA-RC-N) son recibos: van al talonario de AEDA de su
+    # clase con el número de cobro de AEDA (recibos_talonario.py,
+    # sql/fisca_recibos_talonarios_20261114.sql). Sin el script, como antes.
     ing_de = {k: v["id"] for k, v in destino["ingresos"].items()}
+    con_talonario = RT.hay_esquema(cur)
+    talonarios_aeda = ({c: RT.id_de_aeda(cur, c) for c in RT.CLASES} if con_talonario else {})
+    usados = set()
     for o in plan.ingresos:
+        m = RE_ING.match(o["nro_orden"])
+        clase, id_tal, nro_rec = "varios", None, None
+        if con_talonario and m and m.group(1) == "RC":
+            clase = ("fiscalizacion" if (o["motivo"]["descripcion"] or "").upper() == "INGRESOS POR FISCALIZACION"
+                     else "cuota_sindical")
+            id_tal, nro_rec = talonarios_aeda.get(clase), int(m.group(2))
+            if id_tal:
+                usados.add(id_tal)
+            else:
+                nro_rec = None
         cur.execute("""INSERT INTO ingreso_ordenes (nro_orden, clase, anio, fecha, estado, id_cuenta, importe_total,
                                                      moneda, origen, observaciones, id_usuario_creacion, creado)
-                       VALUES (%s, 'varios', %s, %s, 'confirmado', NULL, %s, 'ARS', 'manual', %s, %s, %s)""",
-                    (o["nro_orden"], o["fecha"].year, o["fecha"], o["importe"], o["observaciones"], usuario,
+                       VALUES (%s, %s, %s, %s, 'confirmado', NULL, %s, 'ARS', 'manual', %s, %s, %s)""",
+                    (o["nro_orden"], clase, o["fecha"].year, o["fecha"], o["importe"], o["observaciones"], usuario,
                      _ahora(o["fecha"])))
         id_orden = cur.lastrowid
+        if id_tal:
+            cur.execute("UPDATE ingreso_ordenes SET id_talonario = %s, nro_recibo = %s WHERE id = %s",
+                        (id_tal, nro_rec, id_orden))
         # El CUIT del empleador en el renglón: es lo que lee la cuenta corriente de empleadores.
         cuit_det = str(o["_cuit"]).zfill(11) if o.get("_cuit") else None
         cur.execute("""INSERT INTO ingreso_ordenes_detalle (id_orden, tipo, id_motivo_ingreso, descripcion,
@@ -832,6 +851,8 @@ def aplicar(cur, plan: Plan, destino: dict) -> None:
                         [(id_orden, c, imp) for c, imp in o["cuentas"].items()])
         mf.registrar_ingreso(cur, id_orden)
         ing_de[o["clave"]] = id_orden
+    for id_tal in usados:
+        RT.avanzar(cur, id_tal)
     for o in plan.anular_ingresos:
         cur.execute("UPDATE ingreso_ordenes SET estado = 'anulado', fecha_anulacion = NOW(), motivo_anulacion = %s, "
                     "id_usuario_anulacion = %s WHERE id = %s", (MOTIVO_ANULADO[:250], usuario, o["id"]))

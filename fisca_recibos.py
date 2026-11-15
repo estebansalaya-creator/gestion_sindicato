@@ -2,7 +2,8 @@
 fisca_recibos.py — Fiscalización de Cuotas › Emisión de Recibos (menú 8).
 
     /fiscalizacion/recibos                        las acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta
-    /fiscalizacion/recibos/emitir/<id_extracto>   GET el formulario (?cuit= elige otro empleador); POST emite
+    /fiscalizacion/recibos/emitir/<id_extracto>   GET el formulario (?cuit= elige otro empleador, ?acuerdo= lo
+                                                  emite como fiscalización a ese acuerdo de pago); POST emite
     /fiscalizacion/recibos/emitir_lote            POST extracto=… los tildados, con lo que sugiere la pantalla
     /fiscalizacion/recibos/<id_orden>             el recibo
     /fiscalizacion/recibos/<id_orden>/pdf         el recibo en PDF
@@ -23,6 +24,16 @@ EL EMPLEADOR (`resolver_empleador`)
 - Un afiliado con relación laboral vigente con un solo empleador: queda como
   sugerencia y no se emite en lote. Muchas transferencias de CUIL son la cuota
   de la persona, no la de su empleador.
+
+TALONARIO (recibos_talonario.py, pedido del 14/11/2026)
+Cada recibo lleva su número del talonario de cuota sindical (X 0001, el que diga
+Datos del Sindicato): «X 0001-00000123». Los de AEDA están en X 0091 / X 0092 con
+el número de cobro de AEDA. El número AAMM-######## es el de la orden de ingreso.
+
+FISCALIZACIÓN (fisca_recibo_acta.py)
+Una acreditación de un empleador con un acuerdo de pago vigente se puede emitir
+como «Fiscalización»: el recibo es al acta y se imputa a las cuotas del acuerdo
+(talonario X 0002). Esas acreditaciones no se emiten en lote como cuota.
 
 EL RECIBO
 Es una orden de ingreso (`ingreso_ordenes`) de clase «cuota_sindical» y origen
@@ -69,7 +80,9 @@ from xml.sax.saxutils import escape
 
 import conciliacion
 import fisca_aplicaciones as fa
+import fisca_recibo_acta as FRA
 import movimientos_fondos as mf
+import recibos_talonario as RT
 from db import get_connection, puede, usuario_actual, validasesion
 from empleadores import cuit_valido
 from numeracion import proximo_numero
@@ -111,10 +124,17 @@ ESTADOS = {
 }
 #: Estados desde los que se puede emitir (a mano).
 EMITIBLES = ("pendiente", "posible", "otro")
+#: Estado de una cuota del acuerdo de pago.
+ESTADOS_CUOTA = {"pagada": ("Pagada", "ok"), "parcial": ("Pago parcial", "info"), "vencida": ("Vencida", "danger"),
+                 "pendiente": ("Pendiente", "neutro")}
 
 
 class ErrorRecibo(ValueError):
     """Un error de validación: el texto va directo a la pantalla."""
+
+
+#: Lo que se muestra tal cual al emitir (validaciones de acá, del talonario y del cobro del acta).
+ERRORES = (ErrorRecibo, RT.ErrorTalonario, FRA.ErrorCobro)
 
 
 # =============================================================================
@@ -190,6 +210,8 @@ ESQUEMA = [
     ("ingreso_ordenes_detalle", "cuit", SQL_ESQUEMA),
     ("fisca_cuit_relacionado", "cuit_pagador", SQL_ESQUEMA),
     ("fisca_aplicacion", "id_detalle", "sql/fisca_aplicaciones_20261114.sql"),
+    ("ingreso_ordenes", "nro_recibo", RT.SQL_ESQUEMA),
+    ("fisca_acuerdo_imputacion", "id_cuota", RT.SQL_ESQUEMA),
 ]
 
 
@@ -482,7 +504,7 @@ def emitidos_de(cur, ids) -> dict:
                       FROM ingreso_ordenes_detalle d JOIN ingreso_ordenes o ON o.id = d.id_orden
                      WHERE o.estado <> 'anulado' AND d.id_extracto_origen IN ({marcas})
                      GROUP BY d.id_extracto_origen, o.id""", list(ids))
-    return {f["id_ext"]: f for f in cur.fetchall()}
+    return {f["id_ext"]: f for f in RT.completar(cur, cur.fetchall())}
 
 
 _RE_COMPROBANTE = re.compile(r"comprobante (\d+)", re.IGNORECASE)
@@ -503,7 +525,7 @@ def libro_ingresos(cur, id_cuenta, desde, hasta) -> list[dict]:
                       AND io.estado <> 'anulado' AND dc.importe_credito > 0
                       AND COALESCE(dc.fecha_emision, mf.fecha) BETWEEN %s AND %s""",
                 (id_cuenta, desde - datetime.timedelta(days=DIAS_VENTANA), hasta + datetime.timedelta(days=DIAS_VENTANA)))
-    filas = cur.fetchall()
+    filas = RT.completar(cur, cur.fetchall())
     for r in filas:
         r["importe"] = _d(r["importe"])
         m = _RE_COMPROBANTE.search(r["observaciones"] or "") if (r["nro_orden"] or "").startswith("AEDA-") else None
@@ -551,7 +573,10 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
     # Lo emitido desde un renglón gana sobre «conciliado»: el recibo concilia en el acto.
     emparejar(filas, emitidos_de(cur, [f["id"] for f in filas]), libro_ingresos(cur, id_cuenta, desde, hasta))
 
-    sal =saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
+    sal = saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
+    # Un empleador con un acuerdo de pago: su pago puede ser una cuota del acuerdo. Se emite de a uno.
+    acuerdo = FRA.con_acuerdo(cur, {f["emp"]["cuit"] for f in filas if f["estado"] in EMITIBLES}) \
+        if RT.hay_esquema(cur) else set()
     vivos = {c: {p: v["saldo"] for p, v in ps.items()} for c, ps in sal.items()}
     for f in filas:
         f["sugerido"] = []
@@ -563,7 +588,8 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
                 for p, imp in f["sugerido"]:
                     if p in saldos:
                         saldos[p] -= imp
-        f["en_lote"] = f["estado"] == "pendiente" and f["emp"]["como"] in COMO_SEGURO
+        f["con_acuerdo"] = f["emp"]["cuit"] in acuerdo
+        f["en_lote"] = f["estado"] == "pendiente" and f["emp"]["como"] in COMO_SEGURO and not f["con_acuerdo"]
     return filas, excedido
 
 
@@ -638,17 +664,20 @@ def emitir(cur, id_extracto: int, cuit_emp: str, renglones: list[tuple[str, Deci
     motivo = id_motivo_cuota(cur)
     razon = (empresa["razon_social"] or "").strip()
 
-    nro = proximo_numero(cur, "ingreso_ordenes", e["fecham"])
+    talon = RT.reservar(cur, "cuota_sindical")
+    nro_orden = proximo_numero(cur, "ingreso_ordenes", e["fecham"])
+    nro = talon["texto"]
     obs = " · ".join(x for x in (
         f"Recibo de cuota sindical desde el extracto de {e['cuenta']}",
         f"acreditación del {e['fecham']:%d/%m/%Y}", f"ref. {e['ref_nro']}" if e["ref_nro"] else None,
         (e["concepto"] or "").strip() or None,
         f"pagó {digitos(e['cuit'])}" if digitos(e["cuit"]) and digitos(e["cuit"]) != cuit_emp else None,
         observaciones) if x)[:2000]
-    cur.execute("""INSERT INTO ingreso_ordenes (nro_orden, clase, anio, fecha, estado, id_cuenta, importe_total, moneda,
-                                                origen, observaciones, id_usuario_creacion)
-                   VALUES (%s, 'cuota_sindical', %s, %s, 'confirmado', %s, %s, 'ARS', 'extracto', %s, %s)""",
-                (nro, e["fecham"].year, e["fecham"], e["c_cuentas_de_fondos_id"], total, obs, uid))
+    cur.execute("""INSERT INTO ingreso_ordenes (nro_orden, id_talonario, nro_recibo, clase, anio, fecha, estado, id_cuenta,
+                                                importe_total, moneda, origen, observaciones, id_usuario_creacion)
+                   VALUES (%s, %s, %s, 'cuota_sindical', %s, %s, 'confirmado', %s, %s, 'ARS', 'extracto', %s, %s)""",
+                (nro_orden, talon["id"], talon["nro"], e["fecham"].year, e["fecham"], e["c_cuentas_de_fondos_id"], total,
+                 obs, uid))
     id_orden = cur.lastrowid
     ids_detalle = []
     for p, imp in sorted(renglones):
@@ -669,24 +698,12 @@ def emitir(cur, id_extracto: int, cuit_emp: str, renglones: list[tuple[str, Deci
         cur.execute("""INSERT INTO fisca_cuit_relacionado (cuit_pagador, cuit_empleador, observaciones, id_usuario)
                        VALUES (%s, %s, %s, %s)
                        ON DUPLICATE KEY UPDATE activo = 1""",
-                    (pagador, cuit_emp, f"Al emitir el recibo {nro}", uid))
+                    (pagador, cuit_emp, f"Al emitir el recibo {nro}"[:250], uid))
 
     # Con una conciliación abierta que incluye la fecha, queda conciliado ya.
-    conciliado = None
-    cur.execute("""SELECT * FROM conciliacion_header
-                    WHERE id_cuenta = %s AND estado IN ('abierto', 'en_proceso') AND %s BETWEEN fecha_desde AND fecha_hasta
-                    ORDER BY fecha_desde DESC LIMIT 1""", (e["c_cuentas_de_fondos_id"], e["fecham"]))
-    conc = cur.fetchone()
-    if conc:
-        dcs = conciliacion._dc_de(cur, "ingreso", id_orden, e["c_cuentas_de_fondos_id"])
-        neto = sum((_d(d["importe_credito"]) - _d(d["importe_debito"]) for d in dcs), Decimal("0"))
-        if dcs and abs(neto - total) < CENT:
-            conciliacion._grabar_grupo(
-                cur, conc, [{"id": e["id"], "neto": float(total)}],
-                [conciliacion.formatear_libro_min(d, "ingreso", id_orden) for d in dcs], uid, None,
-                origen="automatico", tipo_interno="motivo_ingreso", id_motivo_ingreso=motivo)
-            conciliado = conc["periodo"]
-    return {"id_orden": id_orden, "nro": nro, "conciliado": conciliado, "razon": razon}
+    conciliado = FRA.conciliar_en_el_acto(cur, e["c_cuentas_de_fondos_id"], e["fecham"], id_orden, total, e["id"],
+                                          motivo, uid)
+    return {"id_orden": id_orden, "nro": nro, "nro_orden": nro_orden, "conciliado": conciliado, "razon": razon}
 
 
 # =============================================================================
@@ -771,6 +788,18 @@ def _volver_lista(id_cuenta=None, desde=None, hasta=None):
                             desde=desde or f.get("desde") or None, hasta=hasta or f.get("hasta") or None))
 
 
+def leer_imputaciones(form) -> list[tuple[int, Decimal]]:
+    """Las cuotas tildadas del acuerdo con su importe (c_id / c_importe / c_sel_<id>)."""
+    out = []
+    for id_txt, imp in zip(form.getlist("c_id"), form.getlist("c_importe")):
+        if not id_txt.isdigit() or not form.get(f"c_sel_{id_txt}"):
+            continue
+        v = leer_importe(imp)
+        if v and v > 0:
+            out.append((int(id_txt), _d(v)))
+    return out
+
+
 @fisca_rec_bp.route("/recibos/emitir/<int:id_extracto>", methods=["GET", "POST"])
 def emitir_uno(id_extracto):
     salida = _guardia()
@@ -792,7 +821,7 @@ def emitir_uno(id_extracto):
                 return redirect(url_for("fisca_rec.lista"))
             ya = emitidos_de(cur, [e["id"]]).get(e["id"])
             if ya:
-                flash(f"!Esa acreditación ya tiene el recibo {ya['nro_orden']}.")
+                flash(f"!Esa acreditación ya tiene el recibo {ya['nro_recibo'] or ya['nro_orden']}.")
                 return redirect(url_for("fisca_rec.recibo", id_orden=ya["id_orden"]))
             emp_todas, rel = empresas(cur), relaciones(cur)
             pagador = digitos(e["cuit"])
@@ -809,16 +838,29 @@ def emitir_uno(id_extracto):
             emparejar([fila], {}, libro_ingresos(cur, e["c_cuentas_de_fondos_id"], e["fecham"], e["fecham"]))
             cur.execute("SELECT 1 FROM conciliacion_items WHERE id_extracto = %s LIMIT 1", (e["id"],))
             conciliado = bool(e["conciliado"] or cur.fetchone())
+            # Fiscalización: los acuerdos de pago del empleador que deben algo.
+            acuerdos = FRA.acuerdos_cobrables(cur, elegido) if razon else []
+            id_acuerdo = request.values.get("acuerdo", type=int)
+            acuerdo = next((x for x in acuerdos if x["id"] == id_acuerdo), None)
+            if id_acuerdo and not acuerdo:
+                errores.append("Ese acuerdo de pago no es de este empleador o ya no debe nada.")
+            est = FRA.estado_cobro(cur, acuerdo) if acuerdo else None
 
     renglones = [(p, imp) for p, imp in distribuir(e["credito"], e["fecham"],
                                                      {p: v["saldo"] for p, v in saldos.items()})] if razon else []
     recordar = pagador != elegido and len(pagador) == 11 and elegido not in rel.get(pagador, ())
     obs = ""
+    imput = dict(FRA.sugerir(est["cuotas"], e["credito"])) if est else {}
+    accion = request.form.get("accion") if request.method == "POST" else None
 
-    if request.method == "POST" and request.form.get("accion") == "emitir":
-        renglones, errores = leer_renglones(request.form)
+    if accion in ("emitir", "emitir_fisca"):
         recordar = bool(request.form.get("recordar"))
         obs = " ".join((request.form.get("observaciones") or "").split())[:250]
+        if accion == "emitir":
+            renglones, errores = leer_renglones(request.form)
+        else:
+            imput = dict(leer_imputaciones(request.form))
+            errores = [] if acuerdo else ["Elegí el acuerdo de pago."]
         if not razon:
             errores.append("Elegí el empleador.")
         if not errores:
@@ -826,9 +868,16 @@ def emitir_uno(id_extracto):
             try:
                 conn.begin()
                 with conn.cursor() as cur:
-                    r = emitir(cur, id_extracto, elegido, renglones, _uid(), obs or None, recordar)
+                    if accion == "emitir":
+                        r = emitir(cur, id_extracto, elegido, renglones, _uid(), obs or None, recordar)
+                    else:
+                        r = FRA.emitir(cur, id_acuerdo=acuerdo["id"], imputaciones=list(imput.items()), uid=_uid(),
+                                       extracto=_extracto_bloqueado(cur, id_extracto), observaciones=obs or None,
+                                       fecha_valida=_fecha_valida)
+                        if recordar:
+                            _recordar(cur, pagador, elegido, r["nro"], _uid())
                 conn.commit()
-            except ErrorRecibo as ex:
+            except ERRORES as ex:
                 conn.rollback()
                 errores.append(str(ex))
             except Exception:
@@ -837,20 +886,39 @@ def emitir_uno(id_extracto):
             finally:
                 conn.close()
             if not errores:
-                flash(f"Recibo {r['nro']} emitido a {r['razon']} por {pesos(e['credito'])}."
+                if accion == "emitir":
+                    texto = f"Recibo {r['nro']} emitido a {r['razon']} por {pesos(e['credito'])}."
+                else:
+                    texto = (f"Recibo de fiscalización {r['nro']} emitido a {r['razon']} por {pesos(r['total'])}: "
+                             f"{pesos(r['capital'])} de cuota sindical del acta y {pesos(r['interes'])} de intereses."
+                             + (f" El acuerdo {r['nro_acuerdo']} quedó pagado." if r["acuerdo_cancelado"] else ""))
+                flash(texto
                       + (f" Quedó conciliado en la conciliación {periodo_txt(r['conciliado'])}." if r["conciliado"] else "")
                       + (" Los próximos pagos de ese CUIT se reconocen solos." if recordar else ""))
                 return redirect(url_for("fisca_rec.recibo", id_orden=r["id_orden"]))
 
+    capital = interes = None
+    if est:
+        capital, interes = FRA.partir(_d(e["credito"]), est["falta_capital"], est["falta_acuerdo"])
     periodos = sorted(set(saldos) | set(sin_liq), reverse=True)
     return render_template("fisca/recibo_emitir.html", e=e, errores=errores, sugerido=sugerido, elegido=elegido,
                            razon=razon, saldos=saldos, sin_liq=sin_liq, periodos=periodos, renglones=renglones,
                            recordar=recordar, obs=obs, fila=fila, conciliado=conciliado, pagador=pagador,
                            como=COMO, estados=ESTADOS, periodo_mes=periodo_anterior(e["fecham"]),
                            hoy=datetime.date.today().strftime("%Y-%m"),
+                           acuerdos=acuerdos, acuerdo=acuerdo, est=est, imput=imput, capital=capital, interes=interes,
+                           estados_cuota=ESTADOS_CUOTA,
                            volver=url_for("fisca_rec.lista", cuenta=e["c_cuentas_de_fondos_id"],
                                           desde=request.values.get("desde") or None,
                                           hasta=request.values.get("hasta") or None))
+
+
+def _recordar(cur, pagador, cuit_emp, nro, uid) -> None:
+    if len(pagador) == 11 and pagador != cuit_emp:
+        cur.execute("""INSERT INTO fisca_cuit_relacionado (cuit_pagador, cuit_empleador, observaciones, id_usuario)
+                       VALUES (%s, %s, %s, %s)
+                       ON DUPLICATE KEY UPDATE activo = 1""",
+                    (pagador, cuit_emp, f"Al emitir el recibo {nro}"[:250], uid))
 
 
 @fisca_rec_bp.route("/recibos/emitir_lote", methods=["POST"])
@@ -900,7 +968,7 @@ def emitir_lote():
             conn.commit()
             hechos += 1
             total += f["importe"]
-        except ErrorRecibo as ex:
+        except ERRORES as ex:
             conn.rollback()
             fallados.append(f"{f['fecham']:%d/%m} {pesos(f['importe'])}: {ex}")
         except Exception:
@@ -922,7 +990,7 @@ def emitir_lote():
 
 def leer_recibo(cur, id_orden) -> dict | None:
     cur.execute("""SELECT o.*, u.nombre AS usuario_creacion, ua.nombre AS usuario_anulacion, cf.nombre AS cuenta,
-                          cf.numero_de_cuenta
+                          cf.numero_de_cuenta, cf.tipo_de_cuenta
                      FROM ingreso_ordenes o
                      LEFT JOIN s_usuarios u  ON u.id  = o.id_usuario_creacion
                      LEFT JOIN s_usuarios ua ON ua.id = o.id_usuario_anulacion
@@ -931,9 +999,14 @@ def leer_recibo(cur, id_orden) -> dict | None:
     o = cur.fetchone()
     if not o:
         return None
-    cur.execute("""SELECT d.* FROM ingreso_ordenes_detalle d WHERE d.id_orden = %s ORDER BY d.periodo, d.id""",
-                (id_orden,))
+    o["nro_recibo"] = RT.numeros(cur, [o["id"]]).get(o["id"])
+    o["numero"] = o["nro_recibo"] or o["nro_orden"]
+    cur.execute("""SELECT d.*, m.descripcion AS motivo FROM ingreso_ordenes_detalle d
+                     LEFT JOIN c_motivos_de_ingreso m ON m.id = d.id_motivo_ingreso
+                    WHERE d.id_orden = %s ORDER BY d.periodo IS NULL, d.periodo, d.id""", (id_orden,))
     o["detalle"] = cur.fetchall()
+    for d in o["detalle"]:
+        d["es_interes"] = (d["motivo"] or "").upper() == FRA.MOTIVO_INTERES
     cuit = next((d["cuit"] for d in o["detalle"] if d["cuit"]), None)
     o["cuit"] = cuit
     o["empresa"] = None
@@ -946,6 +1019,24 @@ def leer_recibo(cur, id_orden) -> dict | None:
         cur.execute("SELECT * FROM c_extractos_bancarios WHERE id = %s", (ext,))
         o["extracto"] = cur.fetchone()
     o["en_letras"] = en_letras(o["importe_total"])
+    o["acuerdo"], o["imputaciones"] = None, []
+    if o.get("id_acuerdo"):
+        cur.execute("""SELECT x.id, x.nro_acuerdo, x.estado, x.id_acta, a.nro_acta, x.cantidad_cuotas
+                         FROM fisca_acuerdo x JOIN fisca_acta a ON a.id = x.id_acta WHERE x.id = %s""", (o["id_acuerdo"],))
+        o["acuerdo"] = cur.fetchone()
+        cur.execute("""SELECT c.nro_cuota, c.vencimiento, c.importe AS importe_cuota, i.importe
+                         FROM fisca_acuerdo_imputacion i JOIN fisca_acuerdo_cuota c ON c.id = i.id_cuota
+                        WHERE i.id_orden = %s ORDER BY c.nro_cuota""", (id_orden,))
+        o["imputaciones"] = cur.fetchall()
+    o["capital"] = sum((_d(d["importe"]) for d in o["detalle"] if not d["es_interes"]), Decimal("0"))
+    o["interes"] = sum((_d(d["importe"]) for d in o["detalle"] if d["es_interes"]), Decimal("0"))
+    return o
+
+
+def _recibo_o_volver(cur, id_orden):
+    o = leer_recibo(cur, id_orden)
+    if not o or o["clase"] not in RT.CLASES:
+        return None
     return o
 
 
@@ -956,13 +1047,14 @@ def recibo(id_orden):
         return salida
     with get_connection() as conn:
         with conn.cursor() as cur:
-            o = leer_recibo(cur, id_orden)
-    if not o or o["clase"] != "cuota_sindical":
-        flash("!No existe ese recibo de cuota sindical.")
+            o = _recibo_o_volver(cur, id_orden)
+    if not o:
+        flash("!No existe ese recibo.")
         return redirect(url_for("fisca_rec.lista"))
     return render_template("fisca/recibo.html", o=o, puede_ingreso=puede("/tesoreria/movimientos")
                            or puede("/tesoreria/nueva_orden_concepto"),
                            puede_anular=puede("/tesoreria/anulaciones"),
+                           puede_acuerdo=puede("/fiscalizacion/acuerdos"),
                            puede_empleador=puede(url_for("empleadores.abm_empleadores")))
 
 
@@ -971,29 +1063,57 @@ def recibo_pdf(o: dict):
     import pagos_pdf as P
     from reportlab.lib.units import cm
     from reportlab.platypus import Spacer, Table, TableStyle
-    doc = P._Doc("Recibo", o["nro_orden"], "ANULADO" if o["estado"] == "anulado" else None)
+    fisca = o["clase"] == "fiscalizacion"
+    doc = P._Doc("Recibo de fiscalización" if fisca else "Recibo", o["numero"],
+                 "ANULADO" if o["estado"] == "anulado" else None)
     razon = escape((o["empresa"] or {}).get("razon_social") or "—")
+    x = o["acuerdo"] or {}
+    if fisca:
+        concepto = (f"en concepto de pago del acuerdo de pago {escape(x.get('nro_acuerdo') or '—')} del acta de fiscalización "
+                    f"{escape(x.get('nro_acta') or '—')}")
+    else:
+        concepto = "en concepto de cuota sindical"
     doc.story.append(doc.P(
         f"Recibimos de <b>{razon}</b> (CUIT {P._cuit(o['cuit'])}) la suma de <b>PESOS {escape(o['en_letras'])}</b> "
-        f"(<b>{P._pesos(o['importe_total'])}</b>) en concepto de cuota sindical.", fontSize=10, leading=15, spaceAfter=10))
-    doc.datos("RECIBO", [("Fecha", P._fecha(o["fecha"])), ("Empleador", razon), ("CUIT", P._cuit(o["cuit"])),
-                         ("Importe", P._pesos(o["importe_total"]))])
-    doc.tabla("PERÍODOS", ["Período", "Concepto", "Importe"],
-              [[periodo_txt(d["periodo"]), "Cuota sindical", P._pesos(d["importe"])] for d in o["detalle"]],
-              [3.0, 10.0, 3.0], derecha=(2,), total=("Total", P._pesos(o["importe_total"])))
+        f"(<b>{P._pesos(o['importe_total'])}</b>) {concepto}.", fontSize=10, leading=15, spaceAfter=10))
+    datos = [("Número", escape(o["numero"])), ("Fecha", P._fecha(o["fecha"])), ("Empleador", razon),
+             ("CUIT", P._cuit(o["cuit"])), ("Importe", P._pesos(o["importe_total"]))]
+    if fisca:
+        datos += [("Acta", escape(x.get("nro_acta") or "—")), ("Acuerdo de pago", escape(x.get("nro_acuerdo") or "—"))]
+    doc.datos("RECIBO", datos)
+    if fisca:
+        doc.tabla("CUOTAS DEL ACUERDO", ["Cuota", "Vencimiento", "Importe de la cuota", "Pagado con este recibo"],
+                  [[f"{c['nro_cuota']} de {x.get('cantidad_cuotas') or '—'}", P._fecha(c["vencimiento"]),
+                    P._pesos(c["importe_cuota"]), P._pesos(c["importe"])] for c in o["imputaciones"]],
+                  [3.0, 3.5, 4.5, 5.0], derecha=(2, 3), total=("Total", P._pesos(o["importe_total"])))
+        filas = [[periodo_txt(d["periodo"]), "Cuota sindical del período", P._pesos(d["importe"])]
+                 for d in o["detalle"] if not d["es_interes"]]
+        filas += [["—", "Intereses resarcitorios y de financiación", P._pesos(d["importe"])]
+                  for d in o["detalle"] if d["es_interes"]]
+        doc.tabla("IMPUTACIÓN", ["Período", "Concepto", "Importe"], filas, [3.0, 10.0, 3.0], derecha=(2,),
+                  total=("Total", P._pesos(o["importe_total"])))
+    else:
+        doc.tabla("PERÍODOS", ["Período", "Concepto", "Importe"],
+                  [[periodo_txt(d["periodo"]), "Cuota sindical", P._pesos(d["importe"])] for d in o["detalle"]],
+                  [3.0, 10.0, 3.0], derecha=(2,), total=("Total", P._pesos(o["importe_total"])))
     e = o["extracto"] or {}
-    doc.datos("FORMA DE PAGO", [
-        ("Medio", "Acreditación bancaria"),
-        ("Cuenta", P._txt(o.get("cuenta")) + (f" N° {P._txt(o['numero_de_cuenta'])}" if o.get("numero_de_cuenta") else "")),
-        ("Acreditada el", P._fecha(e.get("fecham"))), ("Referencia", P._txt(e.get("ref_nro"))),
-        ("Concepto del banco", P._txt(e.get("concepto"))),
-        ("Pagó", P._cuit(e.get("cuit")) if digitos(e.get("cuit")) and digitos(e.get("cuit")) != o["cuit"] else "")])
+    if e:
+        pago = [("Medio", "Acreditación bancaria"),
+                ("Cuenta", P._txt(o.get("cuenta")) + (f" N° {P._txt(o['numero_de_cuenta'])}" if o.get("numero_de_cuenta") else "")),
+                ("Acreditada el", P._fecha(e.get("fecham"))), ("Referencia", P._txt(e.get("ref_nro"))),
+                ("Concepto del banco", P._txt(e.get("concepto"))),
+                ("Pagó", P._cuit(e.get("cuit")) if digitos(e.get("cuit")) and digitos(e.get("cuit")) != o["cuit"] else "")]
+    else:
+        pago = [("Medio", "Efectivo" if o.get("tipo_de_cuenta") == "C" else "Depósito o transferencia bancaria"),
+                ("Cuenta", P._txt(o.get("cuenta")) + (f" N° {P._txt(o['numero_de_cuenta'])}" if o.get("numero_de_cuenta") else "")),
+                ("Fecha", P._fecha(o["fecha"]))]
+    doc.datos("FORMA DE PAGO", pago)
     doc.story.append(Spacer(1, 1.8 * cm))
     f = Table([[""], [doc.P("Firma y aclaración", alignment=1)]], colWidths=[6 * cm], rowHeights=[1.2 * cm, None],
               hAlign="RIGHT")
     f.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, doc.MUTED)]))
     doc.story.append(f)
-    return P.respuesta(doc.pdf(f"Recibo {o['nro_orden']}"), f"Recibo {o['nro_orden']}.pdf")
+    return P.respuesta(doc.pdf(f"Recibo {o['numero']}"), f"Recibo {o['numero']}.pdf")
 
 
 @fisca_rec_bp.route("/recibos/<int:id_orden>/pdf")
@@ -1003,9 +1123,9 @@ def recibo_pdf_ruta(id_orden):
         return salida
     with get_connection() as conn:
         with conn.cursor() as cur:
-            o = leer_recibo(cur, id_orden)
-    if not o or o["clase"] != "cuota_sindical":
-        flash("!No existe ese recibo de cuota sindical.")
+            o = _recibo_o_volver(cur, id_orden)
+    if not o:
+        flash("!No existe ese recibo.")
         return redirect(url_for("fisca_rec.lista"))
     return recibo_pdf(o)
 

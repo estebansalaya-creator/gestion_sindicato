@@ -40,6 +40,8 @@ gestion_sindicato/
   fisca_lsd.py            la empresa presenta su Libro de Sueldos Digital por un enlace y la cuota se liquida con él
   fisca_recibos.py        emisión de recibos de cuota sindical desde las acreditaciones del extracto bancario
   fisca_actas.py          actas de fiscalización (deuda + intereses resarcitorios ARCA), acuerdos de pago y fiscalizadores
+  fisca_recibo_acta.py    el recibo de fiscalización: a un acta, a las cuotas de su acuerdo (capital e interés)
+  recibos_talonario.py    el talonario y el número de cada recibo («X 0001-00000123»)
   fisca_intereses.py      vencimiento del F.931 por terminación de CUIT e interés resarcitorio de ARCA por tramos
   importar_arca_tablas.py vencimientos F.931, tasas y feriados de ARCA desde contable (solo lectura); --aplicar graba
   fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
@@ -142,9 +144,11 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/actas         actas: ?q, ?estado; /nueva?cuit= (&fecha_calculo, &periodo_desde, &periodo_hasta,
                              &con_pagos_tarde: recalcula sin guardar); /guardar POST; /<id> ficha; /<id>/cerrar,
                              /<id>/anular POST; /<id>/pdf; /<id>/acuerdo (?id=), /<id>/acuerdo/guardar POST
-/fiscalizacion/acuerdos      acuerdos: ?estado; /<id>/estado POST (anular, cancelar, judicializar); /<id>/pdf
+/fiscalizacion/acuerdos      acuerdos: ?estado; /<id>/estado POST (anular, cancelar, judicializar); /<id>/pdf;
+                             /<id>/cobrar GET/POST (el recibo de fiscalización con cuenta y fecha)
 /fiscalizacion/fiscalizadores  ABM, ?edit=ID, ?nuevo=1; POST accion=guardar|borrar|baja|reactivar
-/fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=);
+/fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=,
+                             ?acuerdo= como recibo de fiscalización);
                              /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
 /fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
@@ -529,8 +533,10 @@ corriente de acá.
   firmas). Los textos legales están en `TEXTO_*` de `fisca_actas.py`: **a revisar con el asesor legal**. Lugar de pago
   y plazo de intimación en Datos del Sindicato (`acta_lugar_pago`, `acta_plazo_dias`).
 - La cuenta corriente marca en cada período el acta que lo reclama y tiene el botón «Acta de fiscalización».
-- **Pendiente**: seguir los cobros de las cuotas del acuerdo (hoy solo el cronograma, como gestion_adm), multas,
-  anexo nominativo por afiliado y el envío por mail.
+- **Cobros del acuerdo** (14/11/2026): con los recibos de fiscalización (ver «Recibos: talonarios y fiscalización»).
+  El acuerdo muestra lo pagado y el saldo de cada cuota y sus recibos; sin saldo pasa solo a «cancelado»; con
+  recibos no se modifica. La lista de acuerdos tiene Cobrado y Falta.
+- **Pendiente**: multas, anexo nominativo por afiliado y el envío por mail.
 
 ## Presentación del Libro de Sueldos Digital (cuota sindical)
 
@@ -655,6 +661,43 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
 - **Lote**: solo lo «sin recibo» con empleador seguro (mismo CUIT o relacionado), con los períodos que muestra la
   grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).
 - **Pendiente**: intereses por mora; mandar el recibo por mail.
+
+## Recibos: talonarios y fiscalización
+
+`recibos_talonario.py` + `fisca_recibo_acta.py` (`sql/fisca_recibos_talonarios_20261114.sql`, pedido del 14/11/2026;
+test: `python tests/test_fisca_recibo_acta.py`, sin base):
+los recibos se numeran por talonario, uno para la cuota sindical y otro para la fiscalización, y los de fiscalización
+se emiten a un acta, como en OSEDA.
+
+- **El recibo sigue siendo la orden de ingreso** (libro, conciliación, cuenta corriente) y ahora lleva `id_talonario` +
+  `nro_recibo` (únicos juntos). Se muestra «X 0001-00000123»; el AAMM-######## queda como número de la orden de
+  ingreso. Clases `cuota_sindical` y `fiscalizacion` (esta última, nueva en el ENUM).
+- **Talonarios** (clasificación «Recibos», tipo Recibo): **X 0001 Recibos Cuota Sindical** y **X 0002 Recibos
+  Fiscalización**, los que se eligen en Datos del Sindicato (`s_institucion.talonario_recibo_cuota/_fisca`), y **X 0091
+  / X 0092 (AEDA)**, deshabilitados, con los cobros de AEDA y su número de cobro (`fis_cobros.cobro_id`): decidido el
+  14/11/2026, como los migrados de OSEDA, para que lo que se siga importando mientras AEDA cobre no se mezcle con lo
+  emitido acá. Están en `s_configuracion` (`talonario_recibos_aeda_*`). El script pasó los 9.874 AEDA-RC de cuota y los
+  318 de fiscalización (que eran clase «varios») a su clase y talonario; `importar_aeda_fondos.py` numera los nuevos.
+  Los AEDA-OI (órdenes de ingreso de AEDA, sin empleador) no son recibos y siguen sin talonario.
+- **Numerar** (`reservar`): el talonario bloqueado (FOR UPDATE), el siguiente al mayor entre `ultimo_emitido` y lo
+  usado, dentro de la transacción del recibo. Deshabilitado o agotado: no se emite. Anular no devuelve el número.
+- **Recibo de fiscalización** (`fisca_recibo_acta.emitir`): al acta y a las cuotas de su acuerdo (vigente o
+  judicializado, como OSEDA; uno anulado o cancelado no se cobra). Desde **Emisión de Recibos** (la acreditación de un
+  empleador con acuerdo ofrece «Fiscalización · AP-…»: fecha, cuenta e importe del banco, y se concilia solo) o con
+  **«Cobrar»** en el acuerdo (cuenta de banco o caja y fecha; un cheque, por Tesorería). Las acreditaciones de un
+  empleador con acuerdo no van en el lote como cuota. Qué cuota paga: `fisca_acuerdo_imputacion` (no pasa el saldo de
+  la cuota; lo pagado es lo de recibos no anulados).
+- **Capital e interés** (`partir`): cada recibo se parte en la proporción entre el capital que falta (el saldo de hoy de
+  la cuota sindical de los períodos del acta) y lo que falta del acuerdo; el que lo termina se lleva todo el capital
+  que queda. El capital va en un renglón por período (INGRESOS POR FISCALIZACION, con período y CUIT), del más viejo al
+  más nuevo y hasta su saldo, y se aplica a la cuota sindical (la cuenta corriente baja); el resto, un renglón
+  INTERESES POR FISCALIZACION (motivo nuevo, con la cuenta contable de fiscalización: **a revisar con el contador**),
+  que no es cobro de cuota. Proporcional y no «primero los intereses» (art. 903 CCyC): decidido así para que la cuenta
+  corriente baje con cada cuota; a revisar.
+- **El acuerdo**: sin saldo pasa solo a «cancelado» (`MOTIVO_PAGADO`); anular un recibo en Tesorería → Anulaciones lo
+  vuelve a «vigente» si lo había cancelado el pago. Con recibos no se modifica el cronograma.
+- **Talonarios ABM**: un talonario con recibos cuenta como usado (no cambia punto de venta, letra ni desde).
+- **Pendiente**: cobrar con cheques de terceros desde el acuerdo, el envío por mail.
 
 ## Escalas salariales del convenio
 
@@ -782,7 +825,8 @@ clasificación (`c_talonario_clasificacion`) → talonario (`c_talonario`: punto
 
 - **Formularios satélite**: desde el talonario se crea la clasificación, y desde ella el tipo, en un diálogo
   (JSON), sin perder lo tipeado; la nueva queda elegida. Las mismas validaciones que el ABM.
-- **Usado** = `ultimo_emitido` dentro del rango o filas en `c_comprobantes_emitidos`. Uno usado no se elimina
+- **Usado** = `ultimo_emitido` dentro del rango, filas en `c_comprobantes_emitidos` o recibos en `ingreso_ordenes`
+  (`id_talonario`, ver «Recibos: talonarios y fiscalización»). Uno usado no se elimina
   (se deshabilita) ni cambia punto de venta, letra, número desde o clasificación; el hasta no baja de lo
   emitido. `ultimo_emitido` nunca retrocede; vacío al crear = ninguno (desde − 1).
 - **Superposición**: por tipo de comprobante + punto de venta + letra, no por clasificación (en gestion_adm
@@ -804,6 +848,8 @@ RNOS y código de OS. Pantalla: Administración del Sistema → Datos del Sindic
   netea la orden para la base), `ret_iibb` (+ régimen), `ret_suss`, cada uno con su alícuota por
   defecto, y `nro_resolucion_ret`. Se llaman igual que en `os_parametros`: el motor de retenciones
   de gestion_adm (`retenciones.py`) se trae cambiando el nombre de la tabla.
+- **Talonarios de los recibos** (`talonario_recibo_cuota`, `talonario_recibo_fisca`), en el bloque «Cuota sindical»:
+  distintos, habilitados y de la clasificación de recibos.
 - El logo va a `SIND_ADJUNTOS/institucion/logo.<ext>`: es la carpeta en la que el pool ya escribe.
   Un SVG se ve en pantalla pero reportlab no lo dibuja en los PDF.
 

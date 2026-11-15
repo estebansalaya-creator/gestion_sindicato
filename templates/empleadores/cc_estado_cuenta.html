@@ -26,7 +26,7 @@
 {%- endmacro %}
 
 {% macro enlace_cobro(c) -%}
-  {%- if c.clase == 'cuota_sindical' and puede_rec -%}
+  {%- if c.clase in ('cuota_sindical', 'fiscalizacion') and puede_rec -%}
     {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo') }}
   {%- elif puede_ingreso -%}
     {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=c.id_orden), titulo='Ver la orden de ingreso') }}
@@ -183,7 +183,7 @@
         <tr>
           <td><div class="acciones">{{ enlace_cobro(c) }}</div></td>
           <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
-          <td class="td-mono">{{ c.nro_orden or c.id_orden }}</td>
+          <td class="td-mono">{{ c.nro_recibo or c.nro_orden or c.id_orden }}</td>
           <td>{{ c.motivo or '—' }}</td>
           <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
           <td class="chico">{{ c.descripcion or '' }}</td>

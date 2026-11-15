@@ -96,6 +96,8 @@
               {% elif f.estado == 'emitido' %}
               {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
               {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=f.recibo.id_orden), titulo='Recibo en PDF', blank=True) }}
+              {% elif f.recibo and f.recibo.clase in ('cuota_sindical', 'fiscalizacion') %}
+              {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
               {% elif f.recibo and puede_ingreso %}
               {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=f.recibo.id_orden), titulo='Ver la orden de ingreso') }}
               {% endif %}
@@ -118,7 +120,8 @@
             </td>
             <td class="td-right td-fuerte importe-ok" data-num="{{ f.importe }}">{{ f.importe | miles }}</td>
             <td>{{ ui.estado(estados[f.estado][0], estados[f.estado][1]) }}
-              {% if f.recibo %}<div class="td-mono chico td-muted">{{ f.recibo.nro_orden }}</div>{% endif %}
+              {% if f.recibo %}<div class="td-mono chico td-muted">{{ f.recibo.nro_recibo or f.recibo.nro_orden }}</div>{% endif %}
+              {% if f.con_acuerdo and f.estado in emitibles %}<div class="chico td-muted">Tiene un acuerdo de pago: puede ser una cuota. Se emite de a uno.</div>{% endif %}
               {% if f.regla %}<div class="chico td-muted">{{ f.regla }}</div>{% endif %}
             </td>
           </tr>
