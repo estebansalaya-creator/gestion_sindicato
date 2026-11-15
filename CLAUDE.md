@@ -94,6 +94,7 @@ gestion_sindicato/
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   arca_constancia.py      constancia de inscripción (ws_sr_constancia_inscripcion): empleadores y proveedores
+  probar_arca.py          prueba desde la consola el certificado, el token de cada servicio y una consulta
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
   ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
@@ -318,6 +319,7 @@ SIND_SECRET_KEY  SIND_PORT
 SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AEDA (importar_aeda.py)
 [SIND_ADJUNTOS]                                   comprobantes, PDF y logo (por defecto adjuntos/)
 [SIND_ARCA_CERT  SIND_ARCA_KEY  SIND_ARCA_CUIT]   ARCA (opcional): constatación, padrón A13, constancia
+[SIND_ARCA_CERT_B64  SIND_ARCA_KEY_B64]           ídem en base64, para Railway (sin archivos)
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)
 [SIND_CONTABLE_HOST  _PORT  _USER  _PASS  _DB]    contable en Railway, solo lectura (contable_oseda.py)
 [SIND_URL_PUBLICA]                                https://aeda.seggestion.com.ar: arma el enlace de las empresas
@@ -1105,7 +1107,14 @@ carga del comprobante (f_comprobantes_arca)
   token a la segunda app. Se guarda en `SIND_ADJUNTOS/arca/ta_wscdc.json` (uno por servicio: el padrón A13 usa
   `ta_ws_sr_padron_a13.json` y la constancia `ta_ws_sr_constancia_inscripcion.json`) porque IIS corre varios
   procesos. Cada servicio se asocia al certificado en el Administrador de Relaciones de ARCA: `wscdc`,
-  `ws_sr_padron_a13` (afiliados) y `ws_sr_constancia_inscripcion` (empleadores y proveedores). Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
+  `ws_sr_padron_a13` (afiliados) y `ws_sr_constancia_inscripcion` (empleadores y proveedores).
+  **El certificado** (15/11/2026): alias `gestionsindicato` de AEDA (CUIT 30-65793727-0, representante el
+  mismo que OSEDA), con los tres servicios; en el servidor local `C:\web\certs\aeda_sindicato.crt` / `.key`,
+  fuera del repositorio; en Railway, `SIND_ARCA_CERT_B64` / `SIND_ARCA_KEY_B64`. `SIND_ARCA_CUIT=30657937270`
+  (Datos del sindicato no tiene el CUIT cargado). **El token va a la base** (`arca_wsaa_ta`,
+  `sql/arca_wsaa_ta_20261115.sql`), bajo GET_LOCK: el IIS local y Railway usan la misma base y, con un archivo
+  por servidor, el segundo se quedaba sin token hasta 12 horas. Sin la tabla, sigue el archivo.
+  `python probar_arca.py [CUIT]` prueba todo desde la consola. Test: `python tests/test_arca_acceso.py`. Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
   entra con aviso. Lo vinculado a Mis Comprobantes con el mismo importe y CAE queda en 'A'
   (`marcar_verificacion_mis`): ARCA lo informa como recibido.
 - **Signo**: una nota de crédito se carga en positivo y la liquidación va en negativo. Lo decide el

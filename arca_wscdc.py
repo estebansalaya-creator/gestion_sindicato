@@ -19,6 +19,15 @@ alias— con el servicio «wscdc» asociado en el Administrador de Relaciones.
     SIND_ARCA_CUIT   CUIT dueño del certificado (si falta, el de «Datos del
                      sindicato»)
 
+En Railway no hay archivos: `SIND_ARCA_CERT_B64` y `SIND_ARCA_KEY_B64` llevan
+el contenido en base64 (como `AFIP_CERT_B64` en gestion_adm) y se escriben en
+una carpeta temporal la primera vez. Con la ruta y el base64, manda la ruta.
+
+El certificado del sindicato (15/11/2026) es el alias «gestionsindicato» de
+AEDA (CUIT 30-65793727-0), con wscdc, ws_sr_padron_a13 y
+ws_sr_constancia_inscripcion asociados; en este servidor está en
+C:\web\certs\aeda_sindicato.crt / .key.
+
 Sin esas variables la constatación queda apagada y los comprobantes se cargan
 «sin constatar»: no es un error, es la configuración por defecto hasta tener el
 certificado. Los que vienen de Mis Comprobantes ya los informó ARCA.
@@ -32,15 +41,24 @@ gestion_adm. El servidor de constatación de ARCA usa una clave Diffie-Hellman
 chica que Python rechaza por defecto: se baja el nivel de seguridad del
 cifrado solo para esa conexión.
 
-El token se guarda en `SIND_ADJUNTOS/arca/ta_<servicio>.json`: IIS corre varios
-procesos y, con el token solo en memoria, cada uno pediría el suyo y ARCA
-rechazaría todos menos el primero.
+EL TOKEN VA A LA BASE
+---------------------
+ARCA no entrega un token nuevo mientras el anterior siga vigente («El CEE ya
+posee un TA válido»). Con el token solo en memoria, cada proceso de IIS pediría
+el suyo y ARCA rechazaría todos menos el primero; con un archivo por servidor,
+el IIS local y Railway —que usan la misma base— se pisarían igual. Por eso se
+guarda en `arca_wsaa_ta` (sql/arca_wsaa_ta_20261115.sql), que leen todos, y el
+pedido al WSAA va bajo GET_LOCK para que dos procesos no lo pidan a la vez. Es
+lo que hace gestion_adm con wsfe (`arca_wsfe.py`). Mientras la tabla no exista,
+queda el archivo `SIND_ADJUNTOS/arca/ta_<servicio>.json` de antes.
 
 EL MISMO CERTIFICADO, OTROS SERVICIOS
 -------------------------------------
 El acceso (`token(servicio)`) sirve para cualquier servicio de ARCA que el
-certificado tenga asociado: también lo usa la consulta al padrón
-(arca_padron.py, «ws_sr_padron_a13»). Cada servicio tiene su token y su archivo.
+certificado tenga asociado: también lo usan la consulta al padrón
+(arca_padron.py, «ws_sr_padron_a13») y la constancia de inscripción
+(arca_constancia.py, «ws_sr_constancia_inscripcion»). Cada servicio tiene su
+token. Para probar los tres contra ARCA: `python probar_arca.py [CUIT]`.
 """
 from __future__ import annotations
 
@@ -79,8 +97,27 @@ class ErrorARCA(Exception):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _ruta(var: str) -> Path | None:
+    """La ruta de `var` o, si no está, el archivo armado con `var`_B64 (Railway)."""
     v = (os.getenv(var) or "").strip()
-    return Path(v) if v else None
+    if v:
+        return Path(v)
+    b64 = re.sub(r"\s", "", os.getenv(var + "_B64") or "")
+    if not b64:
+        return None
+    destino = Path(tempfile.gettempdir()) / "sind_arca" / var.lower()
+    try:
+        contenido = base64.b64decode(b64, validate=True)
+    except ValueError:
+        log.warning("%s_B64 no es base64 válido", var)
+        return None
+    if not destino.is_file() or destino.read_bytes() != contenido:
+        destino.parent.mkdir(parents=True, exist_ok=True)
+        destino.write_bytes(contenido)
+        try:
+            os.chmod(destino, 0o600)
+        except OSError:
+            pass
+    return destino
 
 
 def _cuit() -> str:
@@ -99,7 +136,7 @@ def configurado() -> tuple[bool, str]:
     cert, key = _ruta("SIND_ARCA_CERT"), _ruta("SIND_ARCA_KEY")
     if not cert or not key:
         return False, ("la constatación con ARCA no está configurada (faltan "
-                       "SIND_ARCA_CERT y SIND_ARCA_KEY en el .env)")
+                       "SIND_ARCA_CERT y SIND_ARCA_KEY en el .env, o sus _B64)")
     if not cert.is_file():
         return False, f"no se encuentra el certificado de ARCA ({cert})"
     if not key.is_file():
@@ -207,17 +244,95 @@ def _fault(raiz) -> str:
     return f"{_texto(f, 'faultcode')}: {_texto(f, 'faultstring')}".strip(": ")
 
 
-def _leer_ta(servicio: str = SERVICIO) -> dict | None:
-    p = _carpeta() / f"ta_{servicio}.json"
+def _vigente(ta: dict | None) -> dict | None:
     try:
-        ta = json.loads(p.read_text(encoding="utf-8"))
         vence = datetime.datetime.fromisoformat(ta["expira"])
+        if vence.tzinfo is None:
+            vence = vence.replace(tzinfo=datetime.timezone.utc)
         if ta.get("cuit") == _cuit() and vence > datetime.datetime.now(datetime.timezone.utc) \
                 + datetime.timedelta(minutes=5):
             return ta
-    except (OSError, ValueError, KeyError):
+    except (TypeError, ValueError, KeyError):
         pass
     return None
+
+
+def _ta_base(servicio: str) -> dict | None:
+    """El token guardado en `arca_wsaa_ta`, o None (sin tabla o sin base: el archivo)."""
+    try:
+        from db import get_connection
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT token, sign, cuit, expira FROM arca_wsaa_ta "
+                            "WHERE servicio = %s AND cuit = %s", (servicio, _cuit()))
+                f = cur.fetchone()
+    except Exception as e:                                   # noqa: BLE001
+        if "1146" not in str(e):                             # sin la tabla: el archivo, en silencio
+            log.warning("No se pudo leer el token de ARCA de la base: %s", e)
+        return None
+    if not f:
+        return None
+    return {"token": f["token"], "sign": f["sign"], "cuit": f["cuit"],
+            "expira": f["expira"].replace(tzinfo=datetime.timezone.utc).isoformat()}
+
+
+def _ta_archivo(servicio: str) -> dict | None:
+    try:
+        return json.loads((_carpeta() / f"ta_{servicio}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _leer_ta(servicio: str = SERVICIO) -> dict | None:
+    return _vigente(_ta_base(servicio)) or _vigente(_ta_archivo(servicio))
+
+
+def _guardar_ta(servicio: str, ta: dict) -> None:
+    """En la base (la que leen todos los servidores) y en el archivo."""
+    try:
+        from db import get_connection
+        vence = datetime.datetime.fromisoformat(ta["expira"]).astimezone(datetime.timezone.utc)
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("REPLACE INTO arca_wsaa_ta (servicio, cuit, token, sign, expira) "
+                            "VALUES (%s, %s, %s, %s, %s)",
+                            (servicio, ta["cuit"], ta["token"], ta["sign"], vence.replace(tzinfo=None)))
+    except Exception as e:                                   # noqa: BLE001
+        if "1146" not in str(e):
+            log.warning("No se pudo guardar el token de ARCA en la base: %s", e)
+    try:
+        (_carpeta() / f"ta_{servicio}.json").write_text(json.dumps(ta), encoding="utf-8")
+    except OSError as e:
+        log.warning("No se pudo guardar el token de ARCA: %s", e)
+
+
+class _Candado:
+    """GET_LOCK de MySQL mientras se pide el token: dos procesos (o el IIS y
+    Railway) no le piden a ARCA a la vez. Sin base, sigue sin candado."""
+
+    def __init__(self, servicio: str):
+        self.nombre, self.conn = f"sind_wsaa_{servicio}"[:64], None
+
+    def __enter__(self):
+        try:
+            from db import get_connection
+            self.conn = get_connection()
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT GET_LOCK(%s, 30) AS ok", (self.nombre,))
+        except Exception as e:                               # noqa: BLE001
+            log.warning("Sin candado para pedir el token de ARCA: %s", e)
+            self.conn = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.conn is not None:
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute("SELECT RELEASE_LOCK(%s)", (self.nombre,))
+                self.conn.close()
+            except Exception:                                # noqa: BLE001
+                pass
+        return False
 
 
 def token(servicio: str = SERVICIO) -> tuple[str, str]:
@@ -225,7 +340,15 @@ def token(servicio: str = SERVICIO) -> tuple[str, str]:
     ta = _leer_ta(servicio)
     if ta:
         return ta["token"], ta["sign"]
+    with _Candado(servicio):
+        # Mientras se esperaba el candado lo pudo haber pedido otro.
+        ta = _leer_ta(servicio)
+        if ta:
+            return ta["token"], ta["sign"]
+        return _pedir_token(servicio)
 
+
+def _pedir_token(servicio: str) -> tuple[str, str]:
     cuerpo = ('<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
               'xmlns:wsaa="http://wsaa.view.sua.dvadac.desein.afip.gov"><soapenv:Header/>'
               f"<soapenv:Body><wsaa:loginCms><wsaa:in0>{_firmar(_tra(servicio))}</wsaa:in0>"
@@ -238,23 +361,22 @@ def token(servicio: str = SERVICIO) -> tuple[str, str]:
     falla = _fault(raiz)
     if falla:
         if "alreadyAuthenticated" in falla:
-            # Otro proceso de IIS pidió el token recién: lo dejó en el archivo.
+            # Otro proceso lo pidió recién: lo dejó en la base o en el archivo.
             ta = _leer_ta(servicio)
             if ta:
                 return ta["token"], ta["sign"]
             raise ErrorARCA("ARCA dice que este certificado ya tiene un token vigente "
-                            f"para {servicio} y no está guardado acá. ¿Lo usa otra aplicación? "
-                            "Cada app necesita su propio certificado.")
+                            f"para {servicio} y no está guardado acá. Pasa si lo pidió otro "
+                            "servidor (el IIS local o Railway) sin la tabla arca_wsaa_ta, o si lo "
+                            "usa otra aplicación: hay que esperar a que venza (hasta 12 horas). "
+                            "Cada aplicación necesita su propio certificado.")
         raise ErrorARCA(f"el WSAA rechazó el pedido de acceso — {falla}")
 
     ret = html.unescape(_texto(raiz, "loginCmsReturn"))
     ticket = ET.fromstring(ret)
     ta = {"token": _texto(ticket, "token"), "sign": _texto(ticket, "sign"), "cuit": _cuit(),
           "expira": datetime.datetime.fromisoformat(_texto(ticket, "expirationTime")).isoformat()}
-    try:
-        (_carpeta() / f"ta_{servicio}.json").write_text(json.dumps(ta), encoding="utf-8")
-    except OSError as e:
-        log.warning("No se pudo guardar el token de ARCA: %s", e)
+    _guardar_ta(servicio, ta)
     return ta["token"], ta["sign"]
 
 
