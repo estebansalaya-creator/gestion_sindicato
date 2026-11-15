@@ -402,7 +402,7 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   la consulta y ve ahí los botones de editar; quien no, y abre `/afiliados?edit=ID`, cae en la
   consulta de ese afiliado. El POST de la ficha y el de sus contactos se controlan en el servidor,
   no solo ocultando botones. Para que un rol solo consulte se le quita la opción 21 en
-  `s_menu_rol`; los permisos se leen al iniciar sesión.
+  `s_menu_rol`; los permisos de la sesión se vuelven a leer cada minuto.
 - **Cambio de CUIL de un titular**: arrastra el `cuil_titular` de su grupo y el `cuil` de
   `p_relaciones_laborales`, que lo referencian por CUIL y no por id.
 - **Historial de empleadores** (solapa Empleadores): `p_relaciones_laborales` por CUIL, con período
@@ -514,7 +514,7 @@ Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por
 ## Actas de fiscalización y acuerdos de pago
 
 `fisca_actas.py` + `fisca_intereses.py` (`sql/fisca_actas_20261114.sql`, menú 14 «Actas de Fiscalización» y 15
-«Acuerdos de Pago» en Fiscalización de Cuotas, Administrador y Supervisor; test: `python tests/test_fisca_intereses.py`,
+«Acuerdos de Pago» en Fiscalización de Cuotas › Fiscalización, Administrador y Supervisor; test: `python tests/test_fisca_intereses.py`,
 sin base). Pedido del 14/11/2026, portado de gestion_adm (`fiscalizacion_routes.acta_*`, `acuerdo_*`) sobre la cuenta
 corriente de acá.
 
@@ -536,6 +536,10 @@ corriente de acá.
 - **Estados**: abierta (una por CUIT; se corrige y «Guardar y recalcular» la rehace), cerrada (la deuda queda firme;
   habilita el acuerdo), anulada (con motivo; no con un acuerdo vigente; sus períodos se pueden volver a reclamar).
   Número `ACTA-AAAA-NNNNNN` y `AP-AAAA-NNNNNN` (`c_numeradores`).
+- **Menú como en OSEDA** (`sql/menu_fiscalizacion_20261115.sql`, pedido del 15/11/2026): Fiscalización de Cuotas ›
+  **Fiscalización** (rama 17) › Actas de Fiscalización (14), Acuerdos de Pago (15), Fiscalizadores (16), como
+  Recaudaciones › Fiscalizacion de gestion_adm. Su «Deuda por Empleador» es acá Empleadores › Cuenta Corriente (botón
+  «Acta de fiscalización»); el acta nueva también sale de Actas («Acta nueva», con el CUIT).
 - **Fiscalizadores** (`fisca_fiscalizador`, `sql/fisca_fiscalizadores_20261114.sql`, menú 16, pedido del 14/11/2026; el
   `f_inspectores` de gestion_adm): apellido y nombres, DNI (único), cargo, teléfono, correo, usuario del sistema
   opcional. El acta se labra con uno activo: guarda `id_fiscalizador` y, como se imprimió, `inspector` e
@@ -799,8 +803,10 @@ Correo Saliente, Procesos Desatendidos, Talonarios y lo del Asistente.
   esa pantalla copiaba lo del rol y después un cambio en el rol no le llegaba a nadie.
 - **Ramas**: tildar una opción tilda su rama, en pantalla y en el servidor (`_con_ancestros`): el menú
   lateral descarta una opción cuya rama no está permitida.
-- **Los permisos se leen al iniciar sesión**: un cambio rige desde el próximo ingreso. El de quien hace
-  el cambio se refresca en el momento (`_refrescar_sesion`).
+- **Los permisos de la sesión se vuelven a leer cada minuto** (`app._permisos_al_dia`, desde el 15/11/2026):
+  roles y opciones de menú (`sind_menu_ids`) salen de la cookie del login, y antes quedaban fijos hasta salir y
+  volver a entrar (las opciones nuevas cargadas por script no aparecían). El de quien hace el cambio se refresca
+  en el momento (`_refrescar_sesion`).
 - **Roles fijos**: el nombre es la clave del código (`tiene_rol`); se editan descripción, estado y
   opciones. `db_usuario` se ve y no se cambia (necesita la variable `SIND_DB_PASS_<USUARIO>`).
 - **Usuarios**: alta con contraseña obligatoria (no hay ingreso con Google), mínimo 8, email en

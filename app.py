@@ -12,6 +12,7 @@ Para levantar en desarrollo: completar el .env de esta carpeta y correr
 import itertools
 import os
 import re
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -227,10 +228,12 @@ def _ingresar(email: str, clave: str):
     session["sind_usuario_nombre"] = usuario["nombre"]
     session["sind_roles"]          = roles
     # Solo los ids. El árbol lo arma `inject_menu` en cada request, contra la
-    # base: si a alguien le cambian los permisos, el menú se acomoda al
-    # siguiente request y no hay que hacerlo salir y entrar. Guardar el árbol
-    # entero acá lo dejaría congelado en la cookie hasta el próximo login.
+    # base, y los ids se vuelven a leer cada minuto (`_permisos_al_dia`): si a
+    # alguien le cambian los permisos, o aparece una opción nueva, el menú se
+    # acomoda solo y no hay que hacerlo salir y entrar. Guardar el árbol entero
+    # acá lo dejaría congelado en la cookie hasta el próximo login.
     session["sind_menu_ids"]       = menu_ids
+    session["sind_permisos_ts"]    = int(time.time())
 
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -294,6 +297,42 @@ def inject_institucion():
     except Exception:
         app.logger.exception("No se pudieron leer los datos del sindicato")
         return {"inst": {}}
+
+
+#: Cada cuántos segundos se vuelven a leer los roles y las opciones de menú de
+#: la sesión (`_permisos_al_dia`).
+PERMISOS_VIGENCIA = 60
+
+
+@app.before_request
+def _permisos_al_dia():
+    """
+    Vuelve a leer, una vez por minuto, los roles y las opciones de menú de la
+    sesión (`sind_roles`, `sind_menu_ids`).
+
+    De esos ids salen el menú lateral y `db.puede`, y el login los deja en la
+    cookie. Sin esto quedaban congelados hasta salir y volver a entrar: una
+    opción nueva no aparecía (Actas y Acuerdos de Pago, cargadas por script el
+    14/11/2026, no se veían al día siguiente) y un permiso quitado se seguía
+    teniendo. Son dos consultas por minuto y por usuario; en cada request
+    serían dos más por pantalla.
+    """
+    if not validasesion() or request.endpoint == "static":
+        return
+    uid = session.get("sind_usuario_id")
+    ahora = int(time.time())
+    if not uid or ahora - int(session.get("sind_permisos_ts") or 0) < PERMISOS_VIGENCIA:
+        return
+    try:
+        roles, menu_ids = roles_y_menu(uid)
+    except pymysql.MySQLError:
+        # Sin base sigue con los que tenía: la pantalla, si la necesita, ya
+        # va a mostrar el error. Se vuelve a intentar en el próximo request.
+        app.logger.exception("No se pudieron volver a leer los permisos")
+        return
+    session["sind_roles"] = roles
+    session["sind_menu_ids"] = menu_ids
+    session["sind_permisos_ts"] = ahora
 
 
 @app.context_processor

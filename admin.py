@@ -25,9 +25,10 @@ administrarse son tres reglas:
     (`MENU_PROTEGIDO`), ni desactivarse.
   - Esas tres opciones no se desactivan, no se eliminan y no cambian de URL.
 
-Los permisos se leen al iniciar sesión (`sind_menu_ids`): un cambio rige para
-los demás desde su próximo ingreso. El de quien hace el cambio se refresca en
-el momento (`_refrescar_sesion`).
+Los permisos de la sesión (`sind_menu_ids`) se vuelven a leer cada minuto
+(`app._permisos_al_dia`): un cambio les llega a los demás en ese rato, sin
+salir y volver a entrar. El de quien hace el cambio se refresca en el momento
+(`_refrescar_sesion`).
 
 DÓNDE SE USA UN USUARIO O UN ÁREA
 No hay una lista a mano como `_ACTIVIDAD_USUARIO` de gestion_adm, que se
@@ -41,6 +42,7 @@ otra sí, incluidas las SET NULL: borrar al usuario dejaría expedientes y
 from __future__ import annotations
 
 import re
+import time
 
 from flask import (Blueprint, current_app, flash, redirect, render_template, request,
                    session, url_for)
@@ -130,6 +132,7 @@ def _refrescar_sesion():
         roles, menu_ids = roles_y_menu(uid)
         session["sind_roles"] = roles
         session["sind_menu_ids"] = menu_ids
+        session["sind_permisos_ts"] = int(time.time())
 
 
 def _arbol(items: list[dict]) -> list[dict]:
