@@ -49,6 +49,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file)
 
 import afiliado_aportes as _aportes
+import arca_padron
 import contactos as _contactos
 import contable_oseda
 import documentacion as _doc
@@ -529,6 +530,86 @@ def buscar_empleador():
         with conn.cursor() as cur:
             cur.execute("SELECT id, razon_social FROM p_empresas WHERE CUIT = %s", (cuit,))
             return jsonify(cur.fetchone() or {})
+
+
+@afiliados_bp.route("/afiliados/arca")
+def consultar_arca():
+    """
+    La consulta a ARCA de la ficha (botón «Consultar ARCA», y sola en el alta
+    cuando se completan tipo y número de documento y sexo). Por `cuil`, o por
+    `documento` y `sexo`: ARCA dice qué CUIL tiene ese documento y se traen sus
+    datos (arca_padron.py). JSON:
+
+        ok, cuil, cuil_calculado, candidatos   (varios CUIL: se elige uno)
+        datos      apellido_nombres, fecha_nacimiento, sexo, nro_documento,
+                   fecha_fallecimiento, estado_clave y domicilio (con la
+                   provincia ya en el código del padrón, por nombre: el idProvincia de ARCA no es codigo_arca)
+        ya_existe  {id_afiliado, apellido_nombres, url} si ese CUIL ya está en el
+                   padrón y no es la ficha abierta (`id`): no se completa nada
+        error, no_configurado
+
+    Sin el certificado de ARCA contesta `no_configurado` con el cálculo del CUIL:
+    la ficha lo usa igual.
+    """
+    if not validasesion():
+        return jsonify({"ok": False, "error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede_abm():
+        return jsonify({"ok": False, "error": "No tenés permiso para modificar el padrón."}), 403
+    cuil = digitos(request.args.get("cuil"))
+    documento = digitos(request.args.get("documento"))
+    sexo = (request.args.get("sexo") or "").upper()
+    id_actual = request.args.get("id", type=int)
+    calculado = arca_padron.cuil_de(documento, sexo) if documento else ""
+    if len(cuil) != 11 and not 7 <= len(documento) <= 8:
+        return jsonify({"ok": False, "error": "Cargá el CUIL, o el número de documento (7 u 8 dígitos)."})
+    ok, motivo = arca_padron.configurado()
+    if not ok:
+        return jsonify({"ok": False, "no_configurado": True, "cuil_calculado": calculado,
+                        "error": f"No se puede consultar ARCA: {motivo}."})
+    try:
+        r = arca_padron.buscar(cuil, documento, sexo)
+    except arca_padron.NoEncontrado as e:
+        return jsonify({"ok": False, "cuil_calculado": calculado,
+                        "error": f"ARCA no encontró a esa persona ({e})."})
+    except (arca_padron.ErrorARCA, ValueError) as e:
+        log.warning("Consulta a ARCA (cuil %s, documento %s): %s", cuil, documento, e)
+        return jsonify({"ok": False, "cuil_calculado": calculado, "error": f"No se pudo consultar ARCA: {e}"})
+    salida = {"ok": True, "cuil_calculado": calculado, "candidatos": r["candidatos"], "datos": None, "ya_existe": None}
+    p = r["persona"]
+    if p:
+        salida["cuil"] = p["cuil"] or (r["candidatos"][0] if r["candidatos"] else "")
+        dom = p.get("domicilio") or {}
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                if dom.get("provincia"):
+                    cur.execute("SELECT codigo, nombre FROM p_provincia")
+                    dom["provincia_codigo"] = arca_padron.provincia_codigo(dom["provincia"], cur.fetchall())
+                cur.execute("""SELECT id_afiliado, apellido_nombres FROM p_afiliados
+                                WHERE cuil = %s AND id_afiliado <> %s LIMIT 1""", (salida["cuil"], id_actual or 0))
+                otro = cur.fetchone()
+        if otro:
+            salida["ya_existe"] = dict(otro, url=url_for("afiliados.abm_afiliados", edit=otro["id_afiliado"]))
+        # Lo que entra en las columnas del padrón (p_afiliados), cortado a su largo.
+        salida["datos"] = {
+            "apellido_nombres": (p["apellido_nombres"] or p["razon_social"] or "")[:100],
+            "fecha_nacimiento": p["fecha_nacimiento"], "fecha_fallecimiento": p["fecha_fallecimiento"],
+            "sexo": p["sexo"] or {"20": "M", "27": "F"}.get(salida["cuil"][:2], ""),
+            "nro_documento": (p["nro_documento"] or (salida["cuil"][2:10].lstrip("0") if salida["cuil"][:2]
+                              in arca_padron.PREFIJOS_PERSONA else ""))[:8],
+            "estado_clave": p["estado_clave"],
+            "domicilio": {"domicilio_calle": (dom.get("calle") or "")[:100],
+                          "domicilio_numero": (dom.get("numero") or "")[:5],
+                          "domicilio_piso": (dom.get("piso") or "")[:4],
+                          "domicilio_depto": (dom.get("depto") or "")[:4],
+                          "localidad": (dom.get("localidad") or "")[:20],
+                          "codigo_postal": (dom.get("codigo_postal") or "")[:8],
+                          "provincia": dom.get("provincia_codigo")} if dom else {},
+            "domicilio_texto": " ".join(x for x in (dom.get("calle"), dom.get("numero"),
+                                                   ("piso " + dom["piso"]) if dom.get("piso") else "",
+                                                   dom.get("depto"), "·", dom.get("localidad"),
+                                                   dom.get("codigo_postal"), dom.get("provincia")) if x).strip(" ·"),
+        }
+    return jsonify(salida)
 
 
 def puede_abm() -> bool:

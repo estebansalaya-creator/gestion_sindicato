@@ -92,6 +92,7 @@ gestion_sindicato/
   lector_comprobante.py   el parser del PDF de gestion_adm + Mis Comprobantes si no alcanza
   lector_pdf_ocr.py       texto del PDF, OCR de escaneos, cotejo PDF ↔ datos (de gestion_adm)
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
+  arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
   paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
@@ -169,6 +170,7 @@ repetiría en la URL lo que dice el dominio.
                      listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
                      ?orden, ?dir, ?tam, ?pagina (lo mismo en /afiliados/padron); /afiliados/exportar (.xlsx);
                      /afiliados/<id>/aportes la solapa Aportes OSEDA (HTML, 204 sin DDJJ; la pide la ficha)
+                     /afiliados/arca ?cuil= o ?documento=&sexo= (&id=): ARCA completa la ficha (JSON)
 /afiliados/empleador razón social de un CUIT (ayuda del formulario)
 /afiliados/metricas  tablero; ?estado=todos, ?personas=titulares, ?desde=&hasta=, ?control=<clave>
 /contactos/<tipo>/<id>  POST alta/edición/baja de contacto (tipo: empresa | afiliado | proveedor)
@@ -407,6 +409,19 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   `s_menu_rol`; los permisos de la sesión se vuelven a leer cada minuto.
 - **Cambio de CUIL de un titular**: arrastra el `cuil_titular` de su grupo y el `cuil` de
   `p_relaciones_laborales`, que lo referencian por CUIL y no por id.
+- **Documento, sexo, CUIL y ARCA** (pedido del 15/11/2026): la ficha arranca por Identificación, en el orden tipo
+  de documento, número, sexo, CUIL. Con DNI, LE o LC el CUIL se calcula solo (`cuilDesdeDniSexo` en la plantilla,
+  `arca_padron.cuil_de` en el servidor: 20 varón, 27 mujer, 23 si el dígito no entra); un CUIL escrito a mano no se
+  pisa. En el alta, con documento y sexo, se le pregunta a ARCA (`/afiliados/arca`, `arca_padron.py`, padrón A13:
+  `getIdPersonaListByDocumento` + `getPersona`): ARCA dice qué CUIL tiene el documento (puede no ser el calculado;
+  con varios, se elige) y sus datos completan lo vacío —apellido y nombres, nacimiento, domicilio fiscal (solo si el
+  domicilio está vacío entero; la provincia por nombre: el `idProvincia` del padrón de ARCA no es `p_provincia.codigo_arca`)—. Lo cargado y distinto no se pisa: se
+  lista con «Usar los datos de ARCA». Un CUIL que ya está en el padrón avisa con el enlace a esa ficha y no completa
+  nada; el fallecimiento y una clave no ACTIVO se avisan. «Consultar ARCA» lo hace a pedido (también al editar).
+  **Necesita el certificado propio** (`SIND_ARCA_CERT` / `SIND_ARCA_KEY` / `SIND_ARCA_CUIT`, ver «Constatación con
+  ARCA») con el servicio `ws_sr_padron_a13` asociado en el Administrador de Relaciones de ARCA; sin eso el CUIL se
+  calcula igual y la pantalla lo dice. El token es por servicio (`arca_wscdc.token(servicio)`, `ta_<servicio>.json`).
+  Test: `python tests/test_arca_padron.py`, sin ARCA.
 - **Historial de empleadores** (solapa Empleadores): `p_relaciones_laborales` por CUIL, con período
   desde/hasta. AEDA (`afi_afixempre`) solo trae el empleador actual y la fecha de ingreso, sin
   egreso: la relación importada sigue el estado del afiliado (`activa`/`inactiva`), 411 vinieron sin
@@ -1019,8 +1034,8 @@ carga del comprobante (f_comprobantes_arca)
 - **Constatación con ARCA (WSCDC), opcional**: `arca_wscdc.py`, sin zeep, con certificado PROPIO
   (`SIND_ARCA_CERT` / `SIND_ARCA_KEY`, fuera de la carpeta del sitio; el pool necesita leerlos).
   El token del WSAA es uno por certificado y servicio: compartido con gestion_adm, ARCA le niega el
-  token a la segunda app. Se guarda en `SIND_ADJUNTOS/arca/ta_wscdc.json` porque IIS corre varios
-  procesos. Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
+  token a la segunda app. Se guarda en `SIND_ADJUNTOS/arca/ta_wscdc.json` (uno por servicio: el padrón A13 usa
+  `ta_ws_sr_padron_a13.json`) porque IIS corre varios procesos. Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
   entra con aviso. Lo vinculado a Mis Comprobantes con el mismo importe y CAE queda en 'A'
   (`marcar_verificacion_mis`): ARCA lo informa como recibido.
 - **Signo**: una nota de crédito se carga en positivo y la liquidación va en negativo. Lo decide el

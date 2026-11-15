@@ -32,9 +32,15 @@ gestion_adm. El servidor de constatación de ARCA usa una clave Diffie-Hellman
 chica que Python rechaza por defecto: se baja el nivel de seguridad del
 cifrado solo para esa conexión.
 
-El token se guarda en `SIND_ADJUNTOS/arca/ta_wscdc.json`: IIS corre varios
+El token se guarda en `SIND_ADJUNTOS/arca/ta_<servicio>.json`: IIS corre varios
 procesos y, con el token solo en memoria, cada uno pediría el suyo y ARCA
 rechazaría todos menos el primero.
+
+EL MISMO CERTIFICADO, OTROS SERVICIOS
+-------------------------------------
+El acceso (`token(servicio)`) sirve para cualquier servicio de ARCA que el
+certificado tenga asociado: también lo usa la consulta al padrón
+(arca_padron.py, «ws_sr_padron_a13»). Cada servicio tiene su token y su archivo.
 """
 from __future__ import annotations
 
@@ -115,14 +121,14 @@ def _carpeta() -> Path:
 # WSAA: el token de acceso
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _tra() -> bytes:
+def _tra(servicio: str = SERVICIO) -> bytes:
     ahora = datetime.datetime.now(datetime.timezone.utc)
     fmt = "%Y-%m-%dT%H:%M:%S+00:00"
     return (f'<?xml version="1.0" encoding="UTF-8"?><loginTicketRequest version="1.0"><header>'
             f"<uniqueId>{int(ahora.timestamp())}</uniqueId>"
             f"<generationTime>{(ahora - datetime.timedelta(minutes=10)).strftime(fmt)}</generationTime>"
             f"<expirationTime>{(ahora + datetime.timedelta(hours=12)).strftime(fmt)}</expirationTime>"
-            f"</header><service>{SERVICIO}</service></loginTicketRequest>").encode()
+            f"</header><service>{servicio}</service></loginTicketRequest>").encode()
 
 
 def _firmar(tra: bytes) -> str:
@@ -201,8 +207,8 @@ def _fault(raiz) -> str:
     return f"{_texto(f, 'faultcode')}: {_texto(f, 'faultstring')}".strip(": ")
 
 
-def _leer_ta() -> dict | None:
-    p = _carpeta() / "ta_wscdc.json"
+def _leer_ta(servicio: str = SERVICIO) -> dict | None:
+    p = _carpeta() / f"ta_{servicio}.json"
     try:
         ta = json.loads(p.read_text(encoding="utf-8"))
         vence = datetime.datetime.fromisoformat(ta["expira"])
@@ -214,15 +220,15 @@ def _leer_ta() -> dict | None:
     return None
 
 
-def token() -> tuple[str, str]:
-    """(token, sign) vigentes: los guardados o uno nuevo del WSAA."""
-    ta = _leer_ta()
+def token(servicio: str = SERVICIO) -> tuple[str, str]:
+    """(token, sign) vigentes para `servicio`: los guardados o uno nuevo del WSAA."""
+    ta = _leer_ta(servicio)
     if ta:
         return ta["token"], ta["sign"]
 
     cuerpo = ('<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" '
               'xmlns:wsaa="http://wsaa.view.sua.dvadac.desein.afip.gov"><soapenv:Header/>'
-              f"<soapenv:Body><wsaa:loginCms><wsaa:in0>{_firmar(_tra())}</wsaa:in0>"
+              f"<soapenv:Body><wsaa:loginCms><wsaa:in0>{_firmar(_tra(servicio))}</wsaa:in0>"
               "</wsaa:loginCms></soapenv:Body></soapenv:Envelope>")
     resp = _post(WSAA_URL, cuerpo, '""')
     try:
@@ -233,11 +239,11 @@ def token() -> tuple[str, str]:
     if falla:
         if "alreadyAuthenticated" in falla:
             # Otro proceso de IIS pidió el token recién: lo dejó en el archivo.
-            ta = _leer_ta()
+            ta = _leer_ta(servicio)
             if ta:
                 return ta["token"], ta["sign"]
             raise ErrorARCA("ARCA dice que este certificado ya tiene un token vigente "
-                            "para wscdc y no está guardado acá. ¿Lo usa otra aplicación? "
+                            f"para {servicio} y no está guardado acá. ¿Lo usa otra aplicación? "
                             "Cada app necesita su propio certificado.")
         raise ErrorARCA(f"el WSAA rechazó el pedido de acceso — {falla}")
 
@@ -246,7 +252,7 @@ def token() -> tuple[str, str]:
     ta = {"token": _texto(ticket, "token"), "sign": _texto(ticket, "sign"), "cuit": _cuit(),
           "expira": datetime.datetime.fromisoformat(_texto(ticket, "expirationTime")).isoformat()}
     try:
-        (_carpeta() / "ta_wscdc.json").write_text(json.dumps(ta), encoding="utf-8")
+        (_carpeta() / f"ta_{servicio}.json").write_text(json.dumps(ta), encoding="utf-8")
     except OSError as e:
         log.warning("No se pudo guardar el token de ARCA: %s", e)
     return ta["token"], ta["sign"]

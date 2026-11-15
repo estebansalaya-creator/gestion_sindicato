@@ -253,6 +253,77 @@
          el ABM y no hay una segunda ficha que mantener. #}
       {% if consulta %}<fieldset class="solo-lectura" disabled>{% endif %}
 
+      {# Identificación primero (pedido del 15/11/2026): tipo y número de documento
+         y sexo; con eso se calcula el CUIL y, en el alta, se le pregunta a ARCA
+         (arca_padron.py, /afiliados/arca), que completa lo que esté vacío. El
+         CUIL se puede escribir a mano: escrito, no se recalcula. #}
+      <div class="bloque">
+        <div class="bloque-titulo">Identificación</div>
+        <div class="campos">
+          <div class="campo" style="--span:2;">
+            <label for="tipo_documento">Tipo doc.</label>
+            <select name="tipo_documento" id="tipo_documento">
+              {{ ui.opciones(tipos_doc, a.get('tipo_documento') or 'DU', vacio=None) }}
+            </select>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="nro_documento">Documento</label>
+            <input type="text" name="nro_documento" id="nro_documento" class="mono" maxlength="10"
+                   inputmode="numeric" value="{{ a.get('nro_documento') or '' }}">
+            <small class="campo-ayuda solo-edicion">Con el sexo, calcula el CUIL</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="sexo">Sexo</label>
+            <select name="sexo" id="sexo">
+              {{ ui.opciones([{'codigo': 'F', 'descripcion': 'Femenino'}, {'codigo': 'M', 'descripcion': 'Masculino'},
+                              {'codigo': 'X', 'descripcion': 'X'}], a.get('sexo')) }}
+            </select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="cuil">CUIL</label>
+            {# Acepta guiones al pegar desde una constancia; el servidor los limpia. #}
+            <input type="text" name="cuil" id="cuil" class="mono" maxlength="13" inputmode="numeric"
+                   placeholder="20-12345678-9" value="{{ a.get('cuil') or '' }}"
+                   oninput="avisarCuil(this, 'cuil-ayuda'); sincronizarTitular()">
+            <small class="campo-ayuda" id="cuil-ayuda"></small>
+          </div>
+          {% if not consulta %}
+          <div class="campo" style="--span:3;">
+            <label>&nbsp;</label>
+            <div>{{ ui.boton('Consultar ARCA', 'secondary', onclick='consultarArca(false)', id='btn-arca', icono_='buscar') }}</div>
+            <small class="campo-ayuda">Completa lo vacío con el padrón de ARCA</small>
+          </div>
+          <div class="campo oculto" style="--span:12;" id="arca-resultado" aria-live="polite"></div>
+          {% endif %}
+
+          {# Un solo campo, como lo guarda AEDA: partir apellido y nombres por
+             regla falla con los apellidos compuestos. #}
+          <div class="campo" style="--span:8;">
+            <label for="apellido_nombres">Apellido y nombres <span class="req">*</span></label>
+            <input type="text" name="apellido_nombres" id="apellido_nombres" required maxlength="100"
+                   value="{{ a.get('apellido_nombres') or '' }}">
+            <small class="campo-ayuda solo-edicion">Primero el apellido, como en el DNI</small>
+          </div>
+          <div class="campo" style="--span:2;">
+            <label for="fecha_nacimiento">Nacimiento</label>
+            <input type="date" name="fecha_nacimiento" id="fecha_nacimiento"
+                   value="{{ a.get('fecha_nacimiento') or '' }}">
+          </div>
+          <div class="campo" style="--span:2;"></div>
+
+          <div class="campo" style="--span:3;">
+            <label for="estado_civil">Estado civil</label>
+            <select name="estado_civil" id="estado_civil">{{ ui.opciones(estados_civiles, a.get('estado_civil')) }}</select>
+          </div>
+          <div class="campo" style="--span:3;">
+            <label for="nacionalidad">Nacionalidad</label>
+            <select name="nacionalidad" id="nacionalidad">
+              {{ ui.opciones(nacionalidades, a.get('nacionalidad') if a.get('nacionalidad') is not none else (12 if not editando else none)) }}
+            </select>
+          </div>
+        </div>
+      </div>
+
       <div class="bloque">
         <div class="bloque-titulo">Grupo familiar</div>
         <div class="campos">
@@ -283,65 +354,6 @@
             {% if editando and not consulta %}
             <small class="campo-ayuda"><a href="#" onclick="abmSolapa('empleadores'); return false;">Se cambia en la solapa Empleadores</a></small>
             {% endif %}
-          </div>
-        </div>
-      </div>
-
-      <div class="bloque">
-        <div class="bloque-titulo">Identificación</div>
-        <div class="campos">
-          <div class="campo" style="--span:3;">
-            <label for="cuil">CUIL</label>
-            {# Acepta guiones al pegar desde una constancia; el servidor los limpia. #}
-            <input type="text" name="cuil" id="cuil" class="mono" maxlength="13" inputmode="numeric"
-                   placeholder="20-12345678-9" value="{{ a.get('cuil') or '' }}"
-                   oninput="avisarCuil(this, 'cuil-ayuda'); sincronizarTitular()">
-            <small class="campo-ayuda" id="cuil-ayuda"></small>
-          </div>
-          <div class="campo" style="--span:2;">
-            <label for="tipo_documento">Tipo doc.</label>
-            <select name="tipo_documento" id="tipo_documento">
-              {{ ui.opciones(tipos_doc, a.get('tipo_documento') or 'DU', vacio=None) }}
-            </select>
-          </div>
-          <div class="campo" style="--span:2;">
-            <label for="nro_documento">Documento</label>
-            <input type="text" name="nro_documento" id="nro_documento" class="mono" maxlength="10"
-                   inputmode="numeric" value="{{ a.get('nro_documento') or '' }}">
-            <small class="campo-ayuda solo-edicion">Vacío: se toma del CUIL</small>
-          </div>
-          <div class="campo" style="--span:5;"></div>
-
-          {# Un solo campo, como lo guarda AEDA: partir apellido y nombres por
-             regla falla con los apellidos compuestos. #}
-          <div class="campo" style="--span:8;">
-            <label for="apellido_nombres">Apellido y nombres <span class="req">*</span></label>
-            <input type="text" name="apellido_nombres" id="apellido_nombres" required maxlength="100"
-                   value="{{ a.get('apellido_nombres') or '' }}">
-            <small class="campo-ayuda solo-edicion">Primero el apellido, como en el DNI</small>
-          </div>
-          <div class="campo" style="--span:2;">
-            <label for="sexo">Sexo</label>
-            <select name="sexo" id="sexo">
-              {{ ui.opciones([{'codigo': 'F', 'descripcion': 'Femenino'}, {'codigo': 'M', 'descripcion': 'Masculino'},
-                              {'codigo': 'X', 'descripcion': 'X'}], a.get('sexo')) }}
-            </select>
-          </div>
-          <div class="campo" style="--span:2;">
-            <label for="fecha_nacimiento">Nacimiento</label>
-            <input type="date" name="fecha_nacimiento" id="fecha_nacimiento"
-                   value="{{ a.get('fecha_nacimiento') or '' }}">
-          </div>
-
-          <div class="campo" style="--span:3;">
-            <label for="estado_civil">Estado civil</label>
-            <select name="estado_civil" id="estado_civil">{{ ui.opciones(estados_civiles, a.get('estado_civil')) }}</select>
-          </div>
-          <div class="campo" style="--span:3;">
-            <label for="nacionalidad">Nacionalidad</label>
-            <select name="nacionalidad" id="nacionalidad">
-              {{ ui.opciones(nacionalidades, a.get('nacionalidad') if a.get('nacionalidad') is not none else (12 if not editando else none)) }}
-            </select>
           </div>
         </div>
       </div>
@@ -800,6 +812,187 @@ function validarRelacion() {
   return true;
 }
 
+// ── Documento, sexo, CUIL y ARCA ────────────────────────────────────────────
+// Tipo y número de documento y sexo dan el CUIL (la cuenta de ARCA); en el
+// alta, completos los tres, se le pregunta a ARCA quién es (/afiliados/arca):
+// ARCA dice qué CUIL tiene ese documento —puede no ser el calculado— y sus
+// datos completan lo que esté vacío. Lo que ya está cargado y ARCA dice
+// distinto no se pisa: se muestra, con un botón para usar lo de ARCA.
+var EDITANDO = {{ 'true' if editando else 'false' }};
+var ID_AFILIADO = '{{ a.get("id_afiliado") or "" }}';
+var URL_ARCA = '{{ url_for("afiliados.consultar_arca") if not consulta else "" }}';
+var cuilAuto = '';       // el último CUIL que puso la pantalla: se reemplaza mientras nadie lo cambie a mano
+
+// La cuenta de gestion_adm (cuilDesdeDniSexo): 20 varón, 27 mujer; si el
+// dígito no entra en uno, 23 y la cuenta otra vez (da 9 o 4).
+function cuilDesdeDniSexo(dni, sexo) {
+  dni = (dni || '').replace(/\D/g, '');
+  if (dni.length < 7 || dni.length > 8) return '';
+  dni = ('00000000' + dni).slice(-8);
+  function dv(base) {
+    var f = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2], suma = 0;
+    for (var i = 0; i < 10; i++) suma += parseInt(base[i], 10) * f[i];
+    var resto = suma % 11;
+    return resto === 0 ? 0 : (resto === 1 ? 10 : 11 - resto);
+  }
+  var prefijo = sexo === 'F' ? '27' : '20', d = dv(prefijo + dni);
+  if (d === 10) { prefijo = '23'; d = dv(prefijo + dni); }
+  return prefijo + dni + d;
+}
+
+function campo(id) { return document.getElementById(id); }
+function digitosDe(id) { var e = campo(id); return e ? e.value.replace(/\D/g, '') : ''; }
+
+function ponerCuil(c) {
+  var inp = campo('cuil');
+  inp.value = c;
+  cuilAuto = c;
+  avisarCuil(inp, 'cuil-ayuda');
+  sincronizarTitular();
+}
+
+// El CUIL sale del número con DNI, LE o LC; con pasaporte o certificado
+// migratorio, no. Un CUIL escrito a mano no se toca.
+function calcularCuil() {
+  if (['DU', 'LE', 'LC'].indexOf(campo('tipo_documento').value) < 0) return '';
+  var c = cuilDesdeDniSexo(campo('nro_documento').value, campo('sexo').value);
+  var actual = digitosDe('cuil');
+  if (c && campo('sexo').value && (!actual || actual === cuilAuto)) ponerCuil(c);
+  return c;
+}
+
+function alCambiarDocumento() {
+  var c = calcularCuil();
+  if (!EDITANDO && URL_ARCA && c && campo('sexo').value) consultarArca(true);
+}
+
+// ── El resultado de ARCA, en el recuadro de debajo del botón ──
+function arcaCaja(tipo, texto) {
+  var caja = campo('arca-resultado');
+  caja.textContent = '';
+  caja.classList.remove('oculto');
+  var a = document.createElement('div');
+  a.className = 'alert alert-' + tipo;
+  var cuerpo = document.createElement('div');
+  if (texto) cuerpo.appendChild(document.createTextNode(texto));
+  a.appendChild(cuerpo);
+  caja.appendChild(a);
+  return cuerpo;
+}
+function arcaLinea(cuerpo, texto, clase) {
+  var d = document.createElement('div');
+  if (clase) d.className = clase;
+  d.textContent = texto;
+  cuerpo.appendChild(d);
+  return d;
+}
+function arcaBoton(cont, texto, fn) {
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn btn-secondary btn-sm';
+  b.textContent = texto;
+  b.addEventListener('click', fn);
+  cont.appendChild(b);
+  return b;
+}
+
+function consultarArca(auto) {
+  if (!URL_ARCA) return;
+  var cuil = digitosDe('cuil'), doc = digitosDe('nro_documento'), sexo = campo('sexo').value;
+  var q = new URLSearchParams();
+  // Un CUIL escrito a mano (o el de la ficha) manda; si lo calculó la
+  // pantalla, se pregunta por el documento: ARCA sabe cuál es el verdadero.
+  if (cuil.length === 11 && cuil !== cuilAuto) q.set('cuil', cuil);
+  else if (doc.length >= 7 && doc.length <= 8) { q.set('documento', doc); if (sexo) q.set('sexo', sexo); }
+  else if (cuil.length === 11) q.set('cuil', cuil);
+  else { arcaCaja('warning', 'Cargá el número de documento y el sexo, o el CUIL.'); return; }
+  if (ID_AFILIADO) q.set('id', ID_AFILIADO);
+  var btn = campo('btn-arca');
+  btn.disabled = true;
+  arcaCaja('info', 'Consultando ARCA…');
+  fetch(URL_ARCA + '?' + q.toString(), { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { arcaResultado(d, auto); })
+    .catch(function (e) { arcaCaja('danger', 'No se pudo consultar ARCA: ' + e.message); })
+    .finally(function () { btn.disabled = false; });
+}
+
+function arcaResultado(d, auto) {
+  if (!d.ok) {
+    if (d.cuil_calculado && !digitosDe('cuil')) ponerCuil(d.cuil_calculado);
+    arcaCaja(d.no_configurado ? 'info' : 'warning',
+             d.no_configurado ? 'El CUIL se calculó con el documento y el sexo. ' + d.error : d.error);
+    return;
+  }
+  if (!d.datos && d.candidatos && d.candidatos.length > 1) {
+    var c = arcaCaja('warning', 'ARCA tiene más de un CUIL para ese documento. Elegí el de esta persona:');
+    var fila = arcaLinea(c, '', 'fila');
+    d.candidatos.forEach(function (x) {
+      arcaBoton(fila, x.slice(0, 2) + '-' + x.slice(2, 10) + '-' + x.slice(10), function () {
+        ponerCuil(x);
+        cuilAuto = '';                 // elegido: se consulta por este CUIL
+        consultarArca(false);
+      });
+    });
+    return;
+  }
+  var dt = d.datos || {};
+  if (d.cuil) ponerCuil(d.cuil);
+  if (d.ya_existe) {
+    var c2 = arcaCaja('warning', 'Ese CUIL ya está en el padrón: ' + d.ya_existe.apellido_nombres + '. ');
+    var a = document.createElement('a');
+    a.href = d.ya_existe.url;
+    a.textContent = 'Abrir esa ficha';
+    c2.appendChild(a);
+    return;
+  }
+  // Lo vacío se completa; lo distinto se junta para ofrecerlo.
+  var hechos = [], distintos = [];
+  function poner(id, valor, rotulo) {
+    var el = campo(id);
+    if (!el || valor == null || valor === '') return;
+    valor = String(valor);
+    if (el.tagName === 'SELECT' && !Array.prototype.some.call(el.options, function (o) { return o.value === valor; })) return;
+    if (!el.value.trim()) { el.value = valor; hechos.push(rotulo); }
+    else if (el.value.trim().toUpperCase() !== valor.toUpperCase()) distintos.push({ el: el, valor: valor, rotulo: rotulo });
+  }
+  poner('apellido_nombres', dt.apellido_nombres, 'apellido y nombres');
+  poner('nro_documento', dt.nro_documento, 'documento');
+  poner('sexo', dt.sexo, 'sexo');
+  poner('fecha_nacimiento', dt.fecha_nacimiento, 'nacimiento');
+  var dom = dt.domicilio || {};
+  var ids = ['domicilio_calle', 'domicilio_numero', 'domicilio_piso', 'domicilio_depto', 'localidad', 'codigo_postal', 'provincia'];
+  var sinDomicilio = ids.every(function (id) { return !campo(id) || !campo(id).value.trim(); });
+  var mismoDomicilio = ids.every(function (id) {
+    return !campo(id) || campo(id).value.trim().toUpperCase() === (dom[id] == null ? '' : String(dom[id])).toUpperCase();
+  });
+  if (dom.domicilio_calle || dom.localidad) {
+    if (sinDomicilio) {
+      ids.forEach(function (id) { var v = dom[id]; if (v != null && v !== '' && campo(id)) campo(id).value = String(v); });
+      hechos.push('domicilio');
+    } else if (!mismoDomicilio && dt.domicilio_texto) {
+      distintos.push({ domicilio: dom, valor: dt.domicilio_texto, rotulo: 'domicilio' });
+    }
+  }
+  var tipo = distintos.length ? 'warning' : 'ok';
+  var c3 = arcaCaja(tipo, (dt.apellido_nombres || 'Encontrado') + ' · CUIL ' + d.cuil + '. ' +
+                    (hechos.length ? 'Se completó: ' + hechos.join(', ') + '.' : 'No había nada vacío para completar.'));
+  if (dt.fecha_fallecimiento) arcaLinea(c3, 'ARCA informa el fallecimiento el ' + dt.fecha_fallecimiento.split('-').reverse().join('/') + '.', 'td-motivo');
+  if (dt.estado_clave && dt.estado_clave.toUpperCase() !== 'ACTIVO') arcaLinea(c3, 'Clave en ARCA: ' + dt.estado_clave + '.');
+  if (distintos.length) {
+    arcaLinea(c3, 'ARCA dice distinto de lo cargado:');
+    distintos.forEach(function (x) { arcaLinea(c3, '· ' + x.rotulo + ': ' + x.valor); });
+    var fila2 = arcaLinea(c3, '', 'fila');
+    arcaBoton(fila2, 'Usar los datos de ARCA', function () {
+      distintos.forEach(function (x) {
+        if (x.domicilio) ids.forEach(function (id) { if (campo(id)) campo(id).value = x.domicilio[id] == null ? '' : String(x.domicilio[id]); });
+        else x.el.value = x.valor;
+      });
+      arcaCaja('ok', 'Se usaron los datos de ARCA. Revisá y guardá.');
+    });
+  }
+}
+
 // Un titular es su propio titular: el campo se completa solo y no se edita.
 function sincronizarTitular() {
   var par = document.getElementById('cod_parentesco');
@@ -852,6 +1045,14 @@ function cargarAportes() {
 
 document.addEventListener('DOMContentLoaded', function () {
   cargarAportes();
+  if (URL_ARCA && campo('nro_documento')) {
+    ['tipo_documento', 'nro_documento', 'sexo'].forEach(function (id) {
+      campo(id).addEventListener('change', alCambiarDocumento);
+    });
+    // El CUIL que vino con la ficha (o con un alta que volvió con errores)
+    // cuenta como escrito: no se recalcula solo.
+    cuilAuto = '';
+  }
   // El listado lo maneja el servidor (data-servidor): no se inicializa acá.
   if (document.getElementById('tbl-movimientos')) gestion_admTable('tbl-movimientos', { pageSize: 20 });
 
