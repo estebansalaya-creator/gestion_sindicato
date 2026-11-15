@@ -371,6 +371,12 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   `AEDA — Afiliado al Gremio` de `p_afiliado_atributo` vino copiado de la obra social y está
   desactivado (`sql/afiliados_sin_marca_aeda_20261107.sql`); el campo `aeda` de `afi_benef` no se
   importa.
+- **Atributo «Tiene hijos»** (`sql/afiliados_atributo_hijos_20261114.sql`, pedido del 14/11/2026): el titular declara
+  hijos aunque no estén cargados en el padrón. En AEDA es `afi_benef.hijos` (0/1, solo titulares), que el importador
+  dejaba en observaciones («Hijos declarados en AEDA: 1.»); el script lo pasó al atributo (1.339: 1.032 activos, 307
+  de baja; 124 de los activos no tienen hijos cargados) y `importar_aeda_afiliados.py` lo marca en las altas nuevas.
+  Se tilda en la ficha (Atributos) y se filtra en el listado. Los atributos Judicializado, Amparo y Seguimiento
+  vinieron de la obra social y siguen activos.
 - **Baja lógica, nunca DELETE**: fecha y motivo (`p_motivo_movimiento`, `es_alta = 0`). La de un
   titular ofrece arrastrar a su grupo. De `p_afiliados` cuelgan por FK reintegros y comprobantes.
 - **Auditoría**: todo cambio deja una fila por campo en `p_afiliados_movimientos` (valores legibles:

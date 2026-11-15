@@ -314,6 +314,7 @@ def armar_afiliado(b: dict, destino: dict, notas: list[str], sin_cuil=False) -> 
         "fecha_baja":       baja,
         "activo":           0 if baja else 1,
         "_extra":           extra,
+        "_hijos":           entero(b["hijos"]) > 0,
     }
 
 
@@ -546,6 +547,12 @@ def aplicar(cur, plan: Plan) -> int:
             [a[k] for k in COLUMNAS_AFILIADO])
         id_afiliado = cur.lastrowid
         ids[("alta", a["ben_id"])] = id_afiliado
+        # afi_benef.hijos → el atributo «Tiene hijos» (sql/afiliados_atributo_hijos_20261114.sql),
+        # aunque los hijos no estén cargados en el padrón.
+        if a.get("_hijos"):
+            cur.execute("""INSERT INTO p_atributos_por_afiliado (id_atributo, id_afiliado, observaciones, usuario)
+                           SELECT t.id, %s, '[AEDA afi_benef.hijos]', 'AEDA' FROM p_afiliado_atributo t
+                            WHERE t.rotulo = 'Tiene hijos'""", (id_afiliado,))
 
         ref = f"AEDA afi_benef {a['ben_id']}"
         # «sí»/«no» y no 1/0: es como los escribe la pantalla (afiliados._legible),
