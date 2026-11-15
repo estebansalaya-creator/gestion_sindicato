@@ -172,7 +172,8 @@ repetiría en la URL lo que dice el dominio.
 /accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
 /empleadores         ABM, ?edit=ID, ?solapa=arca|cuota; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa
                      la ficha (JSON); /empleadores/arca/actualizar POST y /empleadores/arca/estado (?alcance=1)
-/empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
+/empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM), ?sin_pagos=N (sin
+                     recibos en los últimos N meses, o nunca); /<cuit> estado de cuenta
                      (?desde, ?hasta, ?con_saldo=1); /<cuit>/<periodo> la cuota del período (?volver);
                      /aplicaciones (?cuit=), /aplicaciones/aplicar,
                      /aplicaciones/<id>/desaplicar, /aplicaciones/automatica POST

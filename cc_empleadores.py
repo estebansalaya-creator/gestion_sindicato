@@ -2,7 +2,8 @@
 cc_empleadores.py — Cuenta corriente de empleadores (cuota sindical) y
 aplicación de cobros a las cuotas.
 
-    /empleadores/cc                              bandeja: empleadores con su saldo (menú 12)
+    /empleadores/cc                              bandeja: empleadores con su saldo (menú 12);
+                                                 ?q, ?saldo, ?desde, ?hasta, ?sin_pagos=N (meses)
     /empleadores/cc/<cuit>                       estado de cuenta del CUIT, por período, con los cobros
     /empleadores/cc/<cuit>/<periodo>             la cuota de un período: liquidación, cobros aplicados, afiliados
     /empleadores/cc/aplicaciones                 aplicar y desaplicar (menú 13); ?cuit= un empleador
@@ -83,9 +84,22 @@ def periodo_de(texto) -> str | None:
 
 def _filtros_bandeja(args) -> dict:
     saldo = args.get("saldo", "deuda")
+    meses = args.get("sin_pagos", type=int)
     return {"q": (args.get("q") or "").strip(),
             "saldo": saldo if saldo in ("deuda", "favor", "todos") else "deuda",
-            "desde": periodo_de(args.get("desde")), "hasta": periodo_de(args.get("hasta"))}
+            "desde": periodo_de(args.get("desde")), "hasta": periodo_de(args.get("hasta")),
+            "sin_pagos": meses if meses and 1 <= meses <= 240 else None}
+
+
+def sin_pagos_desde(meses: int, hoy: datetime.date | None = None) -> datetime.date:
+    """La fecha de corte de «sin pagos en los últimos N meses»: hoy menos N
+    meses, con el día ajustado al último del mes si no existe (31/05 → 28/02).
+    La misma cuenta que DATE_SUB(CURDATE(), INTERVAL N MONTH) de MySQL."""
+    import calendar
+    hoy = hoy or datetime.date.today()
+    m = hoy.year * 12 + hoy.month - 1 - meses
+    anio, mes = m // 12, m % 12 + 1
+    return datetime.date(anio, mes, min(hoy.day, calendar.monthrange(anio, mes)[1]))
 
 
 def _rango(alias: str, campo: str, f: dict, params: list) -> str:
@@ -113,6 +127,11 @@ def consultar_bandeja(cur, f: dict) -> list[dict]:
         where = "WHERE (e.razon_social LIKE %s OR e.nombre_fantasia LIKE %s" + (" OR t.cuit LIKE %s)" if digitos else ")")
         params += [f"%{f['q']}%"] * 2 + ([f"%{digitos}%"] if digitos else [])
         having = "1 = 1"
+    elif f.get("sin_pagos"):
+        # Sin pagos en los últimos N meses: el último cobro (de todos, aunque
+        # haya rango de períodos) es anterior al corte, o no pagó nunca.
+        having = f"({having}) AND (ultimo_pago IS NULL OR ultimo_pago < %s)"
+        params.append(sin_pagos_desde(f["sin_pagos"]))
     cobrado = "COALESCE(liq.aplicado, 0)" if con_rango else "COALESCE(cobt.cobrado, 0)"
     cur.execute(f"""
         WITH cob AS ({fa.SQL_COBROS}),
@@ -159,7 +178,9 @@ def bandeja():
     tot = {k: sum((_d(x[k]) for x in filas), Decimal("0"))
            for k in ("liquidado", "cobrado", "saldo", "vencido", "sin_aplicar")}
     return render_template("empleadores/cc_bandeja.html", filas=filas, f=f, tot=tot,
-                           hay_filtros=bool(f["q"] or f["saldo"] != "deuda" or f["desde"] or f["hasta"]),
+                           hay_filtros=bool(f["q"] or f["saldo"] != "deuda" or f["desde"] or f["hasta"]
+                                            or f["sin_pagos"]),
+                           corte_pagos=sin_pagos_desde(f["sin_pagos"]) if f["sin_pagos"] else None,
                            puede_aplicar=puede(URL_APLIC))
 
 

@@ -50,13 +50,18 @@
     <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar empleador</span>
       <input type="search" name="q" value="{{ f.q }}" placeholder="Razón social, nombre de fantasía o CUIT…"
              class="filter-input" oninput="debounceBuscarCC(this)">
-      {% if f.q %}<span class="campo-ayuda">Buscando empleador: se ignora el filtro de saldo.</span>{% endif %}
+      {% if f.q %}<span class="campo-ayuda">Buscando empleador: se ignoran los filtros de saldo y de pagos.</span>{% endif %}
     </label>
     {% call ui.filtro('Saldo') %}<select name="saldo" class="filtro-srv" onchange="this.form.submit()">
       <option value="deuda" {{ 'selected' if f.saldo == 'deuda' }}>Con deuda</option>
       <option value="favor" {{ 'selected' if f.saldo == 'favor' }}>Pagaron de más</option>
       <option value="todos" {{ 'selected' if f.saldo == 'todos' }}>Todos con movimientos</option>
     </select>{% endcall %}
+    {# Los que no pagaron nada en los últimos N meses, o nunca: el último
+       cobro (Últ. pago) es anterior a hoy menos N meses. #}
+    {% call ui.filtro('Meses sin pagos') %}<input type="number" name="sin_pagos" class="filtro-srv filtro-num"
+      min="1" max="240" step="1" inputmode="numeric" value="{{ f.sin_pagos or '' }}" placeholder="—"
+      title="Sin pagos en los últimos N meses (o nunca)" onchange="this.form.submit()">{% endcall %}
     {% call ui.filtro('Período desde') %}<input type="month" name="desde" class="filtro-srv" value="{{ f.desde | periodo if f.desde else '' }}">{% endcall %}
     {% call ui.filtro('Período hasta') %}<input type="month" name="hasta" class="filtro-srv" value="{{ f.hasta | periodo if f.hasta else '' }}">{% endcall %}
     <button type="submit" class="btn btn-primary btn-sm" title="Aplicar filtro">{{ ui.icono('filtro') }}Filtrar</button>
@@ -73,6 +78,9 @@
         <option value="9999">Todos</option>
       </select>
     </div>
+    {% if f.sin_pagos and not f.q %}
+    <span class="campo-ayuda" style="flex-basis:100%;">Sin pagos desde el {{ corte_pagos.strftime('%d/%m/%Y') }}: el último recibo es anterior, o no pagó nunca.</span>
+    {% endif %}
     {% if f.desde or f.hasta %}
     <span class="campo-ayuda" style="flex-basis:100%;">Con un rango de períodos: lo liquidado de esos períodos y lo aplicado a ellos. «Sin aplicar» sigue siendo el total del empleador.</span>
     {% endif %}
@@ -80,7 +88,7 @@
 
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-cc-emp"
-           data-exportar="Cuenta corriente de empleadores{{ ' ' ~ (f.desde | periodo) if f.desde }}{{ ' a ' ~ (f.hasta | periodo) if f.hasta }}">
+           data-exportar="Cuenta corriente de empleadores{{ ' ' ~ (f.desde | periodo) if f.desde }}{{ ' a ' ~ (f.hasta | periodo) if f.hasta }}{{ ' sin pagos ' ~ f.sin_pagos ~ ' meses' if f.sin_pagos and not f.q }}">
       <thead>
         <tr>
           <th class="col-acciones" data-no-sort style="width:60px;">Acciones</th>
@@ -121,10 +129,10 @@
           <td class="td-center">{{ e.periodos_deuda or '—' }}</td>
           <td class="td-right" data-num="{{ e.vencido or 0 }}">{% if e.vencido %}<span class="importe-pendiente">{{ e.vencido | miles }}</span>{% else %}—{% endif %}</td>
           <td class="td-right" data-num="{{ e.sin_aplicar or 0 }}">{% if e.sin_aplicar|abs > 0.01 %}{% if puede_aplicar %}<a href="{{ url_for('cc_emp.aplicaciones', cuit=e.cuit) }}" title="Aplicarlo">{{ e.sin_aplicar | miles }}</a>{% else %}{{ e.sin_aplicar | miles }}{% endif %}{% else %}—{% endif %}</td>
-          <td class="td-center td-muted">{{ e.ultimo_pago.strftime('%d/%m/%Y') if e.ultimo_pago else '—' }}</td>
+          <td class="td-center td-muted">{{ e.ultimo_pago.strftime('%d/%m/%Y') if e.ultimo_pago else 'Nunca' }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="13" class="no-data">No hay empleadores con ese saldo.</td></tr>
+        <tr class="no-data-row"><td colspan="13" class="no-data">No hay empleadores con {{ 'ese saldo y sin pagos en ese plazo' if f.sin_pagos and not f.q else 'ese saldo' }}.</td></tr>
         {% endfor %}
       </tbody>
     </table>

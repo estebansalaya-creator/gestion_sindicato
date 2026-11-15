@@ -528,7 +528,7 @@ code, kbd { font-family: var(--mono); font-size: .9em; }
 /* Un número (edad, importe mínimo): angosto, y con cursor de texto porque
    se escribe. Se aplica al cambiar, como un select: al salir del campo, con
    Enter o con las flechitas. */
-.filtro.filtro-num { width: 84px; cursor: text; }
+.filtro.filtro-num, .filtro-srv.filtro-num { width: 84px; cursor: text; }
 /* La casilla trae su texto; con el alto de un control queda alineada con ellos. */
 .filtro-check { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: .8rem; color: var(--text); cursor: pointer; }
 /* Cada filtro con su rótulo arriba (macro ui.filtro), con la letra de los

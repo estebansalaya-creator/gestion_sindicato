@@ -125,6 +125,9 @@ SECCIONES = [
     "recibos), lo aplicado, el saldo y lo vencido."},
    {"tipo": "campos", "items": [
      ("Saldo", "Deuda (lo que debe, en rojo), a favor (pagó de más, en verde) o todos."),
+     ("Meses sin pagos", "Solo los que no pagaron nada en los últimos N meses, o nunca: el último "
+      "recibo (Últ. pago) es anterior a hoy menos N meses. Se combina con el filtro de saldo: con «Con "
+      "deuda», los deudores que dejaron de pagar."),
      ("Período desde / hasta", "Cuenta solo lo liquidado de esos períodos y lo aplicado a ellos."),
      ("Vencido", "El saldo de los períodos con el vencimiento ya pasado."),
    ]},
