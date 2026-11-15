@@ -7,10 +7,13 @@
   cobro cancela qué período de cuota sindical (fisca_aplicaciones.py).
 
   Sin CUIT: los empleadores con cobros sin aplicar y cuotas con saldo, abrir
-  cualquier otro por su CUIT y la aplicación automática de todos. Con CUIT:
-  las cuotas con saldo, los cobros sin aplicar, el formulario y las
-  aplicaciones registradas (con desaplicar), un bloque debajo del otro. Se
-  elige una cuota y un cobro; el importe propuesto es el menor de los dos.
+  cualquier otro por su CUIT y la aplicación automática de todos. Con CUIT,
+  como la Aplicación de Comprobantes de proveedores de gestion_adm (pedido del
+  15/11/2026): las cuotas con saldo y los cobros sin aplicar en dos columnas
+  lado a lado (.columnas-2 > .col-comp), que se eligen con un clic; debajo, lo
+  elegido y el importe; después la aplicación automática y las aplicaciones
+  registradas (con desaplicar). Elegido uno, se marcan del otro lado los del
+  mismo período o el mismo importe. El importe propuesto es el menor de los dos.
   Aplicar no mueve fondos ni cambia el saldo del empleador: cambia qué
   períodos quedan impagos.
 #}
@@ -120,67 +123,53 @@
             ~ '. Desaplicá la diferencia abajo, o usá la aplicación automática si lo aplicado no es manual.', 'warning') }}
 {% endif %}
 
-<div class="card">
-  {{ ui.card_head('Cuotas con saldo', '$ ' ~ ((cuotas | sum(attribute='saldo')) | miles) ~ ' · elegí una') }}
-  {{ ui.barra_filtros('Buscar por período…') }}
-  <div class="data-table-wrap">
-    <table class="data-table" id="tbl-cuotas" data-exportar="Cuotas con saldo {{ cuit }}">
-      <thead><tr>
-        <th class="col-acciones" data-no-sort>Elegir</th>
-        <th class="th-center" data-orden="asc">Período</th><th class="th-center">Vencimiento</th>
-        <th class="th-right">Liquidado</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
-      </tr></thead>
-      <tbody>
-        {% for l in cuotas %}
-        <tr data-id="{{ l.id }}" data-saldo="{{ l.saldo }}" data-ref="Cuota {{ l.periodo | periodo }}">
-          <td><input type="radio" name="sel-cuota" aria-label="Elegir la cuota {{ l.periodo | periodo }}" onchange="elegir('cuota', this)"></td>
-          <td class="td-center td-mono">{{ l.periodo | periodo }}</td>
-          <td class="td-center">{{ l.vencimiento.strftime('%d/%m/%Y') if l.vencimiento else '—' }}</td>
-          <td class="td-right" data-num="{{ l.importe }}">{{ l.importe | miles }}</td>
-          <td class="td-right {{ 'td-muted' if not l.aplicado }}" data-num="{{ l.aplicado }}">{{ l.aplicado | miles }}</td>
-          <td class="td-right td-fuerte importe-danger" data-num="{{ l.saldo }}">{{ l.saldo | miles }}</td>
-        </tr>
-        {% else %}
-        <tr class="no-data-row"><td colspan="6" class="no-data">No tiene cuotas con saldo.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+{# ── Las dos columnas: lo que se cancela y con qué ─────────────────────── #}
+<div class="columnas-2">
+  <div class="col-comp">
+    <div class="cab"><span>Cuotas con saldo</span><span class="total">{{ (cuotas | sum(attribute='saldo')) | miles }}</span></div>
+    <div class="lista" id="lista-cuotas" role="listbox" aria-label="Cuotas con saldo">
+      {% for l in cuotas %}
+      <div class="item" role="option" tabindex="0" aria-selected="false" data-lado="cuota"
+           data-id="{{ l.id }}" data-saldo="{{ l.saldo }}" data-periodo="{{ l.periodo }}"
+           data-ref="Cuota {{ l.periodo | periodo }}">
+        <span class="imp importe-danger">{{ l.saldo | miles }}</span>
+        <div class="ref">Cuota {{ l.periodo | periodo }}
+          {%- if l.vencimiento and l.vencimiento < hoy %} {{ ui.estado('Vencida', 'warn') }}{% endif %}
+          <span class="marca-sugerida">{{ ui.estado('Mismo período', 'ok') }}</span></div>
+        <div class="sub">vence {{ l.vencimiento.strftime('%d/%m/%Y') if l.vencimiento else '—' }}
+          · liquidado {{ l.importe | miles }}{% if l.aplicado %} · ya aplicado {{ l.aplicado | miles }}{% endif %}</div>
+      </div>
+      {% else %}
+      <div class="vacio">No tiene cuotas con saldo.</div>
+      {% endfor %}
+    </div>
   </div>
-  {{ ui.paginacion() }}
+
+  <div class="col-comp">
+    <div class="cab"><span>Cobros sin aplicar</span><span class="total">{{ (cobros | sum(attribute='sin_aplicar')) | miles }}</span></div>
+    <div class="lista" id="lista-cobros" role="listbox" aria-label="Cobros sin aplicar">
+      {% for c in cobros %}
+      {% set nro = c.nro_recibo or c.nro_orden or c.id_orden %}
+      <div class="item" role="option" tabindex="0" aria-selected="false" data-lado="cobro"
+           data-id="{{ c.id_detalle }}" data-saldo="{{ c.sin_aplicar }}" data-periodo="{{ c.per or '' }}"
+           data-ref="{{ 'Recibo' if c.nro_recibo else 'Orden' }} {{ nro }}">
+        <span class="imp importe-ok">{{ c.sin_aplicar | miles }}</span>
+        <div class="ref">{{ 'Recibo' if c.nro_recibo else 'Orden de ingreso' }} <span class="mono">{{ nro }}</span>
+          {{ enlace_cobro(c) }}
+          <span class="marca-sugerida">{{ ui.estado('Mismo período', 'ok') }}</span></div>
+        <div class="sub">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }} ·
+          {% if c.per %}período {{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}
+          {%- if c.motivo %} · {{ c.motivo }}{% endif %}
+          {%- if c.aplicado %} · de {{ c.importe | miles }}, ya aplicado {{ c.aplicado | miles }}{% endif %}</div>
+      </div>
+      {% else %}
+      <div class="vacio">No tiene cobros sin aplicar.</div>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 
-<div class="card">
-  {{ ui.card_head('Cobros sin aplicar', '$ ' ~ ((cobros | sum(attribute='sin_aplicar')) | miles) ~ ' · elegí uno') }}
-  {{ ui.barra_filtros('Buscar por número, período o descripción…') }}
-  <div class="data-table-wrap">
-    <table class="data-table" id="tbl-cobros" data-exportar="Cobros sin aplicar {{ cuit }}">
-      <thead><tr>
-        <th class="col-acciones" data-no-sort>Elegir</th>
-        <th class="th-center" data-orden="asc">Fecha</th><th>Número</th><th>Motivo</th><th class="th-center">Período</th>
-        <th>Descripción</th><th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Sin aplicar</th>
-      </tr></thead>
-      <tbody>
-        {% for c in cobros %}
-        <tr data-id="{{ c.id_detalle }}" data-saldo="{{ c.sin_aplicar }}" data-ref="{{ c.nro_recibo or c.nro_orden or c.id_orden }} del {{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}">
-          <td><div class="acciones"><input type="radio" name="sel-cobro" aria-label="Elegir el cobro {{ c.nro_orden }}" onchange="elegir('cobro', this)">{{ enlace_cobro(c) }}</div></td>
-          <td class="td-center" data-num="{{ c.fecha.toordinal() if c.fecha else 0 }}">{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '—' }}</td>
-          <td class="td-mono">{{ c.nro_recibo or c.nro_orden or c.id_orden }}</td>
-          <td>{{ c.motivo or '—' }}</td>
-          <td class="td-center td-mono">{% if c.per %}{{ c.per | periodo }}{% elif c.periodo_cargado %}<span class="chip chip-alerta" title="El período cargado no es AAAAMM">{{ c.periodo_cargado }}</span>{% else %}<span class="chip chip-alerta">sin período</span>{% endif %}</td>
-          <td class="chico">{{ c.descripcion or '' }}</td>
-          <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
-          <td class="td-right {{ 'td-muted' if not c.aplicado }}" data-num="{{ c.aplicado }}">{{ c.aplicado | miles }}</td>
-          <td class="td-right td-fuerte importe-ok" data-num="{{ c.sin_aplicar }}">{{ c.sin_aplicar | miles }}</td>
-        </tr>
-        {% else %}
-        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene cobros sin aplicar.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {{ ui.paginacion() }}
-</div>
-
+{# ── Lo elegido y el importe ───────────────────────────────────────────── #}
 <form method="post" action="{{ url_for('cc_emp.aplicar') }}" id="form-aplicar" class="card">
   {{ ui.card_head('Aplicar', 'Elegí una cuota y un cobro. El importe propuesto es el menor de los dos; podés bajarlo para aplicar una parte.') }}
   <input type="hidden" name="cuit" value="{{ cuit }}">
@@ -188,11 +177,13 @@
   <input type="hidden" name="id_detalle" id="id_detalle">
   <div class="card-body">
     <div class="campos">
-      <div class="campo" style="--span:4;"><label>Cuota elegida</label><input type="text" id="lbl-cuota" value="—" readonly tabindex="-1"></div>
-      <div class="campo" style="--span:4;"><label>Cobro elegido</label><input type="text" id="lbl-cobro" value="—" readonly tabindex="-1"></div>
-      <div class="campo" style="--span:4;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
+      <div class="campo" style="--span:5;"><span class="campo-label">Cuota elegida</span>
+        <div class="campo-valor" id="lbl-cuota">—</div></div>
+      <div class="campo" style="--span:2;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
         <input type="text" name="importe" id="importe" class="inp-importe" inputmode="decimal" autocomplete="off" disabled>
-        <small class="campo-ayuda" id="aviso">Elegí una cuota y un cobro para habilitar la aplicación.</small></div>
+        <small class="campo-ayuda" id="aviso">Elegí cuota y cobro.</small></div>
+      <div class="campo" style="--span:5;"><span class="campo-label">Cobro elegido</span>
+        <div class="campo-valor" id="lbl-cobro">—</div></div>
       <div class="campo" style="--span:12;"><label for="f-obs">Observaciones</label>
         <input type="text" name="observaciones" id="f-obs" maxlength="255"></div>
     </div>
@@ -277,34 +268,81 @@
 
 <script>
 function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+// Una cuota y un cobro, uno de cada columna. Elegido uno, del otro lado se
+// marcan los que van con él: el mismo período (el cobro de 2026-09 va con la
+// cuota de 2026-09) o el mismo importe al centavo (los cobros de AEDA sin
+// período suelen ser la cuota justa de un mes); el primero se trae a la vista.
+// Es una ayuda: no elige solo. El importe propuesto es el menor de los dos
+// saldos, el máximo que tiene sentido aplicar.
 var sel = { cuota: null, cobro: null };
-function elegir(lado, radio) {
-  var tr = radio.closest('tr'), tabla = lado === 'cuota' ? 'tbl-cuotas' : 'tbl-cobros';
-  document.querySelectorAll('#' + tabla + ' tbody tr').forEach(function (x) { x.classList.remove('fila-actual'); });
-  tr.classList.add('fila-actual');
-  sel[lado] = { id: tr.dataset.id, saldo: parseFloat(tr.dataset.saldo), ref: tr.dataset.ref };
+function marcarSugeridos(idLista, elegido) {
+  var porPeriodo = null, porImporte = null;
+  document.querySelectorAll('#' + idLista + ' .item').forEach(function (it) {
+    var per = !!elegido.periodo && it.dataset.periodo === elegido.periodo;
+    var imp = Math.abs(parseFloat(it.dataset.saldo) - elegido.saldo) < 0.005;
+    it.classList.toggle('sugerida', per || imp);
+    var marca = it.querySelector('.marca-sugerida .estado');
+    if (marca) marca.textContent = per && imp ? 'Mismo período e importe' : (per ? 'Mismo período' : 'Mismo importe');
+    if (per && !porPeriodo) porPeriodo = it;
+    if (imp && !porImporte) porImporte = it;
+  });
+  var primero = porPeriodo || porImporte;
+  if (primero) primero.scrollIntoView({ block: 'nearest' });
+}
+function elegir(it) {
+  var lado = it.dataset.lado;
+  it.parentNode.querySelectorAll('.item').forEach(function (x) {
+    x.classList.remove('sel');
+    x.setAttribute('aria-selected', 'false');
+  });
+  it.classList.add('sel');
+  it.setAttribute('aria-selected', 'true');
+  sel[lado] = { id: it.dataset.id, saldo: parseFloat(it.dataset.saldo), ref: it.dataset.ref, periodo: it.dataset.periodo };
+  marcarSugeridos(lado === 'cuota' ? 'lista-cobros' : 'lista-cuotas', sel[lado]);
+  actualizar();
+}
+function actualizar() {
   var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  var btn = document.getElementById('btn-aplicar');
   document.getElementById('id_liquidacion').value = sel.cuota ? sel.cuota.id : '';
   document.getElementById('id_detalle').value = sel.cobro ? sel.cobro.id : '';
-  document.getElementById('lbl-cuota').value = sel.cuota ? sel.cuota.ref + ' · ' + plata(sel.cuota.saldo) : '—';
-  document.getElementById('lbl-cobro').value = sel.cobro ? sel.cobro.ref + ' · ' + plata(sel.cobro.saldo) : '—';
+  document.getElementById('lbl-cuota').textContent = sel.cuota ? sel.cuota.ref + ' · saldo ' + plata(sel.cuota.saldo) : '—';
+  document.getElementById('lbl-cobro').textContent = sel.cobro ? sel.cobro.ref + ' · sin aplicar ' + plata(sel.cobro.saldo) : '—';
+  aviso.classList.remove('error');
   if (sel.cuota && sel.cobro) {
     var tope = Math.min(sel.cuota.saldo, sel.cobro.saldo);
     inp.disabled = false;
+    btn.disabled = false;
     inp.dataset.tope = tope;
     inp.value = tope.toFixed(2);
     fmtMilesInit(inp);
-    aviso.textContent = 'Máximo aplicable: ' + plata(tope);
+    aviso.textContent = 'Máximo ' + plata(tope);
+  } else {
+    inp.disabled = true;
+    btn.disabled = true;
+    inp.value = '';
+    aviso.textContent = sel.cuota ? 'Falta el cobro.' : (sel.cobro ? 'Falta la cuota.' : 'Elegí cuota y cobro.');
   }
 }
+document.querySelectorAll('.col-comp .item').forEach(function (it) {
+  it.addEventListener('click', function (e) {
+    if (e.target.closest('a')) return;     // el ojo abre el recibo, no elige
+    elegir(it);
+  });
+  it.addEventListener('keydown', function (e) {
+    if (e.target !== it) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); elegir(it); }
+  });
+});
+actualizar();
 document.getElementById('form-aplicar').addEventListener('submit', function (ev) {
   var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
   var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
   var tope = parseFloat(inp.dataset.tope || '0');
   var error = !(sel.cuota && sel.cobro) ? 'Elegí una cuota y un cobro.'
-            : !(v > 0) ? 'El importe tiene que ser mayor que cero.'
-            : v > tope + 0.01 ? 'El importe no puede superar ' + plata(tope) + '.' : '';
-  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); }
+            : !(v > 0) ? 'Tiene que ser mayor que cero.'
+            : v > tope + 0.01 ? 'No puede superar ' + plata(tope) + '.' : '';
+  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); inp.focus(); }
 });
 (function () {
   var form = document.getElementById('form-desaplicar'), inp = document.getElementById('md-importe');
@@ -335,7 +373,7 @@ document.getElementById('form-aplicar').addEventListener('submit', function (ev)
 
 <script>
 document.addEventListener('DOMContentLoaded', function () {
-  ['tbl-sug', 'tbl-cuotas', 'tbl-cobros'].forEach(function (id) {
+  ['tbl-sug'].forEach(function (id) {
     if (document.getElementById(id)) gestion_admTable(id, { pageSize: id === 'tbl-sug' ? 50 : 20 });
   });
   var fOrigen = document.getElementById('f-origen');

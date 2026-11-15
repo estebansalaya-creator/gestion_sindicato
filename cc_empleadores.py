@@ -359,7 +359,7 @@ def aplicaciones():
                            de_mas=[l for l in liqs if l["saldo"] < Decimal("-0.01")],
                            cobros=[c for c in cobros if c["sin_aplicar"] > Decimal("0.01")],
                            aplicadas=aplics, origenes=fa.ORIGENES, puede_cc=puede(URL),
-                           puede_rec=puede("/fiscalizacion/recibos"),
+                           hoy=datetime.date.today(), puede_rec=puede("/fiscalizacion/recibos"),
                            puede_ingreso=puede("/tesoreria/movimientos") or puede("/tesoreria/nueva_orden_concepto"))
 
 

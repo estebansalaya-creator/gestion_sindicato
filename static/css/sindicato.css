@@ -778,6 +778,43 @@ fieldset.solo-lectura .solo-edicion { display: none; }
 .columnas-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; align-items: start; }
 .columnas-2-1 > .card { min-width: 0; }
 @media (max-width: 1100px) { .columnas-2-1 { grid-template-columns: 1fr; } }
+/* Aplicación (la de gestion_adm): dos columnas lado a lado —lo que se cancela y
+   con qué se cancela— de renglones que se eligen con un clic o con Enter. Cada
+   renglón lleva el importe a la derecha, la referencia y una línea de detalle.
+   El elegido lleva .sel; .sugerida marca los del otro lado que van con él (el
+   mismo período) y muestra su .marca-sugerida; .incompat, los que no se
+   pueden elegir con lo ya elegido. Debajo, la fila de campos con lo elegido en
+   .campo-valor. En pantallas angostas, una columna debajo de la otra. */
+.columnas-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+@media (max-width: 900px) { .columnas-2 { grid-template-columns: 1fr; } }
+.col-comp { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; min-width: 0; }
+.col-comp .cab {
+  display: flex; justify-content: space-between; gap: 10px; padding: 9px 14px;
+  background: var(--navy); color: #fff; font-size: .82rem; font-weight: 700;
+}
+.col-comp .cab .total { font-weight: 500; font-variant-numeric: tabular-nums; }
+.col-comp .lista { max-height: 420px; overflow-y: auto; }
+.col-comp .item { padding: 8px 14px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: .8rem; }
+.col-comp .item:last-child { border-bottom: none; }
+.col-comp .item:hover { background: var(--blue-light); }
+.col-comp .item:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--blue); }
+.col-comp .item.sel { background: var(--info-bg); box-shadow: inset 3px 0 0 var(--blue); }
+.col-comp .item.sugerida:not(.sel) { box-shadow: inset 3px 0 0 var(--ok); }
+.col-comp .item .ref { font-weight: 600; color: var(--text); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.col-comp .item .sub { font-size: .72rem; color: var(--text-muted); margin-top: 1px; }
+.col-comp .item .sub.aviso { color: var(--warn-texto); }
+.col-comp .item .imp { float: right; margin-left: 10px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.col-comp .item .marca-sugerida { display: none; }
+.col-comp .item.sugerida .marca-sugerida { display: inline-flex; }
+.col-comp .item .btn-accion { width: 22px; height: 22px; }
+.col-comp .item.incompat { opacity: .38; cursor: not-allowed; background: var(--surface-2); }
+.col-comp .vacio { padding: 22px; text-align: center; color: var(--text-muted); font-size: .82rem; }
+/* Un valor que se muestra en la fila de campos sin poder escribirse (lo
+   elegido en otra parte de la pantalla). */
+.campo-valor {
+  min-height: 34px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2); font-size: .86rem; color: var(--text);
+}
 .kpi-ico {
   width: 42px; height: 42px; border-radius: 10px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;

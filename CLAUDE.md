@@ -632,7 +632,11 @@ liquidación (`id_liquidacion`); uno por par (`uq_fisca_aplic`, aplicar otra vez
   (`sql_aplicado_cobro`, `sql_aplicado_liq`). La liquidación se reliquida en la misma fila (`generar` hace UPDATE),
   así que lo aplicado sigue a su cuota.
 - **Aplicar** (pantalla, de a uno): una cuota con saldo + un cobro sin aplicar, hasta el menor de los dos; se revalida
-  en el servidor con las dos filas bloqueadas. **Desaplicar**: entera o en parte, motivo obligatorio, el rastro en
+  en el servidor con las dos filas bloqueadas. **La pantalla es la de Aplicación de Comprobantes de proveedores de
+  gestion_adm** (pedido del 15/11/2026, «mucho más clara»): cuotas y cobros en dos columnas lado a lado
+  (`.columnas-2 > .col-comp`, en la guía «Aplicación»), un clic en cada una y debajo lo elegido (`.campo-valor`) con el
+  importe. Elegido uno, del otro lado se marcan los del mismo período o el mismo importe al centavo (los cobros de AEDA
+  sin período suelen ser la cuota justa de un mes): ayuda, no elige solo. **Desaplicar**: entera o en parte, motivo obligatorio, el rastro en
   `fisca_aplicacion_baja`.
 - **Aplicación automática** (`aplicar_automatico`; botón por empleador o de todos, `aplicar_cobros.py` por consola):
   1) saca lo aplicado a órdenes o liquidaciones anuladas y recorta lo automático de una cuota que se reliquidó por

@@ -15,7 +15,7 @@
   ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
-  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('importacion', 'Importación'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('importacion', 'Importación'),
   ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
@@ -538,6 +538,42 @@
   </div>
   {{ ej(".buscador > input + .buscador-lista > .buscador-titulo | a.buscador-item(.activo) > .buscador-dato > .buscador-nombre + .buscador-sub
                        · al costado ui.estado(): el parentesco de un familiar (info) y «Baja» (danger) · .buscando mientras consulta") }}
+</div>
+
+{# ── Aplicación ──────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="aplicacion">
+  {{ ui.card_head('Aplicación', nota='La de gestion_adm: lo que se cancela y con qué, lado a lado; se elige uno de cada columna con un clic o con Enter.') }}
+  <div class="card-body">
+    <div class="columnas-2">
+      <div class="col-comp">
+        <div class="cab"><span>Cuotas con saldo</span><span class="total">54.590,25</span></div>
+        <div class="lista">
+          <div class="item sel" tabindex="0"><span class="imp importe-danger">25.995,37</span>
+            <div class="ref">Cuota 2024-01 {{ ui.estado('Vencida', 'warn') }}</div>
+            <div class="sub">vence 09/02/2024 · liquidado 25.995,37</div></div>
+          <div class="item" tabindex="0"><span class="imp importe-danger">28.594,88</span>
+            <div class="ref">Cuota 2024-02</div>
+            <div class="sub">vence 11/03/2024 · liquidado 28.594,88</div></div>
+        </div>
+      </div>
+      <div class="col-comp">
+        <div class="cab"><span>Cobros sin aplicar</span><span class="total">25.995,37</span></div>
+        <div class="lista">
+          <div class="item sugerida" tabindex="0"><span class="imp importe-ok">25.995,37</span>
+            <div class="ref">Recibo <span class="mono">X 0091-00003679</span>
+              <span class="marca-sugerida">{{ ui.estado('Mismo importe', 'ok') }}</span></div>
+            <div class="sub">08/04/2024 · <span class="chip chip-alerta">sin período</span> · CUOTA SINDICAL</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="campos">
+      <div class="campo" style="--span:5;"><span class="campo-label">Cuota elegida</span><div class="campo-valor">Cuota 2024-01 · saldo 25.995,37</div></div>
+      <div class="campo" style="--span:2;"><label>Importe a aplicar</label><input type="text" value="25.995,37"></div>
+      <div class="campo" style="--span:5;"><span class="campo-label">Cobro elegido</span><div class="campo-valor">—</div></div>
+    </div>
+  </div>
+  {{ ej(".columnas-2 > .col-comp > .cab (texto + .total) + .lista > .item(.sel | .sugerida | .incompat) > .imp + .ref + .sub · .vacio sin renglones
+.marca-sugerida adentro del .ref: se ve solo con .sugerida · lo elegido, en .campo > .campo-label + .campo-valor") }}
 </div>
 
 {# ── Importación ─────────────────────────────────────────────────────────── #}
