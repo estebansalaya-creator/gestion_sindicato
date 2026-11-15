@@ -355,6 +355,13 @@
       <code>grupo</code>: las cuentas del plan por clase (<code>tesoreria.cuentas_imputables</code>). El CBU se
       valida con <code>cbuValido()</code> de base.html.
     </p>
+    <p class="chico muted" style="margin-top:8px;">
+      «Consultar ARCA» en una ficha (afiliados, empleadores, proveedores): <code>{{ '{{' }} ui.arca_consulta() {{ '}}' }}</code>
+      dentro de los <code>.campos</code> dibuja el botón y el recuadro del resultado. La pantalla define
+      <code>consultarArca(auto)</code> con <code>arcaPedir</code>, <code>arcaCompletar</code> y
+      <code>arcaMostrar</code> de base.html: lo vacío se completa, lo cargado y distinto se lista con
+      «Usar los datos de ARCA».
+    </p>
   </div>
 </div>
 

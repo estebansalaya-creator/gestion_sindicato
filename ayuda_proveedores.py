@@ -30,6 +30,11 @@ SECCIONES = [
    {"tipo": "campos", "items": [
      ("Identificación", "CUIT (uno por proveedor: avisa mientras se escribe si ya existe o no "
       "verifica), razón social, nombre de fantasía."),
+     ("Consultar ARCA", "Trae de la constancia de inscripción la razón social, el domicilio fiscal, la "
+      "condición de IVA y, si ARCA la informa, la de Ingresos Brutos, y completa lo vacío. En el alta "
+      "pregunta sola al completar el CUIT (también al llegar desde la carga de comprobantes). Lo "
+      "cargado y distinto no se pisa: se lista con <b>Usar los datos de ARCA</b>. Muestra además si "
+      "está inscripto en Ganancias y la categoría del monotributo."),
      ("Datos impositivos", "Condición de IVA, Ingresos Brutos."),
      ("Retenciones", "Solo los impuestos de los que el sindicato es agente de retención (Datos del "
       "Sindicato) se pueden editar; los demás se ven apagados. En Ganancias: si aplica y el régimen."),
@@ -46,7 +51,9 @@ SECCIONES = [
     "escala salen de la tabla vigente (Tesorería → Escala RG 830), así todos los proveedores del mismo "
     "régimen retienen igual. A un monotributista no se le retiene Ganancias."},
    {"tipo": "aviso", "html":
-    "Un proveedor con comprobantes o retenciones no se elimina: se da de baja."},
+    "Un proveedor con comprobantes o retenciones no se elimina: se da de baja. La consulta a ARCA "
+    "necesita el certificado del sindicato habilitado para la constancia de inscripción; mientras no "
+    "esté, la pantalla lo dice y la ficha se carga a mano."},
  ]},
 
 {

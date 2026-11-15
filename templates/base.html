@@ -1449,6 +1449,121 @@ function cbuValido(c) {
   return cierra(c.slice(0, 8), [7,1,3,9,7,1,3]) && cierra(c.slice(8), [3,9,7,1,3,9,7,1,3,9,7,1,3]);
 }
 
+// ── Consultar ARCA ────────────────────────────────────────────────────
+// Lo común de las fichas de afiliados, empleadores y proveedores: el botón y
+// el recuadro #arca-resultado los dibuja `ui.arca_consulta`; cada pantalla
+// define consultarArca(auto), arma la consulta con arcaPedir y le pasa lo que
+// trajo ARCA a arcaCompletar y arcaMostrar. La regla es la misma en las tres:
+// lo vacío se completa; lo cargado que ARCA dice distinto no se pisa, se
+// lista con un botón «Usar los datos de ARCA».
+function arcaCaja(tipo, texto) {
+  var caja = document.getElementById('arca-resultado');
+  caja.textContent = '';
+  caja.classList.remove('oculto');
+  var a = document.createElement('div');
+  a.className = 'alert alert-' + tipo;
+  var cuerpo = document.createElement('div');
+  if (texto) cuerpo.appendChild(document.createTextNode(texto));
+  a.appendChild(cuerpo);
+  caja.appendChild(a);
+  return cuerpo;
+}
+function arcaLinea(cuerpo, texto, clase) {
+  var d = document.createElement('div');
+  if (clase) d.className = clase;
+  d.textContent = texto;
+  cuerpo.appendChild(d);
+  return d;
+}
+function arcaBoton(cont, texto, fn) {
+  var b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'btn btn-secondary btn-sm';
+  b.textContent = texto;
+  b.addEventListener('click', fn);
+  cont.appendChild(b);
+  return b;
+}
+function arcaEnlace(cuerpo, texto, url) {
+  var a = document.createElement('a');
+  a.href = url;
+  a.textContent = texto;
+  cuerpo.appendChild(a);
+  return a;
+}
+// GET a la consulta de la pantalla, con el botón deshabilitado mientras tanto.
+function arcaPedir(url, alResponder) {
+  var btn = document.getElementById('btn-arca');
+  if (btn) btn.disabled = true;
+  arcaCaja('info', 'Consultando ARCA…');
+  return fetch(url, { credentials: 'same-origin' })
+    .then(function (r) { return r.json().catch(function () { throw new Error(r.status + ' ' + r.statusText); }); })
+    .then(alResponder)
+    .catch(function (e) { arcaCaja('danger', 'No se pudo consultar ARCA: ' + e.message); })
+    .finally(function () { if (btn) btn.disabled = false; });
+}
+function arcaNorm(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toUpperCase().replace(/\s+/g, ' ').trim();
+}
+function arcaPonerValor(el, valor) {
+  el.value = valor;
+  // Para los `onchange` de la pantalla (el nombre de la provincia, avisos).
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+// items: [{id, valor, rotulo}], o un grupo que va junto (el domicilio):
+// [{grupo: [{id, valor}, …], rotulo, texto}]. Un grupo se completa si está
+// vacío entero y, si no, se ofrece entero. Un select solo toma un valor que
+// esté entre sus opciones. Devuelve {hechos: [rótulos], distintos: [...]}.
+function arcaCompletar(items) {
+  var hechos = [], distintos = [];
+  items.forEach(function (it) {
+    var partes = (it.grupo || [{ id: it.id, valor: it.valor }]).map(function (p) {
+      return { el: document.getElementById(p.id), valor: p.valor == null ? '' : String(p.valor) };
+    }).filter(function (p) {
+      if (!p.el || p.el.disabled) return false;
+      return !(p.el.tagName === 'SELECT' && p.valor !== '' &&
+               !Array.prototype.some.call(p.el.options, function (o) { return o.value === p.valor; }));
+    });
+    if (!partes.some(function (p) { return p.valor !== ''; })) return;      // ARCA no trajo esto
+    var vacio = partes.every(function (p) { return !p.el.value.trim(); });
+    var igual = partes.every(function (p) { return arcaNorm(p.el.value) === arcaNorm(p.valor); });
+    if (vacio) {
+      partes.forEach(function (p) { if (p.valor !== '') arcaPonerValor(p.el, p.valor); });
+      hechos.push(it.rotulo);
+    } else if (!igual) {
+      var texto = it.texto;
+      if (!texto) {
+        var el = partes[0].el, v = partes[0].valor;
+        var op = el.tagName === 'SELECT' && Array.prototype.find.call(el.options, function (o) { return o.value === v; });
+        texto = op ? op.text.trim() : v;
+      }
+      distintos.push({ partes: partes, rotulo: it.rotulo, texto: texto });
+    }
+  });
+  return { hechos: hechos, distintos: distintos };
+}
+// El recuadro con el resultado: lo completado, las notas (datos de ARCA que
+// no van a ningún campo), los avisos y lo distinto con su botón.
+function arcaMostrar(titulo, res, notas, avisos) {
+  notas = notas || []; avisos = avisos || [];
+  var c = arcaCaja(res.distintos.length || avisos.length ? 'warning' : 'ok',
+                   titulo + '. ' + (res.hechos.length ? 'Se completó: ' + res.hechos.join(', ') + '.'
+                                                      : 'No había nada vacío para completar.'));
+  notas.forEach(function (t) { arcaLinea(c, t); });
+  avisos.forEach(function (t) { arcaLinea(c, '⚠ ' + t); });
+  if (res.distintos.length) {
+    arcaLinea(c, 'ARCA dice distinto de lo cargado:');
+    res.distintos.forEach(function (x) { arcaLinea(c, '· ' + x.rotulo + ': ' + x.texto); });
+    arcaBoton(arcaLinea(c, '', 'fila'), 'Usar los datos de ARCA', function () {
+      res.distintos.forEach(function (x) { x.partes.forEach(function (p) { arcaPonerValor(p.el, p.valor); }); });
+      arcaCaja('ok', 'Se usaron los datos de ARCA. Revisá y guardá.');
+    });
+  }
+  return c;
+}
+function arcaCuit(c) { c = String(c || ''); return c.length === 11 ? c.slice(0, 2) + '-' + c.slice(2, 10) + '-' + c.slice(10) : c; }
+
 // ── Diálogos ──────────────────────────────────────────────────────────
 // <div class="modal" id="modal-x"><div class="modal-caja">…</div></div>
 // Escape y un clic en el fondo los cierran; el foco va al primer campo.

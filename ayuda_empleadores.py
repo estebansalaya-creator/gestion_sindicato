@@ -33,6 +33,10 @@ SECCIONES = [
    {"tipo": "campos", "items": [
      ("Datos", "CUIT (se controla el dígito; se puede pegar con guiones), razón social, nombre de "
       "fantasía, teléfonos, correo y los domicilios legal y fiscal (<b>Copiar legal → fiscal</b>)."),
+     ("Consultar ARCA", "Trae de la constancia de inscripción la razón social y el domicilio fiscal, y "
+      "completa lo vacío; el domicilio legal, solo si está vacío entero. En el alta pregunta solo al "
+      "completar el CUIT. Lo cargado y distinto no se pisa: se lista con <b>Usar los datos de ARCA</b>. "
+      "Si el CUIT ya es de otro empleador, avisa con el enlace y no completa nada."),
      ("Nómina", "Los afiliados con relación laboral con este empleador (ver abajo)."),
      ("Contactos", "Las personas de la empresa: nombre, cargo, área, teléfono y correo."),
      ("Cuota sindical", "El enlace para que la empresa presente su Libro de Sueldos Digital y sus "

@@ -17,7 +17,7 @@
   <div class="campos">
     <div class="campo" style="--span:3;">
       <label>Provincia</label>
-      <select name="{{ prefijo }}_provincia_id" onchange="sincronizarProvincia(this, '{{ prefijo }}')">
+      <select name="{{ prefijo }}_provincia_id" id="{{ prefijo }}_provincia_id" onchange="sincronizarProvincia(this, '{{ prefijo }}')">
         {{ ui.opciones(provincias, e.get(prefijo ~ '_provincia_id'), texto='nombre') }}
       </select>
       {# La tabla guarda código y nombre. El nombre viaja en un hidden que
@@ -30,33 +30,33 @@
        catálogo de provincias. Los campos *_id quedan para cuando haya uno. #}
     <div class="campo" style="--span:3;">
       <label>Departamento</label>
-      <input type="text" name="{{ prefijo }}_departamento_nombre" maxlength="100"
+      <input type="text" name="{{ prefijo }}_departamento_nombre" id="{{ prefijo }}_departamento_nombre" maxlength="100"
              value="{{ e.get(prefijo ~ '_departamento_nombre') or '' }}">
     </div>
     <div class="campo" style="--span:3;">
       <label>Localidad</label>
-      <input type="text" name="{{ prefijo }}_localidad_nombre" maxlength="100"
+      <input type="text" name="{{ prefijo }}_localidad_nombre" id="{{ prefijo }}_localidad_nombre" maxlength="100"
              value="{{ e.get(prefijo ~ '_localidad_nombre') or '' }}">
     </div>
     <div class="campo" style="--span:3;">
       <label>Código postal</label>
-      <input type="text" name="{{ prefijo }}_cp" maxlength="8" value="{{ e.get(prefijo ~ '_cp') or '' }}">
+      <input type="text" name="{{ prefijo }}_cp" id="{{ prefijo }}_cp" maxlength="8" value="{{ e.get(prefijo ~ '_cp') or '' }}">
     </div>
     <div class="campo" style="--span:6;">
       <label>Calle</label>
-      <input type="text" name="{{ prefijo }}_calle" maxlength="150" value="{{ e.get(prefijo ~ '_calle') or '' }}">
+      <input type="text" name="{{ prefijo }}_calle" id="{{ prefijo }}_calle" maxlength="150" value="{{ e.get(prefijo ~ '_calle') or '' }}">
     </div>
     <div class="campo" style="--span:2;">
       <label>Número</label>
-      <input type="text" name="{{ prefijo }}_numero" maxlength="10" value="{{ e.get(prefijo ~ '_numero') or '' }}">
+      <input type="text" name="{{ prefijo }}_numero" id="{{ prefijo }}_numero" maxlength="10" value="{{ e.get(prefijo ~ '_numero') or '' }}">
     </div>
     <div class="campo" style="--span:2;">
       <label>Piso</label>
-      <input type="text" name="{{ prefijo }}_piso" maxlength="5" value="{{ e.get(prefijo ~ '_piso') or '' }}">
+      <input type="text" name="{{ prefijo }}_piso" id="{{ prefijo }}_piso" maxlength="5" value="{{ e.get(prefijo ~ '_piso') or '' }}">
     </div>
     <div class="campo" style="--span:2;">
       <label>Depto</label>
-      <input type="text" name="{{ prefijo }}_depto" maxlength="10" value="{{ e.get(prefijo ~ '_depto') or '' }}">
+      <input type="text" name="{{ prefijo }}_depto" id="{{ prefijo }}_depto" maxlength="10" value="{{ e.get(prefijo ~ '_depto') or '' }}">
     </div>
     {# Los ids de departamento y localidad se preservan al editar: perderlos
        en cada guardado degradaría datos que hoy no sabemos volver a cargar. #}
@@ -173,10 +173,13 @@
                    value="{{ e.get('CUIT') or '' }}" oninput="validarCuit(this)">
             <small class="campo-ayuda" id="cuit-aviso"></small>
           </div>
-          <div class="campo" style="--span:5;">
-            <label>Razón social <span class="req">*</span></label>
-            <input type="text" name="razon_social" required maxlength="100" value="{{ e.get('razon_social') or '' }}">
+          <div class="campo" style="--span:6;">
+            <label for="razon_social">Razón social <span class="req">*</span></label>
+            <input type="text" name="razon_social" id="razon_social" required maxlength="100" value="{{ e.get('razon_social') or '' }}">
           </div>
+          {# Razón social y domicilio fiscal de la constancia de inscripción
+             (/empleadores/arca). En el alta se consulta sola al completar el CUIT. #}
+          {{ ui.arca_consulta(ayuda='Completa lo vacío con la constancia de ARCA') }}
           <div class="campo" style="--span:4;">
             <label>Nombre de fantasía</label>
             <input type="text" name="nombre_fantasia" maxlength="100" value="{{ e.get('nombre_fantasia') or '' }}">
@@ -189,7 +192,7 @@
             <label>Email</label>
             <input type="email" name="email" maxlength="100" value="{{ e.get('email') or '' }}">
           </div>
-          <div class="campo" style="--span:4;">
+          <div class="campo" style="--span:12;">
             <label class="campo-check">
               <input type="checkbox" name="Activo" value="1" {{ 'checked' if not empleador or e.get('Activo') }}>
               Activa
@@ -436,6 +439,57 @@ function sincronizarProvincia(select, prefijo) {
   if (oculto) oculto.value = select.value ? select.options[select.selectedIndex].text.trim() : '';
 }
 
+// ── Consultar ARCA ───────────────────────────────────────────────────────────
+// La constancia de inscripción del CUIT (/empleadores/arca) completa la razón
+// social y el domicilio fiscal; el legal, solo si está vacío entero (ARCA da
+// el fiscal y en una empresa nueva suele ser el mismo). Lo cargado y distinto
+// se ofrece con «Usar los datos de ARCA». En el alta se consulta sola cuando el
+// CUIT verifica. El recuadro y la regla son los de base.html.
+var URL_ARCA = "{{ url_for('empleadores.consultar_arca') }}";
+var ID_EMPLEADOR = "{{ e.get('id') or '' }}";
+var arcaUltimo = '';
+var DOM_ARCA = ['provincia_id', 'localidad', 'cp', 'calle', 'numero', 'piso', 'depto'];
+
+function domicilioArca(prefijo, dom) {
+  return DOM_ARCA.map(function (c) {
+    return { id: prefijo + '_' + (c === 'localidad' ? 'localidad_nombre' : c), valor: dom[c] };
+  });
+}
+function domicilioVacio(prefijo) {
+  return Array.prototype.every.call(
+    document.querySelectorAll('[data-domicilio="' + prefijo + '"] input[type=text], [data-domicilio="' + prefijo + '"] select'),
+    function (el) { return !el.value.trim(); });
+}
+
+function consultarArca(auto) {
+  var cuit = document.getElementById('CUIT').value.replace(/\D/g, '');
+  if (!cuitValido(cuit)) { arcaCaja('warning', 'Cargá un CUIT de 11 dígitos que verifique.'); return; }
+  if (auto && cuit === arcaUltimo) return;
+  arcaUltimo = cuit;
+  var q = new URLSearchParams({ cuit: cuit });
+  if (ID_EMPLEADOR) q.set('id', ID_EMPLEADOR);
+  arcaPedir(URL_ARCA + '?' + q.toString(), function (d) {
+    if (!d.ok) { arcaCaja(d.no_configurado ? 'info' : 'warning', d.error); return; }
+    if (d.ya_existe) {
+      arcaEnlace(arcaCaja('warning', 'Ese CUIT ya está cargado: ' + d.ya_existe.razon_social + '. '),
+                 'Abrir esa ficha', d.ya_existe.url);
+      return;
+    }
+    var dt = d.datos, dom = dt.domicilio || {};
+    var items = [{ id: 'razon_social', valor: dt.razon_social, rotulo: 'razón social' }];
+    if (dom.calle || dom.localidad) {
+      var legalVacio = domicilioVacio('dom');
+      items.push({ grupo: domicilioArca('fdom', dom), rotulo: 'domicilio fiscal', texto: dt.domicilio_texto });
+      if (legalVacio) items.push({ grupo: domicilioArca('dom', dom), rotulo: 'domicilio legal (el fiscal de ARCA)' });
+    }
+    var notas = [];
+    if (dt.condicion_iva) notas.push('Condición frente al IVA: ' + dt.condicion_iva
+                                     + (dt.categoria_monotributo ? ' (' + dt.categoria_monotributo + ')' : '') + '.');
+    if (dt.actividad_principal) notas.push('Actividad principal: ' + dt.actividad_principal + '.');
+    arcaMostrar(dt.razon_social + ' · CUIT ' + arcaCuit(d.cuit), arcaCompletar(items), notas, dt.avisos);
+  });
+}
+
 // ── CUIT: mismo cálculo que el servidor, para avisar antes de enviar ─────────
 function cuitValido(cuit) {
   if (!/^\d{11}$/.test(cuit)) return false;
@@ -456,6 +510,7 @@ function validarCuit(input) {
   } else if (cuitValido(limpio)) {
     aviso.textContent = 'CUIT válido';
     aviso.classList.add('ok');
+    if (!ID_EMPLEADOR) consultarArca(true);
   } else {
     aviso.textContent = 'El dígito verificador no cierra';
     aviso.classList.add('error');

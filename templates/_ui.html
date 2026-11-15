@@ -372,3 +372,18 @@
   <span class="marca ojo {{ 'si' if c.get('verificado_visual') }}" title="{{ t_ojo }}" role="img" aria-label="{{ t_ojo }}">{{ icono('ver', 13) }}</span>
 </span>
 {%- endmacro %}
+
+
+{# ── Consultar ARCA ─────────────────────────────────────────────────────────
+   El botón de las fichas de afiliados, empleadores y proveedores y, debajo,
+   el recuadro donde se dibuja lo que contestó ARCA. Las funciones del
+   recuadro (arcaPedir, arcaCompletar, arcaMostrar…) están en base.html; la
+   pantalla define `consultarArca(auto)`. Va dentro de un `.campos`. #}
+{% macro arca_consulta(span=3, ayuda='Completa lo vacío con el padrón de ARCA') -%}
+<div class="campo" style="--span:{{ span }};">
+  <label>&nbsp;</label>
+  <div>{{ boton('Consultar ARCA', 'secondary', onclick='consultarArca(false)', id='btn-arca', icono_='buscar') }}</div>
+  <small class="campo-ayuda">{{ ayuda }}</small>
+</div>
+<div class="campo oculto" style="--span:12;" id="arca-resultado" aria-live="polite"></div>
+{%- endmacro %}

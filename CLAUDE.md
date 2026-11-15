@@ -93,6 +93,7 @@ gestion_sindicato/
   lector_pdf_ocr.py       texto del PDF, OCR de escaneos, cotejo PDF ↔ datos (de gestion_adm)
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
+  arca_constancia.py      constancia de inscripción (ws_sr_constancia_inscripcion): empleadores y proveedores
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
   ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
@@ -167,7 +168,7 @@ repetiría en la URL lo que dice el dominio.
                              /descartar POST, /planilla.xlsx)
 /login /logout /menu   /menu: el panel de inicio con los accesos directos (sin ninguno, al Panel de Fiscalización)
 /accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
-/empleadores         ABM, ?edit=ID
+/empleadores         ABM, ?edit=ID; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa la ficha (JSON)
 /empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
                      (?desde, ?hasta, ?con_saldo=1); /<cuit>/<periodo> la cuota del período (?volver);
                      /aplicaciones (?cuit=), /aplicaciones/aplicar,
@@ -194,6 +195,7 @@ repetiría en la URL lo que dice el dominio.
 /proveedores/<id>/cuenta/<pasivo|gasto>  POST alta/baja de cuenta contable
 /proveedores/<id>/mesa   POST área y usuario destino de sus expedientes (solapa Mesa de entradas)
 /proveedores/api/cuit/<cuit>  ¿válido y libre? (aviso mientras se tipea); /api/buscar
+/proveedores/api/arca/<cuit>  ?excepto=ID: la constancia de ARCA completa la ficha (JSON)
 /proveedores/cc         cuenta corriente: ?saldo=acreedor|deudor|todos, ?rubro, ?activo, ?hasta; /cuit/<cuit>
 /proveedores/cc/<id>    estado de cuenta: ?vista=cronologica|aplicacion, ?desde, ?hasta, ?rubro, ?cbte, ?con_saldo=1;
                         /<id>/pdf (mismos filtros), /<id>/aplicaciones_de?liq=|?pago= (JSON)
@@ -315,7 +317,7 @@ SIND_DB_HOST  SIND_DB_PORT  SIND_DB_USER  SIND_DB_PASS
 SIND_SECRET_KEY  SIND_PORT
 SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AEDA (importar_aeda.py)
 [SIND_ADJUNTOS]                                   comprobantes, PDF y logo (por defecto adjuntos/)
-[SIND_ARCA_CERT  SIND_ARCA_KEY  SIND_ARCA_CUIT]   constatación con ARCA (opcional)
+[SIND_ARCA_CERT  SIND_ARCA_KEY  SIND_ARCA_CUIT]   ARCA (opcional): constatación, padrón A13, constancia
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)
 [SIND_CONTABLE_HOST  _PORT  _USER  _PASS  _DB]    contable en Railway, solo lectura (contable_oseda.py)
 [SIND_URL_PUBLICA]                                https://aeda.seggestion.com.ar: arma el enlace de las empresas
@@ -1024,6 +1026,21 @@ comprobantes (36), en «Cuenta corriente de proveedores».
 
 - **Fuera, por ser de la obra social**: la solapa Hospital/Integración (prestadores SSS). Las columnas
   quedan en la tabla, sin tocar.
+- **Consultar ARCA** (pedido del 15/11/2026, en proveedores y en empleadores, «igual que en gestion_adm», que
+  usa la constancia en las dos): `arca_constancia.py`, `ws_sr_constancia_inscripcion` (padrón A5,
+  `getPersona_v2`), sin zeep, con el certificado del sindicato (`arca_wscdc.token(servicio)`). Proveedor
+  (`/proveedores/api/arca/<cuit>`): razón social, domicilio fiscal (la dirección entera en «Calle y número»),
+  condición de IVA y la de IIBB si ARCA la informa; además muestra Ganancias, categoría del monotributo y
+  actividad principal. Empleador (`/empleadores/arca`): razón social y domicilio fiscal, partido en calle,
+  número, piso y depto (`partir_direccion`); el legal solo si está vacío entero. La provincia, por nombre
+  contra `p_provincia` (como el A13). La regla es la de la ficha del afiliado: lo vacío se completa, lo
+  distinto se ofrece; un CUIT que ya es de otro registro avisa con el enlace y no completa nada. En el alta
+  consulta sola con el CUIT completo. **Condición de IVA**: por la descripción del impuesto (IVA, IVA EXENTO,
+  IVA NO ALCANZADO, MONOTRIBUTO…) y, si falta, por el id (30, 32 exento, 33 no inscripto, 34 no alcanzado,
+  20 monotributo); gestion_adm toma el 32 como inscripto y el 33 como exento. «No inscripto» no tiene código
+  en `arca_responsable_tipo`: queda vacío y se muestra el texto. Si el certificado tiene el A13 y no la
+  constancia (WSAA `notAuthorized`), cae al A13: razón social y domicilio, con un aviso. Test:
+  `python tests/test_arca_constancia.py`, sin ARCA.
 - **Solapa Mesa de entradas** (pedido del 11/11/2026, como gestion_adm): área y usuario destino de los
   expedientes del proveedor (`id_area_destino`, `id_usuario_destino`; `/proveedores/<id>/mesa` POST, con su
   fila en la auditoría) y los últimos 10 expedientes. La carga de comprobantes ya derivaba el expediente a
@@ -1086,7 +1103,9 @@ carga del comprobante (f_comprobantes_arca)
   (`SIND_ARCA_CERT` / `SIND_ARCA_KEY`, fuera de la carpeta del sitio; el pool necesita leerlos).
   El token del WSAA es uno por certificado y servicio: compartido con gestion_adm, ARCA le niega el
   token a la segunda app. Se guarda en `SIND_ADJUNTOS/arca/ta_wscdc.json` (uno por servicio: el padrón A13 usa
-  `ta_ws_sr_padron_a13.json`) porque IIS corre varios procesos. Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
+  `ta_ws_sr_padron_a13.json` y la constancia `ta_ws_sr_constancia_inscripcion.json`) porque IIS corre varios
+  procesos. Cada servicio se asocia al certificado en el Administrador de Relaciones de ARCA: `wscdc`,
+  `ws_sr_padron_a13` (afiliados) y `ws_sr_constancia_inscripcion` (empleadores y proveedores). Sin configurar, todo entra «sin constatar»; rechazado ('R') no entra; ARCA caído ('E')
   entra con aviso. Lo vinculado a Mis Comprobantes con el mismo importe y CAE queda en 'A'
   (`marcar_verificacion_mis`): ARCA lo informa como recibido.
 - **Signo**: una nota de crédito se carga en positivo y la liquidación va en negativo. Lo decide el
@@ -1630,6 +1649,10 @@ colores, `.btn-accion` definido dos veces): acá eso no se repite.
   costado le sacaba ancho a las grillas.
 - **Estados con texto**: `ui.estado(texto, tipo)`, `ui.activo(activo, fecha_baja)`, `ui.si_no(v)`.
   Una fila dada de baja lleva `.fila-baja`.
+- **Consultar ARCA** en una ficha: `ui.arca_consulta()` (botón y recuadro `#arca-resultado`) y, en
+  base.html, `arcaPedir` / `arcaCompletar` / `arcaMostrar`: lo vacío se completa, lo distinto se lista con
+  «Usar los datos de ARCA». La pantalla define `consultarArca(auto)`. Lo usan afiliados, empleadores y
+  proveedores.
 - **Formularios**: `.bloque` > `.campos` (grilla de 12) > `.campo style="--span:N"`; ayuda en
   `.campo-ayuda` (`.ok` / `.error`); casillas con `label.campo-check`; pie `.form-acciones`. Selects de
   catálogo con `ui.opciones(items, valor)`: si el valor guardado no está en el catálogo lo agrega en

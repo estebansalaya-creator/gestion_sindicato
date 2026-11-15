@@ -4,12 +4,14 @@ empleadores.py — ABM de empleadores (`p_empresas`).
 Sigue el ABM de empresas de `gestion_adm` en estructura y en pantalla, con dos
 diferencias obligadas y una de convención:
 
-1. **Sin validación contra ARCA.** El original exige consultar el CUIT en el
-   padrón de ARCA antes de guardar, contra `/api/consultar_cuit/`. Ese servicio
-   vive en `gestion_adm` con sus credenciales, y la nómina ARCA está fuera del
-   alcance de este proyecto. Acá el CUIT se valida por dígito verificador, que
-   no depende de ningún servicio: no confirma que la empresa exista, pero
-   descarta los CUIT mal tipeados, que es la mayoría de los errores de carga.
+1. **ARCA a pedido, no obligatorio.** El original exige consultar el CUIT en
+   el padrón de ARCA antes de guardar. Acá el CUIT se valida por dígito
+   verificador, que no depende de ningún servicio, y el botón «Consultar ARCA»
+   (pedido del 15/11/2026; solo en el alta cuando el CUIT está completo) trae
+   de la constancia de inscripción la razón social y el domicilio fiscal
+   (`/empleadores/arca`, arca_constancia.py, con el certificado del sindicato).
+   Completa lo vacío; lo cargado y distinto lo ofrece. El domicilio legal solo
+   se completa si está vacío entero: ARCA da el fiscal.
 2. **Contactos en su propia solapa**, con el parcial `_contactos.html` y la
    lógica de `contactos.py` —los mismos que usa afiliados—.
 3. La edición entra por `?edit=<id>` y no por `?id=<id>`, que es la convención
@@ -18,9 +20,10 @@ diferencias obligadas y una de convención:
 
 from datetime import date
 
-from flask import (Blueprint, render_template, request,
+from flask import (Blueprint, render_template, request, jsonify,
                    redirect, url_for, session, flash)
 
+import arca_constancia
 import contactos as _contactos
 import contable_oseda
 from db import get_connection, puede, validasesion
@@ -344,3 +347,49 @@ def abm_empleadores():
         areas_contacto=areas_contacto,
         errores=errores,
     )
+
+
+@empleadores_bp.route("/empleadores/arca")
+def consultar_arca():
+    """
+    El «Consultar ARCA» de la ficha (`?cuit=&id=`): la constancia de inscripción
+    del CUIT (arca_constancia.py), con el domicilio partido en los campos de
+    p_empresas y la provincia en el código de p_provincia (por nombre). JSON:
+
+        ok, cuit
+        datos      razon_social, domicilio {provincia_id, localidad, cp, calle,
+                   numero, piso, depto}, domicilio_texto, condicion_iva,
+                   categoria_monotributo, actividad_principal, avisos
+        ya_existe  {id, razon_social, url} si el CUIT es de otro empleador: no
+                   se completa nada
+        error, no_configurado
+    """
+    if not validasesion():
+        return jsonify({"ok": False, "error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede(url_for("empleadores.abm_empleadores")):
+        return jsonify({"ok": False, "error": "No tenés permiso para el ABM de empleadores."}), 403
+    r = arca_constancia.para_ficha(request.args.get("cuit"))
+    if not r["ok"]:
+        return jsonify(r)
+    d, cuit = r.pop("d"), r["cuit"]
+    dom = d["domicilio"] or {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id, razon_social FROM p_empresas WHERE CUIT = %s AND id <> %s LIMIT 1",
+                        (cuit, request.args.get("id", type=int) or 0))
+            otro = cur.fetchone()
+            prov = arca_constancia.provincia_codigo(cur, dom.get("provincia")) if dom else None
+    r["ya_existe"] = dict(otro, url=url_for("empleadores.abm_empleadores", edit=otro["id"])) if otro else None
+    # Cortado al largo de cada columna de p_empresas.
+    r["datos"] = {
+        "razon_social": d["razon_social"][:100],
+        "domicilio": {"provincia_id": prov if prov is not None else "",
+                      "localidad": (dom.get("localidad") or "")[:100], "cp": (dom.get("cp") or "")[:8],
+                      "calle": (dom.get("calle") or "")[:150], "numero": (dom.get("numero") or "")[:10],
+                      "piso": (dom.get("piso") or "")[:5], "depto": (dom.get("depto") or "")[:10]} if dom else {},
+        "domicilio_texto": arca_constancia.texto_domicilio(dom),
+        "condicion_iva": d["condicion_iva"], "categoria_monotributo": d["categoria_monotributo"],
+        "actividad_principal": d["actividad_principal"], "avisos": d["avisos"],
+    }
+    return jsonify(r)
+

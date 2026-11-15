@@ -16,6 +16,11 @@ social:
   campos no se pisan al guardar.
 - Sin la importación por CSV: los proveedores vienen de AEDA
   (importar_aeda_proveedores.py).
+- «Consultar ARCA» (pedido del 15/11/2026, como el widget de CUIT de
+  gestion_adm): la constancia de inscripción (arca_constancia.py, certificado
+  del sindicato) completa razón social, domicilio fiscal, condición frente al
+  IVA y, si ARCA la informa, la de Ingresos Brutos. Solo en el alta cuando el
+  CUIT está completo; editando, a pedido. Lo cargado y distinto se ofrece.
 
 Reglas que vienen de gestion_adm:
 - Un proveedor por CUIT; se avisa mientras se tipea y se controla al guardar.
@@ -39,6 +44,7 @@ from datetime import datetime
 import pymysql
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+import arca_constancia
 import comprobantes_datos as cd
 import contactos
 import institucion
@@ -603,6 +609,54 @@ def api_cuit(cuit):
         with conn.cursor() as cur:
             dup = _por_cuit(cur, cuit, request.args.get("excepto", type=int))
     return jsonify({"ok": True, "valido": True, "existe": bool(dup), **(dup or {})})
+
+
+@proveedores_bp.route("/api/arca/<cuit>")
+def api_arca(cuit):
+    """
+    El «Consultar ARCA» de la ficha (`?excepto=<id>`): la constancia de
+    inscripción del CUIT con los nombres de los campos del formulario. JSON:
+
+        ok, cuit
+        datos      razon_social, condicion_iva (código de arca_responsable_tipo
+                   o vacío), condicion_iva_texto, condicion_iibb, domicilio
+                   {dom_calle, dom_cp, dom_localidad, dom_provincia_id},
+                   domicilio_texto, inscripto_ganancias, categoria_monotributo,
+                   actividad_principal, avisos
+        ya_existe  el proveedor que ya tiene ese CUIT (como /api/cuit): no se
+                   completa nada
+        error, no_configurado
+    """
+    if not validasesion():
+        return jsonify({"ok": False, "error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede_abm():
+        return jsonify({"ok": False, "error": "No tenés permiso para el ABM de proveedores."}), 403
+    r = arca_constancia.para_ficha(cuit)
+    if not r["ok"]:
+        return jsonify(r)
+    d, cuit = r.pop("d"), r["cuit"]
+    dom = d["domicilio"] or {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            r["ya_existe"] = _por_cuit(cur, cuit, request.args.get("excepto", type=int))
+            prov = arca_constancia.provincia_codigo(cur, dom.get("provincia")) if dom else None
+    # Cortado al largo de cada columna de c_proveedores. La calle va entera
+    # («Calle y número»), como la da la constancia.
+    r["datos"] = {
+        "razon_social": d["razon_social"][:200],
+        "condicion_iva": "" if d["condicion_iva_codigo"] is None else d["condicion_iva_codigo"],
+        "condicion_iva_texto": d["condicion_iva"],
+        "condicion_iibb": d["condicion_iibb"] or "",
+        "domicilio": {"dom_calle": (dom.get("direccion") or "").upper()[:150],
+                      "dom_cp": (dom.get("cp") or "").upper()[:10],
+                      "dom_localidad": (dom.get("localidad") or "").upper()[:100],
+                      "dom_provincia_id": prov if prov is not None else ""} if dom else {},
+        "domicilio_texto": arca_constancia.texto_domicilio(dom),
+        "inscripto_ganancias": d["inscripto_ganancias"],
+        "categoria_monotributo": d["categoria_monotributo"],
+        "actividad_principal": d["actividad_principal"], "avisos": d["avisos"],
+    }
+    return jsonify(r)
 
 
 @proveedores_bp.route("/api/buscar")

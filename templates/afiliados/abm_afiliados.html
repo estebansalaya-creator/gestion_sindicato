@@ -288,12 +288,7 @@
             <small class="campo-ayuda" id="cuil-ayuda"></small>
           </div>
           {% if not consulta %}
-          <div class="campo" style="--span:3;">
-            <label>&nbsp;</label>
-            <div>{{ ui.boton('Consultar ARCA', 'secondary', onclick='consultarArca(false)', id='btn-arca', icono_='buscar') }}</div>
-            <small class="campo-ayuda">Completa lo vacío con el padrón de ARCA</small>
-          </div>
-          <div class="campo oculto" style="--span:12;" id="arca-resultado" aria-live="polite"></div>
+          {{ ui.arca_consulta() }}
           {% endif %}
 
           {# Un solo campo, como lo guarda AEDA: partir apellido y nombres por
@@ -866,36 +861,8 @@ function alCambiarDocumento() {
   if (!EDITANDO && URL_ARCA && c && campo('sexo').value) consultarArca(true);
 }
 
-// ── El resultado de ARCA, en el recuadro de debajo del botón ──
-function arcaCaja(tipo, texto) {
-  var caja = campo('arca-resultado');
-  caja.textContent = '';
-  caja.classList.remove('oculto');
-  var a = document.createElement('div');
-  a.className = 'alert alert-' + tipo;
-  var cuerpo = document.createElement('div');
-  if (texto) cuerpo.appendChild(document.createTextNode(texto));
-  a.appendChild(cuerpo);
-  caja.appendChild(a);
-  return cuerpo;
-}
-function arcaLinea(cuerpo, texto, clase) {
-  var d = document.createElement('div');
-  if (clase) d.className = clase;
-  d.textContent = texto;
-  cuerpo.appendChild(d);
-  return d;
-}
-function arcaBoton(cont, texto, fn) {
-  var b = document.createElement('button');
-  b.type = 'button';
-  b.className = 'btn btn-secondary btn-sm';
-  b.textContent = texto;
-  b.addEventListener('click', fn);
-  cont.appendChild(b);
-  return b;
-}
-
+// El recuadro del resultado (arcaCaja, arcaLinea, arcaBoton, arcaPedir) es el
+// de las tres fichas y está en base.html.
 function consultarArca(auto) {
   if (!URL_ARCA) return;
   var cuil = digitosDe('cuil'), doc = digitosDe('nro_documento'), sexo = campo('sexo').value;
@@ -907,14 +874,7 @@ function consultarArca(auto) {
   else if (cuil.length === 11) q.set('cuil', cuil);
   else { arcaCaja('warning', 'Cargá el número de documento y el sexo, o el CUIL.'); return; }
   if (ID_AFILIADO) q.set('id', ID_AFILIADO);
-  var btn = campo('btn-arca');
-  btn.disabled = true;
-  arcaCaja('info', 'Consultando ARCA…');
-  fetch(URL_ARCA + '?' + q.toString(), { credentials: 'same-origin' })
-    .then(function (r) { return r.json(); })
-    .then(function (d) { arcaResultado(d, auto); })
-    .catch(function (e) { arcaCaja('danger', 'No se pudo consultar ARCA: ' + e.message); })
-    .finally(function () { btn.disabled = false; });
+  arcaPedir(URL_ARCA + '?' + q.toString(), function (d) { arcaResultado(d, auto); });
 }
 
 function arcaResultado(d, auto) {

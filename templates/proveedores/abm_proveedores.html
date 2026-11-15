@@ -161,7 +161,11 @@
     <div class="bloque-titulo">Identificación</div>
     <div class="campos">
       {{ texto('cuit', 'CUIT', 3, 13, mono=True, req=True, id_ayuda='cuit-ayuda') }}
-      {{ texto('razon_social', 'Razón social', 5, 200, req=True, mayus=True) }}
+      {{ texto('razon_social', 'Razón social', 6, 200, req=True, mayus=True) }}
+      {# Razón social, domicilio fiscal y condición frente al IVA de la
+         constancia de inscripción (/proveedores/api/arca). En el alta se
+         consulta sola al completar el CUIT. #}
+      {{ ui.arca_consulta(ayuda='Completa lo vacío con la constancia de ARCA') }}
       {{ texto('nombre_fantasia', 'Nombre de fantasía', 4, 200) }}
       <div class="campo" style="--span:3;">
         <label for="fecha_alta">Fecha de alta</label>
@@ -558,6 +562,43 @@ function avisarCuit() {
     });
 }
 
+/* Consultar ARCA: la constancia de inscripción completa razón social, domicilio
+   fiscal, condición frente al IVA y, si ARCA la informa, la de IIBB. Lo
+   cargado y distinto se ofrece con «Usar los datos de ARCA». En el alta se
+   consulta sola cuando el CUIT está completo (también al llegar con el CUIT
+   desde la carga de comprobantes). El recuadro y la regla son los de base.html. */
+var URL_ARCA = "{{ url_for('proveedores.api_arca', cuit='00000000000') }}".replace('00000000000', '');
+var arcaUltimo = '';
+function consultarArca(auto) {
+  var cuit = (document.getElementById('cuit').value || '').replace(/\D/g, '');
+  if (cuit.length !== 11) { arcaCaja('warning', 'Cargá el CUIT (11 dígitos).'); return; }
+  if (auto && cuit === arcaUltimo) return;
+  arcaUltimo = cuit;
+  arcaPedir(URL_ARCA + cuit + (ID_ACTUAL ? '?excepto=' + ID_ACTUAL : ''), function (d) {
+    if (!d.ok) { arcaCaja(d.no_configurado ? 'info' : 'warning', d.error); return; }
+    if (d.ya_existe) {
+      arcaEnlace(arcaCaja('warning', 'Ese CUIT ya es de ' + d.ya_existe.razon_social
+                          + (d.ya_existe.activo ? '' : ' (dado de baja)') + '. '), 'Abrir esa ficha', d.ya_existe.url);
+      return;
+    }
+    var dt = d.datos, dom = dt.domicilio || {};
+    var items = [{ id: 'razon_social', valor: dt.razon_social, rotulo: 'razón social' }];
+    if (dom.dom_calle || dom.dom_localidad) {
+      items.push({ grupo: ['dom_calle', 'dom_cp', 'dom_localidad', 'dom_provincia_id'].map(function (c) {
+                     return { id: c, valor: dom[c] }; }),
+                   rotulo: 'domicilio fiscal', texto: dt.domicilio_texto });
+    }
+    items.push({ id: 'condicion_iva', valor: dt.condicion_iva, rotulo: 'condición frente al IVA' });
+    items.push({ id: 'condicion_iibb', valor: dt.condicion_iibb, rotulo: 'condición IIBB' });
+    var notas = [];
+    if (dt.condicion_iva_texto && dt.condicion_iva === '') notas.push('Condición frente al IVA según ARCA: ' + dt.condicion_iva_texto + ' (no está en la lista).');
+    if (dt.categoria_monotributo) notas.push('Categoría del monotributo: ' + dt.categoria_monotributo + '.');
+    if (dt.inscripto_ganancias !== null) notas.push('Ganancias: ' + (dt.inscripto_ganancias ? 'inscripto' : 'no inscripto') + '.');
+    if (dt.actividad_principal) notas.push('Actividad principal: ' + dt.actividad_principal + '.');
+    arcaMostrar(dt.razon_social + ' · CUIT ' + arcaCuit(d.cuit), arcaCompletar(items), notas, dt.avisos);
+  });
+}
+
 /* CBU: cbuValido() está en base.html. */
 function avisarCbu() {
   var c = (document.getElementById('cbu').value || '').replace(/\D/g, ''), a = document.getElementById('cbu-ayuda');
@@ -603,6 +644,12 @@ document.addEventListener('DOMContentLoaded', function () {
   var cuit = document.getElementById('cuit');
   cuit.addEventListener('change', avisarCuit);
   if (cuit.value) avisarCuit();
+  if (!ID_ACTUAL) {
+    cuit.addEventListener('input', function () {
+      if (cuit.value.replace(/\D/g, '').length === 11) consultarArca(true);
+    });
+    if (cuit.value.replace(/\D/g, '').length === 11) consultarArca(true);
+  }
   var cbu = document.getElementById('cbu');
   cbu.addEventListener('input', avisarCbu);
   if (cbu.value) avisarCbu();
