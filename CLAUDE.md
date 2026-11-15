@@ -1043,6 +1043,13 @@ comprobantes (36), en «Cuenta corriente de proveedores».
   en `arca_responsable_tipo`: queda vacío y se muestra el texto. Si el certificado tiene el A13 y no la
   constancia (WSAA `notAuthorized`), cae al A13: razón social y domicilio, con un aviso. Test:
   `python tests/test_arca_constancia.py`, sin ARCA.
+- **Solapa ARCA del empleador** (pedido del 15/11/2026, la de gestion_adm): estado de la clave, tipo de
+  persona, condición de IVA, categoría del monotributo, actividades (orden 1 = principal) e impuestos
+  (activos primero), con fecha y usuario de la consulta. Cada consulta completa de la constancia (de la
+  ficha de empleadores o de proveedores) se guarda por CUIT en `arca_constancia`, `_impuestos` y
+  `_actividades` (`sql/arca_constancia_20261115.sql`; `arca_constancia.guardar` / `leer`); lo del A13 o
+  una constancia que ARCA no emite no pisa lo guardado. Si nunca se consultó, la solapa consulta sola al
+  abrirse. Sin la «Actualización desde ARCA» masiva de gestion_adm ni sus cambios de domicilio.
 - **Solapa Mesa de entradas** (pedido del 11/11/2026, como gestion_adm): área y usuario destino de los
   expedientes del proveedor (`id_area_destino`, `id_usuario_destino`; `/proveedores/<id>/mesa` POST, con su
   fila en la auditoría) y los últimos 10 expedientes. La carga de comprobantes ya derivaba el expediente a

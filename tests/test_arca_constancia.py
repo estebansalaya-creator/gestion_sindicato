@@ -123,5 +123,39 @@ v(a["razon_social"] == "ACME SRL" and a["condicion_iva_codigo"] is None, "razón
 v(a["domicilio"]["direccion"] == "MITRE 10 Piso:1 Dpto:A" and a["domicilio"]["cp"] == "2000", "dirección armada")
 v(a["fuente"] == "padron_a13" and any("ws_sr_constancia_inscripcion" in x for x in a["avisos"]), "avisa por qué falta el IVA")
 
+print("\nLo que se guarda por CUIT (solapa ARCA)")
+
+
+class Cur:
+    def __init__(self): self.sql = []
+    def execute(self, sql, p=None): self.sql.append((" ".join(sql.split()), p))
+
+
+cur = Cur()
+C.guardar(cur, d, usuario=7)
+ins = [x for x in cur.sql if x[0].startswith("INSERT INTO arca_constancia ")]
+v(len(ins) == 1 and ins[0][1][:2] == ("30709768359", "LESMAHER SA") and ins[0][1][-1] == 7, "cabecera con CUIT, razón social y usuario")
+v(sum(x[0].startswith("DELETE") for x in cur.sql) == 2, "impuestos y actividades se reemplazan enteros")
+imp = [x[1] for x in cur.sql if x[0].startswith("INSERT INTO arca_constancia_impuestos")]
+v(len(imp) == 3 and imp[1] == ("30709768359", 30, "IVA", "AC", "200501"), "los tres impuestos, con estado y período")
+act = [x[1] for x in cur.sql if x[0].startswith("INSERT INTO arca_constancia_actividades")]
+v(len(act) == 2 and act[0] == ("30709768359", 812010, "SERVICIOS DE LIMPIEZA", 883, 1, "201311"), "actividades con nomenclador y orden")
+
+guardados = []
+C.configurado = lambda: (True, "")
+C.guardar_consulta = lambda dd, usuario=None: (guardados.append((dd["cuit"], usuario)), "")[1]
+C._constancia = lambda c: C.leer_constancia(sobre(SA), c)
+r = C.para_ficha("30-70976835-9", usuario=5)
+v(r["ok"] and guardados == [("30709768359", 5)] and r["constancia"]["guardado"], "la consulta de la constancia se guarda")
+v([i["id_impuesto"] for i in r["constancia"]["impuestos"]] == [10, 30, 301] and r["constancia"]["actividades"][0]["nomenclador"] == 883,
+  "y vuelve para pintar la solapa")
+C._constancia = lambda c: C.leer_constancia(sobre(ERR), c)
+r = C.para_ficha("20111111112")
+v(r["ok"] and len(guardados) == 1 and not r["constancia"]["guardado"], "sin constancia (clave inactiva): no pisa lo guardado")
+C.guardar_consulta = lambda dd, usuario=None: "falta correr sql/arca_constancia_20261115.sql"
+C._constancia = lambda c: C.leer_constancia(sobre(SA), c)
+r = C.para_ficha("30709768359")
+v(r["ok"] and not r["constancia"]["guardado"] and "falta correr" in r["constancia"]["aviso_guardado"], "sin las tablas: consulta igual y lo dice")
+
 print(f"\n{ok} bien, {fallos} mal")
 sys.exit(1 if fallos else 0)

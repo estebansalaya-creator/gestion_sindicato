@@ -11,7 +11,9 @@ diferencias obligadas y una de convención:
    de la constancia de inscripción la razón social y el domicilio fiscal
    (`/empleadores/arca`, arca_constancia.py, con el certificado del sindicato).
    Completa lo vacío; lo cargado y distinto lo ofrece. El domicilio legal solo
-   se completa si está vacío entero: ARCA da el fiscal.
+   se completa si está vacío entero: ARCA da el fiscal. La solapa ARCA de la
+   ficha muestra los impuestos y las actividades registradas, guardados por
+   CUIT en cada consulta (arca_constancia.leer).
 2. **Contactos en su propia solapa**, con el parcial `_contactos.html` y la
    lógica de `contactos.py` —los mismos que usa afiliados—.
 3. La edición entra por `?edit=<id>` y no por `?id=<id>`, que es la convención
@@ -280,6 +282,9 @@ def abm_empleadores():
             # El parcial se dibuja únicamente en edición.
             contactos_emp = []
             nomina = []
+            # Solapa ARCA: lo último que informó la constancia de inscripción
+            # de este CUIT (arca_constancia.py). Se consulta desde la solapa.
+            arca = None
             # Solapa «Cuota sindical»: el enlace de la empresa para presentar su
             # Libro de Sueldos Digital y lo que presentó (fisca_lsd.py). Solo
             # para quien tiene Presentaciones LSD en el menú.
@@ -290,6 +295,10 @@ def abm_empleadores():
                 contactos_emp = _contactos.de(cur, "empresa", empleador["id"])
                 if empleador.get("CUIT"):
                     nomina, aviso_ddjj = _nomina(cur, empleador)
+                    try:
+                        arca = arca_constancia.leer(cur, "%011d" % int(empleador["CUIT"])) or {}
+                    except Exception as e:                   # noqa: BLE001
+                        arca = {"error": str(e)}
                     if puede(url_for("fisca_lsd.lista")):
                         import fisca_lsd
                         cuota = fisca_lsd.datos_empleador(cur, empleador)
@@ -341,6 +350,7 @@ def abm_empleadores():
         contactos=contactos_emp,
         nomina=nomina,
         aviso_ddjj=aviso_ddjj,
+        arca=arca,
         cuota=cuota,
         enlace_nuevo=enlace_nuevo,
         solapa=request.args.get("solapa"),
@@ -360,6 +370,8 @@ def consultar_arca():
         datos      razon_social, domicilio {provincia_id, localidad, cp, calle,
                    numero, piso, depto}, domicilio_texto, condicion_iva,
                    categoria_monotributo, actividad_principal, avisos
+        constancia lo de la solapa ARCA (impuestos, actividades, estado de la
+                   clave…), que además queda guardado por CUIT
         ya_existe  {id, razon_social, url} si el CUIT es de otro empleador: no
                    se completa nada
         error, no_configurado
@@ -368,7 +380,7 @@ def consultar_arca():
         return jsonify({"ok": False, "error": "La sesión venció: volvé a ingresar."}), 401
     if not puede(url_for("empleadores.abm_empleadores")):
         return jsonify({"ok": False, "error": "No tenés permiso para el ABM de empleadores."}), 403
-    r = arca_constancia.para_ficha(request.args.get("cuit"))
+    r = arca_constancia.para_ficha(request.args.get("cuit"), session.get("sind_usuario_id"))
     if not r["ok"]:
         return jsonify(r)
     d, cuit = r.pop("d"), r["cuit"]

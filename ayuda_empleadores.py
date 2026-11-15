@@ -39,6 +39,11 @@ SECCIONES = [
       "Si el CUIT ya es de otro empleador, avisa con el enlace y no completa nada."),
      ("Nómina", "Los afiliados con relación laboral con este empleador (ver abajo)."),
      ("Contactos", "Las personas de la empresa: nombre, cargo, área, teléfono y correo."),
+     ("ARCA", "Lo que informa la constancia de inscripción del CUIT: estado de la clave, tipo de "
+      "persona, condición de IVA y categoría del monotributo, las <b>actividades</b> (la de orden 1 "
+      "es la principal) y los <b>impuestos</b> registrados, activos primero, con el período desde el "
+      "que rigen. Queda guardado con la fecha y quién consultó; si nunca se consultó, se consulta "
+      "sola al abrir la solapa, y <b>Consultar ARCA</b> la actualiza."),
      ("Cuota sindical", "El enlace para que la empresa presente su Libro de Sueldos Digital y sus "
       "presentaciones."),
      ("Cuenta corriente", "El botón de arriba lleva a su estado de cuenta."),

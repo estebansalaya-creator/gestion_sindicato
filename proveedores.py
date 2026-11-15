@@ -42,7 +42,7 @@ import re
 from datetime import datetime
 
 import pymysql
-from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
+from flask import Blueprint, flash, jsonify, redirect, render_template, request, session, url_for
 
 import arca_constancia
 import comprobantes_datos as cd
@@ -631,7 +631,7 @@ def api_arca(cuit):
         return jsonify({"ok": False, "error": "La sesión venció: volvé a ingresar."}), 401
     if not puede_abm():
         return jsonify({"ok": False, "error": "No tenés permiso para el ABM de proveedores."}), 403
-    r = arca_constancia.para_ficha(cuit)
+    r = arca_constancia.para_ficha(cuit, session.get("sind_usuario_id"))
     if not r["ok"]:
         return jsonify(r)
     d, cuit = r.pop("d"), r["cuit"]

@@ -32,6 +32,13 @@ descripción, que no depende de esa tabla. El código es el de
 `arca_responsable_tipo`; «no inscripto» no tiene código en esa tabla y queda
 vacío, con el texto.
 
+LO QUE TRAE, GUARDADO
+---------------------
+Cada consulta completa (de la constancia, no del A13) se guarda por CUIT en
+`arca_constancia`, `_impuestos` y `_actividades` (sql/arca_constancia_20261115.sql),
+como gestion_adm: la ficha del empleador lo muestra en la solapa ARCA (pedido
+del 15/11/2026) sin volver a consultar. Sin las tablas, la consulta anda igual.
+
 Sin zeep, leyendo la respuesta por nombre de etiqueta, como arca_padron.py.
 """
 from __future__ import annotations
@@ -133,6 +140,7 @@ def _actividades(contenedor, nombres=("actividad",)) -> list[dict]:
     for n in nombres:
         for a in _hijos(contenedor, n):
             salida.append({"id": _txt(a, "idActividad"), "descripcion": _txt(a, "descripcionActividad"),
+                           "nomenclador": _entero(_txt(a, "nomenclador")),
                            "orden": _entero(_txt(a, "orden")), "periodo": _txt(a, "periodo")})
     return salida
 
@@ -191,7 +199,7 @@ def leer_constancia(raiz: ET.Element, cuit: str = "") -> dict:
                 "tipo_persona": "", "estado_clave": "", "condicion_iva_codigo": None, "condicion_iva": "",
                 "inscripto_ganancias": None, "condicion_iibb": None, "impuestos": [], "actividades": [],
                 "actividad_principal": "", "categoria_monotributo": "", "domicilio": {},
-                "avisos": avisos, "fuente": "constancia"}
+                "avisos": avisos, "fuente": "constancia", "sin_constancia": True}
 
     razon = _txt(grales, "razonSocial")
     if not razon:
@@ -329,11 +337,12 @@ def provincia_codigo(cur, descripcion: str):
 # Para los botones de las fichas
 # ─────────────────────────────────────────────────────────────────────────────
 
-def para_ficha(cuit) -> dict:
+def para_ficha(cuit, usuario=None) -> dict:
     """
     Lo común de los «Consultar ARCA» de empleadores y proveedores:
-    {"ok": False, "error", "no_configurado"} o {"ok": True, "cuit", "d": consultar()}.
-    Cada pantalla arma después sus campos con `d`.
+    {"ok": False, "error", "no_configurado"} o {"ok": True, "cuit", "d": consultar(),
+    "constancia": lo de la solapa ARCA}. Cada pantalla arma después sus campos
+    con `d`. Lo que trajo la constancia queda guardado por CUIT (`guardar`).
     """
     c = P.digitos(cuit)
     if len(c) != 11 or not P.cuil_valido(c):
@@ -342,12 +351,114 @@ def para_ficha(cuit) -> dict:
     if not ok:
         return {"ok": False, "no_configurado": True, "error": f"No se puede consultar ARCA: {motivo}."}
     try:
-        return {"ok": True, "cuit": c, "d": consultar(c)}
+        d = consultar(c)
     except NoEncontrado as e:
         return {"ok": False, "error": f"ARCA no tiene ese CUIT ({e})."}
     except (ErrorARCA, ValueError) as e:
         log.warning("Consulta a ARCA del CUIT %s: %s", c, e)
         return {"ok": False, "error": f"No se pudo consultar ARCA: {e}."}
+    # Del A13 (sin impuestos) o sin constancia no se guarda: borraría lo que
+    # había con una lista vacía que no es lo que ARCA tiene registrado.
+    completa = d["fuente"] == "constancia" and not d.get("sin_constancia")
+    aviso = guardar_consulta(d, usuario) if completa else ""
+    return {"ok": True, "cuit": c, "d": d, "constancia": solapa(d, guardado=completa and not aviso, aviso=aviso)}
+
+
+def solapa(d: dict, guardado: bool, aviso: str = "") -> dict:
+    """Lo que pinta la solapa ARCA del empleador después de una consulta."""
+    import datetime
+    return {"razon_social": d["razon_social"], "estado_clave": d["estado_clave"],
+            "tipo_persona": d["tipo_persona"], "condicion_iva": d["condicion_iva"],
+            "categoria_monotributo": d["categoria_monotributo"],
+            "impuestos": [{"id_impuesto": i["id"], "descripcion": i["descripcion"], "estado": i["estado"],
+                           "periodo_desde": i["periodo"]} for i in d["impuestos"]],
+            "actividades": [{"id_actividad": a["id"], "descripcion": a["descripcion"],
+                             "nomenclador": a.get("nomenclador"), "orden": a["orden"],
+                             "periodo_desde": a["periodo"]} for a in d["actividades"]],
+            "consultado": datetime.datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "guardado": guardado, "aviso_guardado": aviso, "fuente": d["fuente"], "avisos": d["avisos"]}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Lo último que informó ARCA, guardado por CUIT (solapa ARCA del empleador)
+# Tablas: arca_constancia, _impuestos, _actividades (sql/arca_constancia_20261115.sql).
+# Los impuestos y las actividades se reemplazan enteros: lo que ARCA dejó de
+# informar no tiene que seguir apareciendo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def guardar(cur, d: dict, usuario=None) -> None:
+    cuit = P.digitos(d.get("cuit"))
+    if len(cuit) != 11:
+        return
+    cur.execute("""
+        INSERT INTO arca_constancia (cuit, razon_social, estado_clave, tipo_persona, condicion_iva,
+                                     categoria_monotributo, consultado, id_usuario)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW(), %s)
+        ON DUPLICATE KEY UPDATE razon_social = VALUES(razon_social), estado_clave = VALUES(estado_clave),
+               tipo_persona = VALUES(tipo_persona), condicion_iva = VALUES(condicion_iva),
+               categoria_monotributo = VALUES(categoria_monotributo), consultado = NOW(),
+               id_usuario = VALUES(id_usuario)
+    """, (cuit, (d.get("razon_social") or "")[:200] or None, (d.get("estado_clave") or "")[:30] or None,
+          (d.get("tipo_persona") or "")[:30] or None, (d.get("condicion_iva") or "")[:60] or None,
+          (d.get("categoria_monotributo") or "")[:100] or None, usuario))
+    cur.execute("DELETE FROM arca_constancia_impuestos WHERE cuit = %s", (cuit,))
+    for i in d.get("impuestos") or []:
+        cur.execute("""INSERT INTO arca_constancia_impuestos (cuit, id_impuesto, descripcion, estado, periodo_desde)
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (cuit, _entero(i.get("id")), (i.get("descripcion") or "")[:200] or None,
+                     (i.get("estado") or "")[:10] or None, (i.get("periodo") or "")[:8] or None))
+    cur.execute("DELETE FROM arca_constancia_actividades WHERE cuit = %s", (cuit,))
+    for a in d.get("actividades") or []:
+        cur.execute("""INSERT INTO arca_constancia_actividades
+                              (cuit, id_actividad, descripcion, nomenclador, orden, periodo_desde)
+                       VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (cuit, _entero(a.get("id")), (a.get("descripcion") or "")[:300] or None,
+                     a.get("nomenclador"), a.get("orden"), (a.get("periodo") or "")[:8] or None))
+
+
+def guardar_consulta(d: dict, usuario=None) -> str:
+    """Guarda en su propia transacción. "" o el motivo si no se pudo: que no se
+    pueda guardar no voltea la consulta (la ficha se completa igual), pero se dice."""
+    try:
+        from db import get_connection
+        with get_connection() as conn:
+            conn.begin()
+            with conn.cursor() as cur:
+                guardar(cur, d, usuario)
+            conn.commit()
+        return ""
+    except Exception as e:                                   # noqa: BLE001
+        log.warning("No se pudo guardar la constancia de %s: %s", d.get("cuit"), e)
+        if "1146" in str(e):
+            return "falta correr sql/arca_constancia_20261115.sql"
+        return str(e)
+
+
+def leer(cur, cuit) -> dict | None:
+    """Lo guardado del CUIT: {cuit, consultado, usuario, ..., impuestos, actividades}.
+    None si nunca se consultó; {"falta_tabla": True} si el script no se corrió."""
+    cuit = P.digitos(cuit)
+    if len(cuit) != 11:
+        return None
+    try:
+        cur.execute("""SELECT c.*, u.nombre AS usuario FROM arca_constancia c
+                         LEFT JOIN s_usuarios u ON u.id = c.id_usuario WHERE c.cuit = %s""", (cuit,))
+    except Exception as e:                                   # noqa: BLE001
+        if "1146" in str(e):
+            return {"falta_tabla": True}
+        raise
+    cab = cur.fetchone()
+    if not cab:
+        return None
+    out = dict(cab)
+    cur.execute("""SELECT id_impuesto, descripcion, estado, periodo_desde FROM arca_constancia_impuestos
+                     WHERE cuit = %s ORDER BY (estado = 'AC') DESC, id_impuesto""", (cuit,))
+    out["impuestos"] = cur.fetchall()
+    cur.execute("""SELECT id_actividad, descripcion, nomenclador, orden, periodo_desde
+                     FROM arca_constancia_actividades WHERE cuit = %s
+                     ORDER BY orden IS NULL, orden, id_actividad""", (cuit,))
+    out["actividades"] = cur.fetchall()
+    return out
 
 
 def texto_domicilio(dom: dict) -> str:

@@ -86,11 +86,13 @@
 
 {% set inicial = 'datos' if (empleador or errores) else 'listado' %}
 {% if solapa == 'cuota' and cuota %}{% set inicial = 'cuota' %}{% endif %}
+{% if solapa == 'arca' and arca is not none %}{% set inicial = 'arca' %}{% endif %}
 {% set lista_solapas = [('listado', 'Listado', empleadores|length),
                         ('datos', 'Editar' if empleador else 'Nuevo', None)] %}
 {% if empleador and empleador.id %}
   {% set lista_solapas = lista_solapas + [('nomina', 'Nómina', nomina|length),
                                           ('contactos', 'Contactos', contactos|length)] %}
+  {% if arca is not none %}{% set lista_solapas = lista_solapas + [('arca', 'ARCA', None)] %}{% endif %}
   {% if cuota %}{% set lista_solapas = lista_solapas + [('cuota', 'Cuota sindical', (cuota.presentaciones or [])|length if not cuota.falta_esquema else None)] %}{% endif %}
 {% endif %}
 {{ ui.solapas(lista_solapas, inicial) }}
@@ -380,6 +382,95 @@
 </div>
 {% endif %}
 
+<!-- ── ARCA ───────────────────────────────────────────────────────────────── -->
+{# Lo último que informó la constancia de inscripción de ARCA de este CUIT:
+   estado de la clave, condición de IVA, actividades e impuestos registrados.
+   Lo guarda cada «Consultar ARCA» (el de acá o el del formulario), por CUIT
+   (arca_constancia.py); al consultar se repinta sin recargar. Si nunca se
+   consultó, se consulta sola al abrir la solapa. #}
+{% macro _periodo(p) -%}
+{%- set p = (p or '') | string -%}
+{{ p[:4] ~ '-' ~ p[4:6] if p | length >= 6 else (p or '—') }}
+{%- endmacro %}
+{% set _ESTADO_IMP = {'AC': 'Activo', 'BD': 'Baja definitiva', 'EX': 'Exento', 'NA': 'No alcanzado'} %}
+{% if arca is not none %}
+<div class="abm-panel {{ 'oculto' if inicial != 'arca' }}" data-panel="arca">
+  <div class="card">
+    {% set _c = '%011d' % (empleador.CUIT|int) %}
+    {% call ui.card_head('Inscripción en ARCA', nota='Constancia de inscripción · CUIT ' ~ _c[:2] ~ '-' ~ _c[2:10] ~ '-' ~ _c[10:]) %}
+      {{ ui.boton('Consultar ARCA', 'secondary', chico=True, icono_='buscar', onclick='arcaSolapaConsultar()', id='btn-arca-solapa') }}
+    {% endcall %}
+    <div class="card-body">
+      {% if arca.falta_tabla %}
+        {{ ui.aviso('La consulta no se guarda: falta correr sql/arca_constancia_20261115.sql.', 'warning') }}
+      {% elif arca.error %}
+        {{ ui.aviso('No se pudo leer lo guardado de ARCA: ' ~ arca.error, 'danger') }}
+      {% endif %}
+      <p class="muted chico" id="arca-consultado" data-consultado="{{ '1' if arca.consultado else '' }}">
+        {%- if arca.consultado -%}
+          Consultado el {{ arca.consultado.strftime('%d/%m/%Y %H:%M') }}{% if arca.usuario %} por {{ arca.usuario }}{% endif %}.
+        {%- else -%}
+          Todavía no se consultó en ARCA.
+        {%- endif -%}
+      </p>
+      <div class="datos{{ ' oculto' if not arca.consultado }}" id="arca-datos">
+        <div class="dato"><div class="dato-lbl">Razón social en ARCA</div><div class="dato-val" data-arca="razon_social">{{ arca.razon_social or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Estado de la clave</div><div class="dato-val" data-arca="estado_clave">{{ arca.estado_clave or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Tipo de persona</div><div class="dato-val" data-arca="tipo_persona">{{ arca.tipo_persona or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Condición frente al IVA</div><div class="dato-val" data-arca="condicion_iva">{{ arca.condicion_iva or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Categoría del monotributo</div><div class="dato-val" data-arca="categoria_monotributo">{{ arca.categoria_monotributo or '—' }}</div></div>
+      </div>
+      <div id="arca-avisos"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Actividades', nota='La de orden 1 es la principal.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-arca-actividades" data-exportar="Actividades ARCA {{ empleador.razon_social }}">
+        <thead><tr>
+          <th class="th-center">Orden</th><th>Código</th><th>Actividad</th><th class="th-center">Nomenclador</th><th>Desde</th>
+        </tr></thead>
+        <tbody id="arca-actividades">
+          {% for a in arca.actividades or [] %}
+          <tr>
+            <td class="td-center">{{ a.orden if a.orden is not none else '—' }}</td>
+            <td class="td-mono">{{ a.id_actividad or '—' }}</td>
+            <td class="td-fuerte">{{ a.descripcion or '—' }}</td>
+            <td class="td-center td-mono">{{ a.nomenclador or '—' }}</td>
+            <td class="td-mono">{{ _periodo(a.periodo_desde) }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="5" class="no-data">Sin actividades registradas.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Impuestos', nota='Primero los activos.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-arca-impuestos" data-exportar="Impuestos ARCA {{ empleador.razon_social }}">
+        <thead><tr><th>Código</th><th>Impuesto</th><th>Estado</th><th>Desde</th></tr></thead>
+        <tbody id="arca-impuestos">
+          {% for i in arca.impuestos or [] %}
+          <tr>
+            <td class="td-mono">{{ i.id_impuesto if i.id_impuesto is not none else '—' }}</td>
+            <td class="td-fuerte">{{ i.descripcion or '—' }}</td>
+            <td>{{ ui.estado(_ESTADO_IMP.get(i.estado, i.estado or '—'), 'ok' if i.estado == 'AC' else 'neutro') }}</td>
+            <td class="td-mono">{{ _periodo(i.periodo_desde) }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="4" class="no-data">Sin impuestos registrados.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ── Contactos ──────────────────────────────────────────────────────────── -->
 {# Solo en edición: los contactos se cuelgan del id del empleador, que en el
    alta todavía no existe. Va fuera del <form> de arriba porque trae
@@ -487,7 +578,82 @@ function consultarArca(auto) {
                                      + (dt.categoria_monotributo ? ' (' + dt.categoria_monotributo + ')' : '') + '.');
     if (dt.actividad_principal) notas.push('Actividad principal: ' + dt.actividad_principal + '.');
     arcaMostrar(dt.razon_social + ' · CUIT ' + arcaCuit(d.cuit), arcaCompletar(items), notas, dt.avisos);
+    // También trae impuestos y actividades: si es el CUIT de esta ficha, la solapa ARCA.
+    if (d.constancia && d.cuit === ARCA_CUIT_FICHA) arcaSolapaPintar(d.constancia);
   });
+}
+
+// ── Solapa ARCA ──────────────────────────────────────────────────────────────
+// Se pinta con la `constancia` que devuelve /empleadores/arca (que además la
+// guarda). Las celdas se arman con textContent: el texto viene de ARCA.
+var ARCA_ESTADOS = { AC: 'Activo', BD: 'Baja definitiva', EX: 'Exento', NA: 'No alcanzado' };
+var ARCA_CUIT_FICHA = "{{ ('%011d' % (empleador.CUIT|int)) if arca is not none else '' }}";
+function arcaPeriodo(p) { p = String(p || ''); return p.length >= 6 ? p.slice(0, 4) + '-' + p.slice(4, 6) : (p || '—'); }
+function arcaCelda(tr, texto, clase) {
+  var td = document.createElement('td');
+  if (clase) td.className = clase;
+  td.textContent = (texto === null || texto === undefined || texto === '') ? '—' : texto;
+  tr.appendChild(td);
+  return td;
+}
+function arcaFilas(tbody, filas, cols, vacio, celdas) {
+  tbody.textContent = '';
+  if (!filas.length) {
+    var tr = document.createElement('tr'); tr.className = 'no-data-row';
+    var td = arcaCelda(tr, vacio, 'no-data'); td.colSpan = cols;
+    tbody.appendChild(tr);
+    return;
+  }
+  filas.forEach(function (f) { var tr = document.createElement('tr'); celdas(tr, f); tbody.appendChild(tr); });
+}
+function arcaSolapaPintar(c) {
+  if (!document.getElementById('arca-actividades')) return;
+  var acts = (c.actividades || []).slice().sort(function (a, b) {
+    return (a.orden == null) - (b.orden == null) || (a.orden || 0) - (b.orden || 0); });
+  arcaFilas(document.getElementById('arca-actividades'), acts, 5, 'Sin actividades registradas.', function (tr, a) {
+    arcaCelda(tr, a.orden, 'td-center'); arcaCelda(tr, a.id_actividad, 'td-mono');
+    arcaCelda(tr, a.descripcion, 'td-fuerte'); arcaCelda(tr, a.nomenclador, 'td-center td-mono');
+    arcaCelda(tr, arcaPeriodo(a.periodo_desde), 'td-mono');
+  });
+  var imps = (c.impuestos || []).slice().sort(function (a, b) {
+    return ((b.estado === 'AC') - (a.estado === 'AC')) || ((a.id_impuesto || 0) - (b.id_impuesto || 0)); });
+  arcaFilas(document.getElementById('arca-impuestos'), imps, 4, 'Sin impuestos registrados.', function (tr, i) {
+    arcaCelda(tr, i.id_impuesto, 'td-mono'); arcaCelda(tr, i.descripcion, 'td-fuerte');
+    var td = arcaCelda(tr, '', ''); td.textContent = '';
+    var sp = document.createElement('span');
+    sp.className = 'estado estado-' + (i.estado === 'AC' ? 'ok' : 'neutro');
+    sp.textContent = ARCA_ESTADOS[i.estado] || i.estado || '—';
+    td.appendChild(sp);
+    arcaCelda(tr, arcaPeriodo(i.periodo_desde), 'td-mono');
+  });
+  document.querySelectorAll('[data-arca]').forEach(function (el) { el.textContent = c[el.dataset.arca] || '—'; });
+  document.getElementById('arca-datos').classList.remove('oculto');
+  var nota = document.getElementById('arca-consultado');
+  nota.dataset.consultado = '1';
+  nota.textContent = 'Consultado recién (' + c.consultado + ').'
+    + (c.aviso_guardado ? ' No quedó guardado: ' + c.aviso_guardado + '.' : '')
+    + (c.fuente === 'padron_a13' ? ' Sin impuestos ni actividades: vino del padrón A13.' : '');
+  var av = document.getElementById('arca-avisos');
+  av.textContent = '';
+  (c.avisos || []).forEach(function (t) {
+    var a = document.createElement('div'); a.className = 'alert alert-warning';
+    a.textContent = t; av.appendChild(a);
+  });
+}
+function arcaSolapaConsultar() {
+  var btn = document.getElementById('btn-arca-solapa'), nota = document.getElementById('arca-consultado');
+  btn.disabled = true;
+  nota.textContent = 'Consultando ARCA…';
+  var q = new URLSearchParams({ cuit: ARCA_CUIT_FICHA });
+  if (ID_EMPLEADOR) q.set('id', ID_EMPLEADOR);
+  fetch(URL_ARCA + '?' + q.toString(), { credentials: 'same-origin' })
+    .then(function (r) { return r.json().catch(function () { throw new Error(r.status + ' ' + r.statusText); }); })
+    .then(function (d) {
+      if (!d.ok) { nota.textContent = (d.no_configurado ? '' : '⚠ ') + d.error; return; }
+      arcaSolapaPintar(d.constancia);
+    })
+    .catch(function (e) { nota.textContent = '⚠ No se pudo consultar ARCA: ' + e.message; })
+    .finally(function () { btn.disabled = false; });
 }
 
 // ── CUIT: mismo cálculo que el servidor, para avisar antes de enviar ─────────
@@ -555,6 +721,16 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   var cuit = document.getElementById('CUIT');
   if (cuit && cuit.value) validarCuit(cuit);
+
+  // Solapa ARCA: si nunca se consultó este CUIT, al abrirla se consulta sola.
+  function arcaAlAbrir() {
+    var nota = document.getElementById('arca-consultado');
+    if (nota && !nota.dataset.consultado && !nota.dataset.pedido) { nota.dataset.pedido = '1'; arcaSolapaConsultar(); }
+  }
+  var tabArca = document.querySelector('.abm-tab[data-panel="arca"]');
+  if (tabArca) tabArca.addEventListener('click', arcaAlAbrir);
+  var panelArca = document.querySelector('.abm-panel[data-panel="arca"]');
+  if (panelArca && !panelArca.classList.contains('oculto')) arcaAlAbrir();
 });
 </script>
 {% endblock %}
