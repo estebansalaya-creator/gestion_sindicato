@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Inicio{% endblock %}
+
+{#
+  El panel de inicio (app.menu): las pantallas que el usuario fijó con la
+  chincheta del menú lateral (accesos_directos.py), una caja por módulo. Las
+  tarjetas se ordenan arrastrando dentro de su caja y se sacan con la X. Quien
+  no fijó ninguna no llega acá: va al Panel de Fiscalización.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Panel de inicio</h1>
+    <p>Hola, <b>{{ session.get('sind_usuario_nombre') }}</b>. Tus accesos directos, por módulo: arrastrá una tarjeta
+       para cambiarla de lugar. Para sumar una pantalla, la chincheta {{ ui.icono('chincheta', 12) }} que aparece al
+       pasar el mouse por el menú de la izquierda.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Panel de Fiscalización', 'secondary', href=url_for('sindicato.fisca_dashboard'), icono_='inicio') }}
+  </div>
+</div>
+
+<div class="accesos" id="accesos">
+  {% for g in grupos %}
+  <section class="accesos-modulo">
+    <h2 class="accesos-rotulo">{% if g.icono %}<span class="accesos-rotulo-icono">{{ g.icono | svg_unico }}</span>{% endif %}{{ g.modulo }}</h2>
+    <div class="accesos-grilla">
+      {% for a in g['items'] %}
+      <div class="acceso" data-menu-id="{{ a.menu_id }}">
+        {# draggable=false: el arrastre nativo del enlace le gana al de la tarjeta según
+           de dónde se la agarre. Se arrastra con eventos de puntero (abajo). #}
+        <a href="{{ a.url }}" draggable="false">
+          <span class="acceso-icono">{% if a.icono_svg %}{{ a.icono_svg | svg_unico }}{% else %}{{ ui.icono('pantalla', 22) }}{% endif %}</span>
+          <span class="acceso-nombre">{{ a.nombre }}</span>
+        </a>
+        <button type="button" class="acceso-quitar" data-menu-id="{{ a.menu_id }}" title="Quitar del panel"
+                aria-label="Quitar {{ a.nombre }} del panel" onclick="quitarAcceso(this)">{{ ui.icono('cerrar', 12) }}</button>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  {% endfor %}
+</div>
+
+<script>
+/* ── Accesos directos: quitar y ordenar ────────────────────────────────
+   El orden se manda entero al soltar: es lo que la pantalla ya sabe. Si el
+   guardado falla, se recarga y se ve lo que de verdad quedó guardado. */
+function quitarAcceso(btn) {
+  var tarjeta = btn.closest('.acceso');
+  fetch('{{ url_for("accesos.quitar") }}', {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+    body: JSON.stringify({ menu_id: parseInt(btn.dataset.menuId, 10) })
+  })
+  .then(function (r) { return r.json(); })
+  .then(function (d) {
+    if (d.error) { alert(d.error); return; }
+    var caja = tarjeta.closest('.accesos-modulo');
+    tarjeta.remove();
+    // Sin la última tarjeta del módulo, el rótulo sobra; sin ninguna, el
+    // inicio vuelve a ser el Panel de Fiscalización.
+    if (caja && !caja.querySelector('.acceso')) caja.remove();
+    if (!document.querySelector('#accesos .acceso')) location.reload();
+    var pin = document.querySelector('.pin-menu[data-menu-id="' + btn.dataset.menuId + '"]');
+    if (pin) { pin.classList.remove('pin-on'); pin.title = 'Fijar en el panel de inicio'; }
+  })
+  .catch(function () { alert('No se pudo quitar el acceso directo.'); });
+}
+
+/* Se arrastra con eventos de puntero y no con el drag & drop del navegador:
+   anda igual con mouse y con el dedo, y el clic para entrar se conserva (recién
+   a los 6 píxeles de movimiento es un arrastre). Cada tarjeta se mueve dentro
+   de la caja de su módulo: el módulo sale de dónde cuelga en el menú. */
+(function () {
+  var panel = document.getElementById('accesos');
+  if (!panel) return;
+  var origen = null, grilla = null, arrastrando = false, movido = false, puntero = null, x0 = 0, y0 = 0;
+
+  panel.addEventListener('pointerdown', function (e) {
+    movido = false;
+    if (e.button !== 0 || e.target.closest('.acceso-quitar')) return;
+    origen = e.target.closest('.acceso');
+    if (!origen) return;
+    grilla = origen.parentElement;
+    x0 = e.clientX; y0 = e.clientY; arrastrando = false; puntero = e.pointerId;
+  });
+
+  panel.addEventListener('pointermove', function (e) {
+    if (!origen) return;
+    var dx = e.clientX - x0, dy = e.clientY - y0;
+    if (!arrastrando) {
+      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+      arrastrando = true; movido = true;
+      origen.classList.add('arrastrando');
+      document.body.classList.add('sin-seleccion');
+      // La captura recién acá: capturado desde el principio, el clic iría a la
+      // tarjeta y no al enlace, y la tarjeta dejaría de abrir la pantalla.
+      try { origen.setPointerCapture(puntero); } catch (err) {}
+    }
+    e.preventDefault();
+    origen.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+    var abajo = document.elementFromPoint(e.clientX, e.clientY);
+    var destino = abajo && abajo.closest ? abajo.closest('.acceso') : null;
+    if (!destino || destino === origen || destino.parentElement !== grilla) return;
+    var caja = destino.getBoundingClientRect();
+    grilla.insertBefore(origen, (e.clientX - caja.left) > caja.width / 2 ? destino.nextSibling : destino);
+    // Ya está en el lugar nuevo: el desplazamiento se cuenta desde acá.
+    x0 = e.clientX; y0 = e.clientY;
+    origen.style.transform = '';
+  });
+
+  function soltar() {
+    if (!origen) return;
+    try { origen.releasePointerCapture(puntero); } catch (err) {}
+    origen.style.transform = '';
+    origen.classList.remove('arrastrando');
+    document.body.classList.remove('sin-seleccion');
+    var guardar = arrastrando;
+    origen = null; grilla = null; arrastrando = false;
+    if (guardar) guardarOrden();
+  }
+  panel.addEventListener('pointerup', soltar);
+  panel.addEventListener('pointercancel', soltar);
+
+  // Después de arrastrar viene un clic: si no se frena, la tarjeta abre la pantalla.
+  panel.addEventListener('click', function (e) {
+    if (!movido) return;
+    movido = false; e.preventDefault(); e.stopPropagation();
+  }, true);
+
+  function guardarOrden() {
+    var ids = Array.prototype.map.call(panel.querySelectorAll('.acceso'),
+                                       function (t) { return parseInt(t.dataset.menuId, 10); });
+    fetch('{{ url_for("accesos.ordenar") }}', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      body: JSON.stringify({ orden: ids })
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d.error) { alert(d.error); location.reload(); } })
+    .catch(function () { alert('No se pudo guardar el orden.'); location.reload(); });
+  }
+})();
+</script>
+{% endblock %}

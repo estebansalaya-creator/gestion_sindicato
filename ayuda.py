@@ -65,7 +65,7 @@ TIPOS_BLOQUE = {"texto", "lista", "pasos", "campos", "criterio", "aviso"}
 #: de afuera (el portal de las empresas, el login). El resto, si no está en un
 #: manual, lo marca tests/test_ayuda.py.
 SIN_AYUDA = {
-    "static", "login", "logout", "menu", "estilos", "ayuda.indice", "ayuda.manual",
+    "static", "login", "logout", "estilos", "ayuda.indice", "ayuda.manual",
     "portal.empresa", "portal.presentacion", "portal.planilla_portal",
     "institucion.logo", "contactos.abm_areas",
 }

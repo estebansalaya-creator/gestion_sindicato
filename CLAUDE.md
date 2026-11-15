@@ -97,6 +97,7 @@ gestion_sindicato/
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
   ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
   ayuda_pantallas.py      /ayuda (índice) y /ayuda/<clave> (un manual); url_ayuda() para el botón Ayuda
+  accesos_directos.py     los accesos directos del panel de inicio (/menu): la chincheta del menú, quitar y ordenar
   ayuda_<módulo>.py       el texto de cada manual, SOLO DATOS: general, mesa, fiscalizacion, empleadores, padron,
                           proveedores, tesoreria, pagos, reintegros, contabilidad, administracion
   paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
@@ -131,7 +132,7 @@ gestion_sindicato/
     _contactos.html       bloque de contactos, el mismo en todas las pantallas
     estilos.html          guía visual (/estilos)
     ayuda/                manual.html, indice.html y _bloques.html (cómo se dibuja cada tipo de bloque)
-    login.html  404.html
+    login.html  404.html  inicio.html (el panel de inicio, /menu)
     empleadores/  afiliados/  reintegros/  proveedores/  comprobantes/  mesa/  tesoreria/  pagos/  contabilidad/  admin/  fisca/
   static/imagenes/
 ```
@@ -164,7 +165,8 @@ repetiría en la URL lo que dice el dominio.
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
                              /descartar POST, /planilla.xlsx)
-/login /logout /menu
+/login /logout /menu   /menu: el panel de inicio con los accesos directos (sin ninguno, al Panel de Fiscalización)
+/accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
 /empleadores         ABM, ?edit=ID
 /empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
                      (?desde, ?hasta, ?con_saldo=1); /<cuit>/<periodo> la cuota del período (?volver);
@@ -845,6 +847,23 @@ usa la base).
   estar, sin acentos, como el buscador general).
 - **El contenido describe lo que hace el sistema hoy**, en el idioma de quien lo usa (voseo, sin nombres de tablas);
   las pantallas pendientes se nombran como pendientes. Al cambiar una regla de negocio, cambiar también el manual.
+
+## Panel de inicio y accesos directos
+
+`accesos_directos.py` + `templates/inicio.html` (pedido del 15/11/2026: la chincheta del menú lateral estaba en
+base.html, copiada de gestion_adm, y llamaba a `/accesos-directos/alternar`, que acá no existía). El de gestion_adm
+(`accesos_directos.py`, `templates/menu.html`) con las claves `sind_` y sindicato.css 18d. Test:
+`python tests/test_accesos_directos.py`, sin base.
+
+- **La chincheta** de cada pantalla del menú (aparece al pasar el mouse; llena si está fijada) fija o saca la
+  pantalla. `s_accesos_directos` vino con la base: usuario, `menu_id` (no el nombre ni la URL: si la pantalla cambia,
+  el acceso la sigue) y orden. `inject_menu` lee los fijados en la misma consulta del menú (`accesos_fijados`).
+- **El panel de inicio** es `/menu` (Inicio, el logo y el destino del login): las tarjetas por módulo (la rama de
+  más arriba, con su ícono), que se ordenan arrastrando con eventos de puntero dentro de su módulo y se sacan con la
+  X. **Quien no fijó ninguna va al Panel de Fiscalización**, el inicio de antes: nadie se encuentra con un inicio
+  vacío. Desde el panel, un botón lleva al de Fiscalización.
+- **El permiso sigue siendo la opción de menú**: solo se fija una pantalla (con URL, activa) de `sind_menu_ids`, y
+  el panel vuelve a cruzar con ellas: una pantalla que le sacan a alguien deja de verse sin borrarse.
 
 ## Administración del sistema
 

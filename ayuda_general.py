@@ -33,7 +33,8 @@ SECCIONES = [
     "sistema (Administración del Sistema → Usuarios). No hay ingreso con Google ni registro propio: "
     "si alguien necesita usuario, se lo pide al administrador."},
    {"tipo": "campos", "items": [
-     ("Inicio", "Vuelve al panel de entrada (el Panel de Fiscalización)."),
+     ("Inicio", "El panel de inicio con tus accesos directos o, si no fijaste ninguno, el Panel de "
+                "Fiscalización. Es también a donde se llega al ingresar."),
      ("Volver", "Aparece cuando hay una pantalla anterior y lleva a ella. La tecla <b>Esc</b> hace lo "
                 "mismo (si hay un diálogo abierto, primero lo cierra)."),
      ("Salir", "Cierra la sesión. Conviene usarlo en una computadora compartida."),
@@ -73,6 +74,30 @@ SECCIONES = [
     "Algunas opciones del menú todavía no tienen pantalla (por ejemplo Ejercicios, Asientos o "
     "Sueldos). Al abrirlas se ve el aviso <b>«Esta pantalla está prevista pero todavía no está "
     "desarrollada»</b>: no es un error ni un enlace roto."},
+ ]},
+
+{
+ "grupo": "Primeros pasos",
+ "id": "gen_inicio",
+ "titulo": "Panel de inicio y accesos directos",
+ "url": "",
+ "endpoints": ["menu"],
+ "resumen": "Las pantallas de todos los días, a un clic desde Inicio.",
+ "bloques": [
+   {"tipo": "pasos", "items": [
+     "Pasá el mouse por una pantalla del menú de la izquierda: a la derecha del nombre aparece una "
+     "<b>chincheta</b>.",
+     "Un clic la fija en el panel de inicio (la chincheta queda llena). Otro clic la saca.",
+     "<b>Inicio</b> muestra las fijadas como tarjetas, agrupadas por módulo. Se ordenan "
+     "<b>arrastrándolas</b> dentro de su módulo y se sacan con la <b>X</b> de la tarjeta.",
+   ]},
+   {"tipo": "criterio", "html":
+    "Cada uno tiene sus propios accesos. Fijar una pantalla no da permiso sobre nada: si a alguien le "
+    "sacan una pantalla, su tarjeta deja de verse sola (y vuelve si le devuelven el permiso). Se fijan "
+    "pantallas, no las ramas del menú."},
+   {"tipo": "aviso", "html":
+    "Quien no fijó ninguna pantalla entra al Panel de Fiscalización, como siempre. Desde el panel de "
+    "inicio, el botón <b>Panel de Fiscalización</b> lleva a él (también se puede fijar)."},
  ]},
 
 {

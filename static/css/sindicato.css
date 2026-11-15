@@ -1298,6 +1298,47 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
 .manual-secciones a { font-weight: 600; }
 .manual-secciones span { display: block; color: var(--text-muted); font-size: .78rem; }
 
+/* ── 18d. Panel de inicio (/menu, accesos_directos.py) ────────────────────
+   Las pantallas que cada uno fija con la chincheta del menú, una caja por
+   módulo con el rótulo montado sobre el borde (como el legend de un
+   fieldset), para que se lea como título del grupo y no como una tarjeta más.
+     .accesos > section.accesos-modulo > h2.accesos-rotulo + .accesos-grilla
+       > .acceso(.arrastrando) > a (.acceso-icono + .acceso-nombre) + button.acceso-quitar
+   El realce va por CSS y no por eventos del mouse: durante el arrastre el
+   navegador no avisa cuándo se sale de una tarjeta.                        */
+.accesos { max-width: 1040px; display: flex; flex-direction: column; gap: 22px; padding-top: 8px; }
+.accesos-modulo { position: relative; border: 1px solid var(--border); border-radius: var(--radius); padding: 22px 16px 16px; }
+.accesos-rotulo {
+  position: absolute; top: -9px; left: 14px; display: flex; align-items: center; gap: 7px;
+  padding: 0 10px; background: var(--bg); color: var(--navy);
+  font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+}
+.accesos-rotulo-icono { display: flex; }
+.accesos-rotulo-icono svg { width: 15px; height: 15px; }
+.accesos-grilla { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; }
+.acceso { position: relative; cursor: grab; }
+.acceso > a {
+  display: flex; align-items: center; gap: 12px; padding: 15px 34px 15px 16px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); color: var(--text); text-decoration: none;
+  transition: box-shadow .15s, border-color .15s, transform .15s;
+}
+.acceso:hover > a { box-shadow: var(--shadow-lg); border-color: var(--blue); transform: translateY(-2px); text-decoration: none; }
+.acceso-icono { display: flex; color: var(--blue); flex-shrink: 0; }
+.acceso-icono svg { width: 22px; height: 22px; }
+.acceso-nombre { font-size: .88rem; font-weight: 600; line-height: 1.3; }
+.acceso.arrastrando { opacity: .6; z-index: 2; cursor: grabbing; pointer-events: none; }
+.acceso.arrastrando > a { box-shadow: var(--shadow-lg); border-color: var(--blue); }
+.acceso-quitar {
+  position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 5px; background: transparent; color: var(--text-muted); cursor: pointer;
+  opacity: 0; transition: opacity .12s, background .12s, color .12s;
+}
+.acceso:hover .acceso-quitar, .acceso-quitar:focus-visible { opacity: 1; }
+.acceso-quitar:hover { background: var(--danger-bg); color: var(--danger); }
+.sin-seleccion { user-select: none; }
+
 /* ── 19. Utilidades ──────────────────────────────────────────────────────
    Pocas y a propósito. Si una pantalla necesita muchas, falta un
    componente.                                                             */

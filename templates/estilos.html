@@ -15,7 +15,7 @@
   ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
-  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('importacion', 'Importación'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('inicio', 'Panel de inicio'), ('importacion', 'Importación'),
   ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
@@ -134,7 +134,7 @@
       {% for nombre in ['ver','editar','borrar','baja','reactivar','agregar','cerrar','guardar','volver',
                         'buscar','filtro','quitar_filtro','descargar','subir','pdf','planilla','imprimir','historial',
                         'mail','telefono','usuario','grupo','empresa','dinero','calendario','ok','alerta','error',
-                        'info','inicio','salir','reloj','chevron','ayuda','libro'] %}
+                        'info','inicio','salir','reloj','chevron','ayuda','libro','pantalla','chincheta'] %}
       <div class="icono-guia">{{ ui.icono(nombre, 20) }}{{ nombre }}</div>
       {% endfor %}
     </div>
@@ -607,6 +607,26 @@
 .card.manual-sec(.resaltada) > .manual-sec-cab (.manual-sec-grupo, h2, .manual-sec-ruta, .manual-sec-resumen) + .manual-texto + .manual-pie
 en .manual-texto: p · ul · ol.manual-pasos · table.manual-campos · .manual-nota.criterio | .aviso > .manual-nota-rot
 los bloques los dibuja ayuda/_bloques.html (texto, lista, pasos, campos, criterio, aviso) · /ayuda: .manuales > .card > ul.manual-secciones") }}
+</div>
+
+{# ── Panel de inicio ─────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="inicio">
+  {{ ui.card_head('Panel de inicio', nota='Los accesos directos (accesos_directos.py): la chincheta del menú fija la pantalla; acá se arrastran y se quitan.') }}
+  <div class="card-body">
+    <div class="accesos">
+      <section class="accesos-modulo">
+        <h2 class="accesos-rotulo">Fiscalización de Cuotas</h2>
+        <div class="accesos-grilla">
+          <div class="acceso"><a href="#" draggable="false"><span class="acceso-icono">{{ ui.icono('pantalla', 22) }}</span><span class="acceso-nombre">Emisión de Recibos</span></a>
+            <button type="button" class="acceso-quitar" title="Quitar del panel">{{ ui.icono('cerrar', 12) }}</button></div>
+          <div class="acceso"><a href="#" draggable="false"><span class="acceso-icono">{{ ui.icono('pantalla', 22) }}</span><span class="acceso-nombre">Actas de Fiscalización</span></a>
+            <button type="button" class="acceso-quitar" title="Quitar del panel">{{ ui.icono('cerrar', 12) }}</button></div>
+        </div>
+      </section>
+    </div>
+  </div>
+  {{ ej(".accesos > section.accesos-modulo > h2.accesos-rotulo + .accesos-grilla > .acceso(.arrastrando)
+  > a[draggable=false] (.acceso-icono + .acceso-nombre) + button.acceso-quitar · el ícono es el de la opción de menú (| svg_unico)") }}
 </div>
 
 {# ── Importación ─────────────────────────────────────────────────────────── #}

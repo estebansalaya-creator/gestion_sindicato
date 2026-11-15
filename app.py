@@ -65,6 +65,7 @@ from conciliacion import conc_bp                                # noqa: E402
 from buscador import buscador_bp                                # noqa: E402
 import ayuda                                                    # noqa: E402
 from ayuda_pantallas import ayuda_bp                            # noqa: E402
+from accesos_directos import accesos_bp, agrupar, listar as listar_accesos# noqa: E402
 
 
 def _secret_key() -> str:
@@ -244,7 +245,8 @@ def _ingresar(email: str, clave: str):
                 (usuario["id"],)
             )
 
-    return redirect(url_for("sindicato.fisca_dashboard"))
+    # Al panel de inicio: los accesos directos, o el de Fiscalización si no fijó ninguno.
+    return redirect(url_for("menu"))
 
 
 def _armar_arbol(items: list[dict]) -> list[dict]:
@@ -344,11 +346,11 @@ def inject_menu():
     plantillas. `base.html` dibuja el menú lateral solo.
     """
     if not validasesion():
-        return {"menu_tree": [], "menu_error": None}
+        return {"menu_tree": [], "menu_error": None, "accesos_fijados": set()}
 
     menu_ids = session.get("sind_menu_ids") or []
     if not menu_ids:
-        return {"menu_tree": [], "menu_error": None}
+        return {"menu_tree": [], "menu_error": None, "accesos_fijados": set()}
 
     try:
         marcadores = ",".join(["%s"] * len(menu_ids))
@@ -362,7 +364,12 @@ def inject_menu():
                     menu_ids,
                 )
                 items = cur.fetchall()
-        return {"menu_tree": _armar_arbol(items), "menu_error": None}
+                # Qué pantallas fijó en su panel de inicio: la chincheta del
+                # menú se dibuja llena o vacía con esto (accesos_directos.py).
+                cur.execute("SELECT menu_id FROM s_accesos_directos WHERE usuario_id = %s",
+                            (session.get("sind_usuario_id"),))
+                fijados = {f["menu_id"] for f in cur.fetchall()}
+        return {"menu_tree": _armar_arbol(items), "menu_error": None, "accesos_fijados": fijados}
 
     except Exception as e:
         # Un menú vacío es ambiguo de la peor manera: se ve igual si la persona
@@ -375,7 +382,7 @@ def inject_menu():
         # —si aparece— en la página siguiente. El error del menú tiene que
         # verse en la pantalla donde el menú faltó.
         app.logger.exception("No se pudo cargar el menú")
-        return {"menu_tree": [], "menu_error": f"{type(e).__name__}: {e}"}
+        return {"menu_tree": [], "menu_error": f"{type(e).__name__}: {e}", "accesos_fijados": set()}
 
 
 @app.errorhandler(404)
@@ -427,16 +434,20 @@ def logout():
 @app.route("/menu")
 def menu():
     """
-    El botón de inicio de base.html apunta acá.
+    El panel de inicio: el botón Inicio, el logo del menú lateral y el destino
+    después de ingresar.
 
-    En gestion_adm `menu` es una pantalla propia; acá la portada es el
-    dashboard de fiscalización, así que redirige. Cuando el sindicato tenga
-    varios módulos, este endpoint pasa a ser su menú de verdad y base.html no
-    necesita cambiar.
+    Muestra las pantallas que el usuario fijó con la chincheta del menú
+    (accesos_directos.py), agrupadas por módulo. Quien todavía no fijó ninguna
+    entra al Panel de Fiscalización, que era el inicio de siempre: así nadie
+    se encuentra con una pantalla vacía.
     """
     if not validasesion():
         return redirect(url_for("login"))
-    return redirect(url_for("sindicato.fisca_dashboard"))
+    accesos = listar_accesos()
+    if not accesos:
+        return redirect(url_for("sindicato.fisca_dashboard"))
+    return render_template("inicio.html", accesos=accesos, grupos=agrupar(accesos))
 
 
 # El blueprint queda montado en la raíz: este sitio es el del sindicato, así
@@ -483,6 +494,8 @@ app.register_blueprint(buscador_bp)
 # fallar cuando alguien aprieta Ayuda.
 app.register_blueprint(ayuda_bp)
 ayuda.cargar()
+# Los accesos directos del panel de inicio (/accesos-directos/alternar, /quitar, /ordenar).
+app.register_blueprint(accesos_bp)
 
 
 if __name__ == "__main__":
