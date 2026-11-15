@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "ayuda/_bloques.html" as ay %}
+{% block title %}Ayuda — {{ man.modulo }}{% endblock %}
+
+{#
+  Un manual de uso (ayuda_pantallas.manual). El contenido sale de
+  ayuda_<módulo>.py; el botón Ayuda llega acá con ?s=<sección>
+  y la deja resaltada.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Ayuda — {{ man.modulo }}</h1>
+    <p>Cómo se usa cada pantalla y con qué criterio decide el sistema.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Todos los manuales', 'secondary', href=url_for('ayuda.indice'), icono_='libro') }}
+  </div>
+</div>
+
+<div class="manual">
+
+  <nav class="manual-indice" aria-label="Contenido del manual">
+    <input type="search" class="filter-input" id="manual-buscar" placeholder="Buscar en este manual…"
+           aria-label="Buscar en este manual">
+    {% set ns = namespace(grupo='-') %}
+    {% for s in man.secciones %}
+      {% if (s.grupo or '') != ns.grupo %}
+        {% set ns.grupo = s.grupo or '' %}
+        <h3>{{ s.grupo or 'Contenido' }}</h3>
+      {% endif %}
+      <a href="#{{ s.id }}" data-sec="{{ s.id }}" class="{{ 'activo' if seccion == s.id }}">{{ s.titulo }}</a>
+    {% endfor %}
+    {% if otros %}
+    <h3>Otros manuales</h3>
+    {% for m in otros %}<a href="{{ url_for('ayuda.manual', clave=m.clave) }}">{{ m.modulo }}</a>{% endfor %}
+    {% endif %}
+  </nav>
+
+  <div class="manual-cuerpo">
+    <div class="card"><div class="card-body manual-intro">{{ man.intro | safe }}</div></div>
+
+    {% if man.circuito %}
+    <div class="manual-circuito">
+      {% for nombre, texto in man.circuito %}
+      <div class="manual-paso">
+        <div class="manual-paso-n">{{ '%02d' | format(loop.index) }}</div>
+        <div class="manual-paso-t">{{ nombre }}</div>
+        <div class="manual-paso-d">{{ texto }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div id="manual-sin-resultados" class="oculto">{{ ui.aviso('Nada de este manual coincide con lo buscado. Probá en «Todos los manuales».') }}</div>
+
+    {% for s in man.secciones %}
+    <section class="card manual-sec {{ 'resaltada' if seccion == s.id }}" id="{{ s.id }}"
+             data-texto="{{ ay.texto_de(s) }}">
+      <div class="manual-sec-cab">
+        {% if s.grupo %}<div class="manual-sec-grupo">{{ s.grupo }}</div>{% endif %}
+        <h2>{{ s.titulo }}</h2>
+        {% if s.url %}<span class="manual-sec-ruta">{{ s.url }}</span>{% endif %}
+        <div class="manual-sec-resumen">{{ s.resumen }}</div>
+      </div>
+      <div class="manual-texto">{{ ay.bloques(s.bloques) }}</div>
+      {% if s.url and s.url in permitidas %}
+      <div class="manual-pie">{{ ui.boton('Ir a la pantalla', 'secondary', href=s.url, chico=True) }}</div>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+(function () {
+  var inp = document.getElementById('manual-buscar');
+  var secs = Array.prototype.slice.call(document.querySelectorAll('.manual-sec'));
+  var vacio = document.getElementById('manual-sin-resultados');
+  function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  secs.forEach(function (s) { s.dataset.norm = norm(s.dataset.texto); });
+
+  // Cada palabra tiene que estar (como el buscador general).
+  inp.addEventListener('input', function () {
+    var palabras = norm(inp.value).split(/\s+/).filter(Boolean), hay = 0;
+    secs.forEach(function (sec) {
+      var ok = palabras.every(function (p) { return sec.dataset.norm.indexOf(p) >= 0; });
+      sec.classList.toggle('oculto', !ok);
+      var a = document.querySelector('.manual-indice a[data-sec="' + sec.id + '"]');
+      if (a) a.classList.toggle('oculto', !ok);
+      if (ok) hay++;
+    });
+    vacio.classList.toggle('oculto', hay > 0);
+  });
+
+  // El índice marca la sección que se está leyendo.
+  var links = Array.prototype.slice.call(document.querySelectorAll('.manual-indice a[data-sec]'));
+  if ('IntersectionObserver' in window) {
+    var obs = new IntersectionObserver(function (entradas) {
+      entradas.forEach(function (e) {
+        if (!e.isIntersecting) return;
+        links.forEach(function (a) { a.classList.toggle('activo', a.dataset.sec === e.target.id); });
+      });
+    }, { rootMargin: '-80px 0px -70% 0px' });
+    secs.forEach(function (s) { obs.observe(s); });
+  }
+})();
+</script>
+{% endblock %}

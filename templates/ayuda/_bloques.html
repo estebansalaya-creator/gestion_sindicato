@@ -1,0 +1,33 @@
+{# Los bloques de una sección de un manual (ayuda.py dice qué es cada tipo).
+   El html de los manuales es nuestro (ayuda_*.py): va con |safe. #}
+{% macro bloques(lista) -%}
+{% for b in lista %}
+  {% if b.tipo == 'texto' %}
+  <p>{{ b.html | safe }}</p>
+  {% elif b.tipo == 'lista' %}
+  <ul>{% for x in b['items'] %}<li>{{ x | safe }}</li>{% endfor %}</ul>
+  {% elif b.tipo == 'pasos' %}
+  <ol class="manual-pasos">{% for x in b['items'] %}<li>{{ x | safe }}</li>{% endfor %}</ol>
+  {% elif b.tipo == 'campos' %}
+  <table class="manual-campos">
+    {% for rotulo, texto in b['items'] %}<tr><td>{{ rotulo | safe }}</td><td>{{ texto | safe }}</td></tr>{% endfor %}
+  </table>
+  {% elif b.tipo == 'criterio' %}
+  <div class="manual-nota criterio"><span class="manual-nota-rot">Criterio del sistema</span>{{ b.html | safe }}</div>
+  {% elif b.tipo == 'aviso' %}
+  <div class="manual-nota aviso"><span class="manual-nota-rot">Tener en cuenta</span>{{ b.html | safe }}</div>
+  {% endif %}
+{% endfor %}
+{%- endmacro %}
+
+{# Todo el texto de una sección, para el buscador (en minúsculas y sin etiquetas). #}
+{% macro texto_de(s) -%}
+{%- set partes = [s.titulo, s.resumen, s.grupo or ''] -%}
+{%- for b in s.bloques -%}
+  {%- if b.html %}{% set _ = partes.append(b.html) %}{% endif -%}
+  {%- for x in b.get('items') or [] -%}
+    {%- if x is string %}{% set _ = partes.append(x) %}{% else %}{% set _ = partes.append(x | join(' ')) %}{% endif -%}
+  {%- endfor -%}
+{%- endfor -%}
+{{ partes | join(' ') | striptags | lower }}
+{%- endmacro %}

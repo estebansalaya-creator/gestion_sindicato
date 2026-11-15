@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% import "ayuda/_bloques.html" as ay %}
+{% block title %}Ayuda{% endblock %}
+
+{#
+  El índice de los manuales (ayuda_pantallas.indice): a donde lleva el botón
+  Ayuda desde una pantalla sin manual. El buscador busca en el texto de todos.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Ayuda</h1>
+    <p>Un manual por módulo del menú: qué hace cada pantalla, cómo se usa y con qué criterio decide el sistema.
+       El botón <b>Ayuda</b> de abajo a la derecha (o la tecla F1) abre el de la pantalla en la que estás.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="filter-bar">
+    <input type="search" class="filter-input" id="ayuda-buscar" placeholder="Buscar en la ayuda… (por ejemplo: acta, CUIL, conciliar)"
+           aria-label="Buscar en la ayuda">
+    <span class="filter-count" id="ayuda-cuenta"></span>
+  </div>
+</div>
+
+<div id="ayuda-sin-resultados" class="oculto">{{ ui.aviso('Ningún manual habla de eso. Probá con otra palabra.') }}</div>
+
+<div class="manuales">
+  {% for m in manuales %}
+  <div class="card manual-tarjeta">
+    {% call ui.card_head(m.modulo) %}
+      {{ ui.boton('Abrir', 'secondary', href=url_for('ayuda.manual', clave=m.clave), chico=True, icono_='libro') }}
+    {% endcall %}
+    <div class="card-body">
+      <ul class="manual-secciones">
+        {% for s in m.secciones %}
+        <li data-texto="{{ ay.texto_de(s) }}">
+          <a href="{{ url_for('ayuda.manual', clave=m.clave, s=s.id) }}#{{ s.id }}">{{ s.titulo }}</a>
+          <span>{{ s.resumen }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<script>
+(function () {
+  var inp = document.getElementById('ayuda-buscar'), cuenta = document.getElementById('ayuda-cuenta');
+  var vacio = document.getElementById('ayuda-sin-resultados');
+  var items = Array.prototype.slice.call(document.querySelectorAll('.manual-secciones li'));
+  function norm(s) { return (s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''); }
+  items.forEach(function (li) { li.dataset.norm = norm(li.dataset.texto); });
+  function filtrar() {
+    var palabras = norm(inp.value).split(/\s+/).filter(Boolean), total = 0;
+    items.forEach(function (li) {
+      var ok = palabras.every(function (p) { return li.dataset.norm.indexOf(p) >= 0; });
+      li.classList.toggle('oculto', !ok);
+      if (ok) total++;
+    });
+    document.querySelectorAll('.manual-tarjeta').forEach(function (t) {
+      t.classList.toggle('oculto', !t.querySelector('.manual-secciones li:not(.oculto)'));
+    });
+    cuenta.textContent = palabras.length ? total + (total === 1 ? ' tema' : ' temas') : items.length + ' temas';
+    vacio.classList.toggle('oculto', total > 0);
+  }
+  inp.addEventListener('input', filtrar);
+  filtrar();
+  inp.focus();
+})();
+</script>
+{% endblock %}

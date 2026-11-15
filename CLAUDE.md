@@ -95,6 +95,10 @@ gestion_sindicato/
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
+  ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
+  ayuda_pantallas.py      /ayuda (índice) y /ayuda/<clave> (un manual); url_ayuda() para el botón Ayuda
+  ayuda_<módulo>.py       el texto de cada manual, SOLO DATOS: general, mesa, fiscalizacion, empleadores, padron,
+                          proveedores, tesoreria, pagos, reintegros, contabilidad, administracion
   paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
   crear_usuario.py        alta de usuarios por consola (el primero no se puede crear desde la app)
   importar_aeda.py        empleadores y contactos desde AEDA; simula por defecto, --aplicar graba
@@ -126,6 +130,7 @@ gestion_sindicato/
     _ui.html              macros de interfaz: íconos, acciones, filtros, mensajes, estados
     _contactos.html       bloque de contactos, el mismo en todas las pantallas
     estilos.html          guía visual (/estilos)
+    ayuda/                manual.html, indice.html y _bloques.html (cómo se dibuja cada tipo de bloque)
     login.html  404.html
     empleadores/  afiliados/  reintegros/  proveedores/  comprobantes/  mesa/  tesoreria/  pagos/  contabilidad/  admin/  fisca/
   static/imagenes/
@@ -223,6 +228,7 @@ repetiría en la URL lo que dice el dominio.
 /exportar/excel      POST JSON → .xlsx (lo llama el botón Exportar a Excel de las grillas)
 /api/busqueda        buscador general de la barra superior, ?q= (JSON)
 /estilos             guía visual del sistema
+/ayuda               índice de los manuales (busca en todos); /ayuda/<clave>?s=<sección> un manual
 ```
 
 ### Repositorio
@@ -813,6 +819,32 @@ cumplidos y la última DDJJ de OSEDA de ese CUIL **para ese CUIT** con su remune
   rótulo). Resultado por CUIL: correcto, falta la marca, de baja en OSEDA, familiar en OSEDA, no está en OSEDA, y
   sobra la marca (baja en AEDA, no está en AEDA, puesta a un familiar). La marca se corrige en gestion_adm: deja
   la lista de CUIL sin marca en `logs/`.
+
+## Ayuda (manuales de uso)
+
+Pedido del 15/11/2026: las pantallas de ayuda de todo el sistema, como las de gestion_adm (`ayuda.py`,
+`ayuda_render.py`, `templates/ayuda/manual.html`, los `*_ayuda.py`), con el sistema de estilos de acá (sección 18c de
+sindicato.css, «Ayuda» en la guía) y sin las demos animadas. Test: `python tests/test_ayuda.py` (levanta app.py, no
+usa la base).
+
+- **Un manual por módulo del menú** (`ayuda.MANUALES`, en el orden del índice), más «Uso del sistema» (ingreso, menú y
+  permisos, buscador, grillas, botones, formularios). Cada `ayuda_<módulo>.py` es solo datos: `CLAVE`, `MODULO`,
+  `INTRO`, `CIRCUITO` y `SECCIONES`, una por pantalla o por tema, con `id` (único en todo el sistema), `grupo`,
+  `titulo`, `url` (para «Ir a la pantalla», que sale solo si `db.puede(url)`), `endpoints` (las pantallas que abren
+  esa sección), `resumen` y `bloques` (texto, lista, pasos, campos, criterio, aviso; ver el docstring de ayuda.py).
+- **El botón Ayuda** es el flotante de abajo a la derecha de base.html (el de gestion_adm, que estaba en la plantilla
+  sin registro detrás) y la tecla F1: lleva a la sección de la pantalla actual (`ayuda_pantallas.url_ayuda`, por
+  `request.endpoint`) o, si no tiene, al índice. Lo ve cualquiera con sesión; los manuales explican también las
+  pantallas que la persona no tiene.
+- **Una pantalla nueva lleva su ayuda**: su endpoint en `endpoints` de una sección (nueva o existente).
+  `tests/test_ayuda.py` falla con las pantallas GET que no están en ningún manual ni en `ayuda.SIN_AYUDA` (JSON, PDF,
+  archivos, el portal de las empresas); también controla ids repetidos, endpoints y direcciones que no existen y que
+  cada manual se dibuje. Los manuales se cargan al arrancar (`ayuda.cargar()` en app.py): uno mal armado no deja
+  arrancar.
+- **Buscar**: el índice busca en el texto de todas las secciones; cada manual, en el suyo (cada palabra tiene que
+  estar, sin acentos, como el buscador general).
+- **El contenido describe lo que hace el sistema hoy**, en el idioma de quien lo usa (voseo, sin nombres de tablas);
+  las pantallas pendientes se nombran como pendientes. Al cambiar una regla de negocio, cambiar también el manual.
 
 ## Administración del sistema
 
@@ -1596,6 +1628,7 @@ colores, `.btn-accion` definido dos veces): acá eso no se repite.
 - **Solapas**: `ui.solapas([(panel, texto, conteo)], inicial)` + `.abm-panel` + `abmSolapa()`.
   **Diálogos**: `.modal` > `.modal-caja`, `abrirModal(id)` / `cerrarModal(id)`.
 - La edición carga por `?edit=ID`, nunca poblando el formulario desde JavaScript.
+- Toda pantalla nueva lleva su sección de ayuda (ver «Ayuda (manuales de uso)»).
 - Importes con `{{ (valor or 0) | miles }}` (los paréntesis son obligatorios), a la derecha.
 - Los `input.inp-importe` toman separador de miles con `fmtMiles` / `fmtMilesInit` de `base.html`.
 

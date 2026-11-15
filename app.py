@@ -63,6 +63,8 @@ from cc_empleadores import cc_emp_bp                            # noqa: E402
 from extractos import extractos_bp                              # noqa: E402
 from conciliacion import conc_bp                                # noqa: E402
 from buscador import buscador_bp                                # noqa: E402
+import ayuda                                                    # noqa: E402
+from ayuda_pantallas import ayuda_bp                            # noqa: E402
 
 
 def _secret_key() -> str:
@@ -476,6 +478,11 @@ app.register_blueprint(extractos_bp)
 app.register_blueprint(conc_bp)
 # El buscador general de la barra superior (/api/busqueda).
 app.register_blueprint(buscador_bp)
+# La ayuda: el índice de los manuales (/ayuda) y cada manual (/ayuda/<clave>).
+# Los manuales se cargan acá: uno mal armado no deja arrancar, en vez de
+# fallar cuando alguien aprieta Ayuda.
+app.register_blueprint(ayuda_bp)
+ayuda.cargar()
 
 
 if __name__ == "__main__":

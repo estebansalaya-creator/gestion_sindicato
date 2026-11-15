@@ -15,7 +15,7 @@
   ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
-  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('importacion', 'Importación'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('importacion', 'Importación'),
   ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
@@ -134,7 +134,7 @@
       {% for nombre in ['ver','editar','borrar','baja','reactivar','agregar','cerrar','guardar','volver',
                         'buscar','filtro','quitar_filtro','descargar','subir','pdf','planilla','imprimir','historial',
                         'mail','telefono','usuario','grupo','empresa','dinero','calendario','ok','alerta','error',
-                        'info','inicio','salir','reloj','chevron'] %}
+                        'info','inicio','salir','reloj','chevron','ayuda','libro'] %}
       <div class="icono-guia">{{ ui.icono(nombre, 20) }}{{ nombre }}</div>
       {% endfor %}
     </div>
@@ -574,6 +574,39 @@
   </div>
   {{ ej(".columnas-2 > .col-comp > .cab (texto + .total) + .lista > .item(.sel | .sugerida | .incompat) > .imp + .ref + .sub · .vacio sin renglones
 .marca-sugerida adentro del .ref: se ve solo con .sugerida · lo elegido, en .campo > .campo-label + .campo-valor") }}
+</div>
+
+{# ── Ayuda ───────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="ayuda">
+  {{ ui.card_head('Ayuda', nota='Los manuales (/ayuda): una sección por pantalla, con su texto en ayuda_<módulo>.py. El botón flotante «Ayuda» y F1 llevan a la sección de la pantalla.') }}
+  <div class="card-body">
+    <div class="manual-circuito">
+      <div class="manual-paso"><div class="manual-paso-n">01</div><div class="manual-paso-t">Liquidar</div>
+        <div class="manual-paso-d">Cuánto debe cada empleador por período.</div></div>
+      <div class="manual-paso"><div class="manual-paso-n">02</div><div class="manual-paso-t">Cobrar</div>
+        <div class="manual-paso-d">Cada acreditación se convierte en un recibo.</div></div>
+    </div>
+    <section class="card manual-sec resaltada">
+      <div class="manual-sec-cab">
+        <div class="manual-sec-grupo">Fiscalización</div>
+        <h2>Actas de Fiscalización</h2>
+        <span class="manual-sec-ruta">/fiscalizacion/actas</span>
+        <div class="manual-sec-resumen">La deuda del empleador, período por período.</div>
+      </div>
+      <div class="manual-texto">
+        <ol class="manual-pasos"><li>Escribí el CUIT y <b>Calcular</b>.</li><li><b>Guardar acta</b>.</li></ol>
+        <table class="manual-campos"><tr><td>Abierta</td><td>Se corrige y se recalcula.</td></tr>
+          <tr><td>Cerrada</td><td>La deuda queda firme.</td></tr></table>
+        <div class="manual-nota criterio"><span class="manual-nota-rot">Criterio del sistema</span>Cómo decide el sistema.</div>
+        <div class="manual-nota aviso"><span class="manual-nota-rot">Tener en cuenta</span>Lo que conviene saber antes.</div>
+      </div>
+      <div class="manual-pie">{{ ui.boton('Ir a la pantalla', 'secondary', href='#', chico=True) }}</div>
+    </section>
+  </div>
+  {{ ej(".manual > nav.manual-indice + .manual-cuerpo · .manual-circuito > .manual-paso > .manual-paso-n + -t + -d
+.card.manual-sec(.resaltada) > .manual-sec-cab (.manual-sec-grupo, h2, .manual-sec-ruta, .manual-sec-resumen) + .manual-texto + .manual-pie
+en .manual-texto: p · ul · ol.manual-pasos · table.manual-campos · .manual-nota.criterio | .aviso > .manual-nota-rot
+los bloques los dibuja ayuda/_bloques.html (texto, lista, pasos, campos, criterio, aviso) · /ayuda: .manuales > .card > ul.manual-secciones") }}
 </div>
 
 {# ── Importación ─────────────────────────────────────────────────────────── #}

@@ -1216,6 +1216,88 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
 .pantalla-aviso .btn { margin-top: 18px; }
 
 
+/* ── 18c. Ayuda (/ayuda, ayuda_pantallas.py) ─────────────────────────────
+   Los manuales de uso: el de gestion_adm (templates/ayuda/manual.html) sin su
+   <style>. A la izquierda el índice, pegado arriba mientras se baja; a la
+   derecha la introducción, el circuito y una tarjeta por pantalla.
+     .manual > nav.manual-indice + .manual-cuerpo
+     .manual-circuito > .manual-paso > .manual-paso-n + -t + -d
+     .card.manual-sec(.resaltada) > .manual-sec-cab + .manual-texto + .manual-pie
+     dentro de .manual-texto: p, ul, ol.manual-pasos, table.manual-campos,
+       .manual-nota.criterio | .aviso > .manual-nota-rot
+     /ayuda: .manuales > .card > ul.manual-secciones                        */
+.app-main:has(.manual) { overflow-x: clip; }   /* si no, el índice no se queda pegado */
+.manual { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 20px; align-items: start; }
+@media (max-width: 900px) { .manual { grid-template-columns: 1fr; } .manual-indice { position: static; max-height: none; } }
+.manual-indice {
+  position: sticky; top: 76px; max-height: calc(100vh - 96px); overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 12px 10px;
+}
+.manual-indice .filter-input { width: 100%; max-width: none; margin-bottom: 4px; }
+.manual-indice h3 {
+  font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted); margin: 12px 0 4px 8px;
+}
+.manual-indice a {
+  display: block; padding: 5px 9px; border-radius: var(--radius-sm);
+  font-size: .82rem; color: var(--navy); line-height: 1.35;
+}
+.manual-indice a:hover { background: var(--blue-light); color: var(--blue); text-decoration: none; }
+.manual-indice a.activo { background: var(--blue); color: #fff; font-weight: 600; }
+.manual-intro { font-size: .9rem; line-height: 1.68; }
+.manual-intro p + p { margin-top: 10px; }
+.manual-circuito { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin-bottom: 20px; }
+.manual-paso {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 10px 14px;
+}
+.manual-paso-n { font-size: .66rem; font-weight: 700; color: var(--blue); }
+.manual-paso-t { font-size: .86rem; font-weight: 700; color: var(--navy); }
+.manual-paso-d { font-size: .77rem; color: var(--text-muted); line-height: 1.5; margin-top: 2px; }
+.manual-sec { scroll-margin-top: 76px; }
+.manual-sec.resaltada { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light), var(--shadow); }
+.manual-sec-cab { padding: 13px 20px; border-bottom: 1px solid var(--border); background: var(--surface-2); }
+.manual-sec-grupo { font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--blue); }
+.manual-sec-cab h2 { font-size: 1.02rem; color: var(--navy); }
+.manual-sec-ruta { font-family: var(--mono); font-size: .72rem; color: var(--text-muted); }
+.manual-sec-resumen { font-size: .85rem; color: var(--text-muted); margin-top: 3px; }
+.manual-texto { padding: 16px 20px; font-size: .88rem; line-height: 1.68; }
+.manual-texto > * { margin-bottom: 12px; }
+.manual-texto > :last-child { margin-bottom: 0; }
+.manual-texto ul { padding-left: 20px; }
+.manual-texto li + li { margin-top: 3px; }
+.manual-texto code { font-family: var(--mono); font-size: .85em; background: var(--bg); padding: 1px 5px; border-radius: 4px; }
+.manual-pasos { list-style: none; padding: 0; counter-reset: paso; }
+.manual-pasos li { counter-increment: paso; position: relative; padding: 2px 0 2px 32px; }
+.manual-pasos li::before {
+  content: counter(paso); position: absolute; left: 0; top: 4px; width: 21px; height: 21px;
+  border-radius: 50%; background: var(--blue); color: #fff; font-size: .72rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}
+.manual-campos { width: 100%; border-collapse: collapse; }
+.manual-campos td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: .85rem; }
+.manual-campos tr:last-child td { border-bottom: none; }
+.manual-campos td:first-child { width: 30%; font-weight: 600; color: var(--navy); }
+.manual-nota {
+  border-left: 4px solid; border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 10px 14px; font-size: .85rem; line-height: 1.62; color: var(--text);
+}
+.manual-nota.criterio { background: var(--info-bg); border-left-color: var(--info); }
+.manual-nota.aviso    { background: var(--warn-bg); border-left-color: var(--warn); }
+.manual-nota-rot { display: block; font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+.manual-nota.criterio .manual-nota-rot { color: var(--info-texto); }
+.manual-nota.aviso .manual-nota-rot    { color: var(--warn-texto); }
+.manual-pie { padding: 0 20px 16px; }
+/* En columnas y no en grilla: las tarjetas tienen alturas muy distintas y la
+   grilla dejaba huecos. Se leen de arriba abajo, columna por columna. */
+.manuales { columns: 360px; column-gap: 18px; }
+.manuales > .card { break-inside: avoid; }
+.manual-secciones { list-style: none; }
+.manual-secciones li { padding: 5px 0; font-size: .84rem; line-height: 1.4; }
+.manual-secciones a { font-weight: 600; }
+.manual-secciones span { display: block; color: var(--text-muted); font-size: .78rem; }
+
 /* ── 19. Utilidades ──────────────────────────────────────────────────────
    Pocas y a propósito. Si una pantalla necesita muchas, falta un
    componente.                                                             */

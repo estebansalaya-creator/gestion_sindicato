@@ -770,20 +770,26 @@ function mascaraImporte(inp, idOculto) {
 </div>
 
 {# ── Ayuda de la pantalla ────────────────────────────────────────────────────
-   El botón se arma solo: cada módulo con manual publica una función que, dada
-   la pantalla actual, devuelve su sección. Así no hay que agregar el botón
-   pantalla por pantalla, y en las que no tienen manual no aparece nada. #}
-{% set _ayuda = ayuda_de(request.endpoint) if ayuda_de is defined else None %}
-{% if _ayuda %}
-<a id="btn-ayuda" href="{{ url_for(_ayuda.endpoint, s=_ayuda.seccion) }}#{{ _ayuda.seccion }}"
-   title="Ver el manual de esta pantalla">
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+   El botón flotante de abajo a la derecha (el de gestion_adm) y la tecla F1:
+   el manual en la sección de esta pantalla (ayuda_pantallas.url_ayuda) o, en
+   una pantalla sin manual, el índice de todos. Solo con la sesión iniciada. #}
+{% if url_ayuda is defined and session.get('sind_validausuario') %}
+<a id="btn-ayuda" href="{{ url_ayuda(request.endpoint) }}" title="Ayuda de esta pantalla (F1)">
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
     <circle cx="12" cy="12" r="10"/>
     <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
     <line x1="12" y1="17" x2="12.01" y2="17"/>
   </svg>
   Ayuda
 </a>
+<script>
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'F1' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
+    e.preventDefault();
+    window.location.href = document.getElementById('btn-ayuda').href;
+  }
+});
+</script>
 {% endif %}
 
 {# ── Aviso de proceso en curso ───────────────────────────────────────────────
