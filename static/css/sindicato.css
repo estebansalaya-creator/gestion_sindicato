@@ -1120,6 +1120,9 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
   padding: 24px 28px; width: 100%; max-width: 440px;
 }
 .modal-caja.ancha { max-width: 640px; }
+/* Un diálogo que muestra un detalle con grillas (el período del acta): casi todo el ancho. */
+.modal-caja.pantalla { max-width: 1180px; }
+.modal-caja.pantalla .modal-cuerpo.alto { max-height: 74vh; }
 .modal-titulo { font-size: 1rem; font-weight: 700; color: var(--navy); margin-bottom: 6px; }
 .modal-texto  { font-size: .85rem; color: var(--text-muted); margin-bottom: 14px; }
 .modal-acciones { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; }

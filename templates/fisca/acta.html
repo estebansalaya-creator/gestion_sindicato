@@ -8,6 +8,9 @@
   Nueva: lo calculado con los datos del formulario («Recalcular» vuelve a
   pedirlo, sin guardar). Abierta: lo grabado; «Guardar y recalcular» lo rehace
   con los datos de hoy. Cerrada o anulada: solo lectura. Ver fisca_actas.py.
+  El ojo de cada período abre su detalle en un diálogo (fisca_acta.acta_periodo,
+  _acta_periodo.html): afiliados con su parte, cobros aplicados e interés por
+  tramo. Pedido del 15/11/2026.
 #}
 
 {% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
@@ -150,6 +153,7 @@
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-periodos" data-exportar="Acta {{ a.nro_acta }} {{ a.cuit }}">
       <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
         <th class="th-center" data-orden="asc">Período</th><th class="th-center">Vencimiento</th>
         <th class="th-right">Liquidado</th><th class="th-right">Pagado en término</th><th class="th-right">Pagado tarde</th>
         <th class="th-right">Saldo</th><th class="th-center" data-tipo="n">Días de mora</th>
@@ -158,6 +162,13 @@
       <tbody>
         {% for p in calc.periodos %}
         <tr>
+          <td><div class="acciones">
+            {{ ui.accion('ver', onclick='verPeriodo(this)', titulo='Ver el detalle del período', datos={
+                 'periodo': p.periodo | periodo,
+                 'url': url_for('fisca_acta.acta_periodo', id_acta=a.id, periodo=p.periodo) if a.id
+                        else url_for('fisca_acta.acta_periodo', cuit=a.cuit, periodo=p.periodo,
+                                     fecha_calculo=a.fecha_calculo.isoformat(), con_pagos_tarde=1 if a.con_pagos_tarde else 0)}) }}
+          </div></td>
           <td class="td-center td-mono">{{ p.periodo | periodo }}</td>
           <td class="td-center">{{ p.vencimiento.strftime('%d/%m/%Y') }}</td>
           <td class="td-right" data-num="{{ p.liquidado }}">{{ p.liquidado | miles }}</td>
@@ -170,7 +181,7 @@
           <td class="td-right td-fuerte" data-num="{{ p.total }}">{{ p.total | miles }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="10" class="no-data">Nada que reclamar: ningún período vencido con saldo{{ ' ni pagado fuera de término' if a.con_pagos_tarde }}.</td></tr>
+        <tr class="no-data-row"><td colspan="11" class="no-data">Nada que reclamar: ningún período vencido con saldo{{ ' ni pagado fuera de término' if a.con_pagos_tarde }}.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -206,6 +217,15 @@
   {{ ui.paginacion() }}
 </div>
 {% endif %}
+
+{# El detalle de un período: lo trae verPeriodo() del servidor. #}
+<div class="modal" id="modal-periodo">
+  <div class="modal-caja pantalla" role="dialog" aria-labelledby="mp-titulo">
+    <div class="modal-titulo" id="mp-titulo">Período <span id="mp-periodo"></span> · {{ a.razon_social or ('CUIT ' ~ a.cuit) }}</div>
+    <div class="modal-cuerpo alto" id="mp-cuerpo"></div>
+    <div class="modal-acciones">{{ ui.boton('Cerrar', 'secondary', onclick="cerrarModal('modal-periodo')") }}</div>
+  </div>
+</div>
 
 {% if calc.afuera %}
 {{ ui.aviso('No entran por estar en un acta cerrada: ' ~ (calc.afuera | map(attribute='periodo') | map('periodo') | join(', '))
@@ -268,6 +288,39 @@
 {% endif %}
 
 <script>
+// El detalle de un período: el HTML lo arma el servidor (Jinja escapa los
+// datos); acá se mete en el diálogo y se le dan las grillas. Un error (sin
+// sesión, sin permiso) llega como texto y se muestra como texto.
+function verPeriodo(btn) {
+  var cuerpo = document.getElementById('mp-cuerpo');
+  function aviso(clase, texto) {
+    cuerpo.textContent = '';
+    var d = document.createElement('div');
+    d.className = clase;
+    d.textContent = texto;
+    cuerpo.appendChild(d);
+  }
+  document.getElementById('mp-periodo').textContent = btn.dataset.periodo;
+  aviso('campo-ayuda', 'Cargando el detalle…');
+  abrirModal('modal-periodo');
+  fetch(btn.dataset.url, { credentials: 'same-origin' })
+    .then(function (r) {
+      return r.text().then(function (t) {
+        if (!r.ok) throw new Error(t || (r.status + ' ' + r.statusText));
+        return t;
+      });
+    })
+    .then(function (html) {
+      cuerpo.innerHTML = html;
+      cuerpo.querySelectorAll('table.data-table:not([data-sin-orden])').forEach(function (t) {
+        gestion_admTable(t, { pageSize: 20 });
+      });
+      cuerpo.querySelectorAll('.data-table-wrap').forEach(scrollArriba);
+      cuerpo.scrollTop = 0;
+    })
+    .catch(function (e) { aviso('alert alert-danger', 'No se pudo traer el detalle: ' + e.message); });
+}
+
 document.addEventListener('DOMContentLoaded', function () {
   if (document.getElementById('tbl-periodos')) gestion_admTable('tbl-periodos', { pageSize: 50 });
   if (document.getElementById('tbl-pagos')) gestion_admTable('tbl-pagos', { pageSize: 50 });

@@ -1,0 +1,149 @@
+{% import "_ui.html" as ui %}
+{#
+  El detalle de un período del acta (fisca_acta.acta_periodo): lo que se mete
+  en el modal de «Deuda por período» de acta.html. Las cifras de arriba son las
+  del renglón; debajo, los afiliados de la liquidación con el saldo y el
+  interés repartidos en proporción a su cuota (el anexo por afiliado), lo
+  cobrado y aplicado a la cuota, y el interés del saldo por tramo de tasa.
+#}
+
+{% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
+<div class="kpi-card"><div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div><div>
+  <div class="kpi-lbl">{{ rotulo }}</div>
+  <div class="kpi-val monto {{ clase }}">{{ valor }}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+</div></div>
+{%- endmacro %}
+
+{% if error %}
+{{ ui.aviso(error, 'danger') }}
+{% else %}
+{% set nombre_excel = 'Acta ' ~ cuit ~ ' período ' ~ (p.periodo | periodo) %}
+<div class="kpi-row">
+  {{ kpi('planilla', '', 'Liquidado', p.liquidado | miles, '',
+         (origenes.get(liq.origen, liq.origen) if liq.origen else '') ~ ((' · ' ~ afiliados | length ~ ' afiliado(s)') if afiliados else '')) }}
+  {{ kpi('dinero', 'ok', 'Pagado', (p.pagado_termino + p.pagado_tarde) | miles, 'importe-ok',
+         'en término ' ~ (p.pagado_termino | miles) ~ ' · tarde ' ~ (p.pagado_tarde | miles)) }}
+  {{ kpi('dinero', 'danger', 'Saldo', p.saldo | miles, 'importe-danger', p.dias_mora ~ ' día(s) de mora') }}
+  {{ kpi('reloj', 'warn', 'Interés', (p.interes_saldo + p.interes_pagos) | miles, 'importe-pendiente',
+         'del saldo ' ~ (p.interes_saldo | miles) ~ ' · de pagos tarde ' ~ (p.interes_pagos | miles)) }}
+  {{ kpi('planilla', 'danger', 'Total', p.total | miles, 'importe-danger') }}
+</div>
+<p class="campo-ayuda">
+  Vence el {{ p.vencimiento.strftime('%d/%m/%Y') }} (el F.931 del CUIT) · interés hasta el {{ fecha_calculo.strftime('%d/%m/%Y') }}
+  {%- if liq.observaciones %} · {{ liq.observaciones }}{% endif %}
+  {%- if puede_cc %} · <a href="{{ url_for('cc_emp.periodo', cuit=cuit, periodo=p.periodo) }}">la cuota del período en la cuenta corriente</a>{% endif %}
+</p>
+
+<div class="card">
+  {{ ui.card_head('Afiliados del período', 'el saldo y el interés se reparten en proporción a la cuota de cada uno') }}
+  {{ ui.barra_filtros('Buscar por CUIL o nombre…') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" id="tbl-mp-afiliados" data-exportar="{{ nombre_excel }} afiliados">
+      <thead><tr>
+        <th>CUIL</th><th>Apellido y nombres</th><th>Fuente</th>
+        <th class="th-right" title="La base de la cuota: la Rem. 5 de la DDJJ o la del Libro de Sueldos">Remuneración</th>
+        <th class="th-right">Cuota</th><th class="th-right">Saldo</th><th class="th-right">Interés</th>
+      </tr></thead>
+      <tbody>
+        {% for f in afiliados %}
+        <tr>
+          <td class="td-mono">{{ f.cuil }}</td>
+          <td class="td-fuerte">{{ f.nombre or '—' }}</td>
+          <td>{{ ui.estado(fuentes.get(f.fuente, f.fuente), fuente_tipo.get(f.fuente, 'neutro')) }}</td>
+          <td class="td-right" data-num="{{ f.remuneracion }}">{{ f.remuneracion | miles }}</td>
+          <td class="td-right" data-num="{{ f.cuota }}">{{ f.cuota | miles }}</td>
+          <td class="td-right{{ ' importe-danger' if f.saldo }}" data-num="{{ f.saldo }}">{{ f.saldo | miles }}</td>
+          <td class="td-right{{ ' importe-pendiente' if f.interes }}" data-num="{{ f.interes }}">{{ f.interes | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">La liquidación no tiene detalle por afiliado.</td></tr>
+        {% endfor %}
+        {% if afiliados %}
+        {# La fila de totales va en el tbody: gestion_admTable la deja al final
+           y no la cuenta ni la exporta (.total-row). #}
+        <tr class="total-row">
+          <td colspan="3">{{ afiliados | length }} afiliado(s)</td>
+          <td class="td-right">{{ (afiliados | sum(attribute='remuneracion')) | miles }}</td>
+          <td class="td-right">{{ (afiliados | sum(attribute='cuota')) | miles }}</td>
+          <td class="td-right">{{ (afiliados | sum(attribute='saldo')) | miles }}</td>
+          <td class="td-right">{{ (afiliados | sum(attribute='interes')) | miles }}</td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cobros aplicados a la cuota', 'en término, fuera de término (con su interés si el acta lo reclama) o después de la fecha de cálculo') }}
+  {{ ui.barra_filtros('Buscar por número o fecha…') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" id="tbl-mp-cobros" data-exportar="{{ nombre_excel }} cobros">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-center" data-orden="asc">Fecha</th><th>Recibo / orden</th>
+        <th class="th-right">Aplicado</th><th>Situación</th><th class="th-right">Interés</th>
+      </tr></thead>
+      <tbody>
+        {% for c in cobros %}
+        <tr>
+          <td><div class="acciones">
+            {%- if c.clase in ('cuota_sindical', 'fiscalizacion') and puede_rec %}{{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=c.id_orden), titulo='Ver el recibo') }}{% endif -%}
+          </div></td>
+          <td class="td-center" data-num="{{ c.fecha_cobro.toordinal() if c.fecha_cobro else 0 }}">{{ c.fecha_cobro.strftime('%d/%m/%Y') if c.fecha_cobro else '—' }}</td>
+          <td class="td-mono">{{ c.nro_recibo or c.nro_orden or c.id_orden }}</td>
+          <td class="td-right" data-num="{{ c.importe }}">{{ c.importe | miles }}</td>
+          <td>{{ ui.estado(c.situacion, c.situacion_tipo) }}</td>
+          <td class="td-right{{ ' importe-pendiente' if c.interes }}" data-num="{{ c.interes or 0 }}">
+            {%- if c.interes is not none %}{{ c.interes | miles }}{% elif c.dias and not con_pagos_tarde %}<span class="td-muted" title="El acta no reclama el interés de lo pagado tarde">no se reclama</span>{% else %}—{% endif -%}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">No hay cobros aplicados a esta cuota.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Interés del saldo por tramo de tasa', 'resarcitorio de ARCA: saldo × tasa mensual / 30 × días, cada día con la tasa vigente (arca_intereses)') }}
+  {% if error_tramos %}
+  <div class="card-aviso">{{ ui.aviso(error_tramos, 'danger') }}</div>
+  {% elif not tramos %}
+  <div class="card-aviso">{{ ui.aviso('Sin saldo: el período entra por el interés de lo pagado fuera de término.', 'info') }}</div>
+  {% else %}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" id="tbl-mp-tramos" data-sin-orden data-exportar="{{ nombre_excel }} interés por tramo">
+      <thead><tr>
+        <th class="th-center">Desde</th><th class="th-center">Hasta</th><th class="th-right">Días</th>
+        <th class="th-right">Tasa mensual</th><th>Resolución</th><th class="th-right">Coeficiente</th><th class="th-right">Interés</th>
+      </tr></thead>
+      <tbody>
+        {% for t in tramos %}
+        <tr>
+          <td class="td-center">{{ t.desde.strftime('%d/%m/%Y') }}</td>
+          <td class="td-center">{{ t.hasta.strftime('%d/%m/%Y') }}</td>
+          <td class="td-right">{{ t.dias }}</td>
+          <td class="td-right">{{ ('%.2f' | format(t.tasa | float)).replace('.', ',') }} %</td>
+          <td>{{ t.resolucion or '—' }}</td>
+          <td class="td-right">{{ ('%.6f' | format((t.coef * 100) | float)).replace('.', ',') }} %</td>
+          <td class="td-right" data-num="{{ t.interes }}">{{ t.interes | miles }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="total-row">
+        <td colspan="2">Saldo {{ p.saldo | miles }}</td>
+        <td class="td-right">{{ tramos | sum(attribute='dias') }}</td>
+        <td colspan="2"></td>
+        <td class="td-right">{{ ('%.6f' | format(((tramos | sum(attribute='coef')) * 100) | float)).replace('.', ',') }} %</td>
+        <td class="td-right" title="El del acta: saldo × la suma de los coeficientes, redondeado una vez">{{ p.interes_saldo | miles }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}

@@ -5,6 +5,9 @@ fisca_actas.py — Actas de fiscalización y acuerdos de pago de cuota sindical.
     /fiscalizacion/actas/nueva?cuit=         el acta nueva del CUIT (o la abierta que ya tiene)
     /fiscalizacion/actas/guardar             POST: alta, o guardar y recalcular una abierta
     /fiscalizacion/actas/<id>                ficha (editable mientras está abierta)
+    /fiscalizacion/actas/periodo             el detalle de un período (el modal de «Deuda por período»), HTML:
+                                             ?id_acta=&periodo= (lo grabado) o ?cuit=&periodo=&fecha_calculo=
+                                             &con_pagos_tarde= (el acta nueva, sin guardar)
     /fiscalizacion/actas/<id>/cerrar         POST: la deuda queda firme
     /fiscalizacion/actas/<id>/anular         POST, con motivo
     /fiscalizacion/actas/<id>/pdf
@@ -69,6 +72,7 @@ from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 import fisca_aplicaciones as fa
 import fisca_intereses as FI
+import fisca_liquidacion as fl
 import fisca_recibo_acta as FRA
 import recibos_talonario as RT
 from db import get_connection, puede, usuario_actual, validasesion
@@ -452,6 +456,121 @@ def acta(id_acta):
                                 "interes_pagos": a["interes_pagos"], "total": a["total"]},
                     "tasa_hoy": FI.tasa_vigente(FI.tasas(cur), a["fecha_calculo"])}
             return _render_acta(cur, a, calc)
+
+
+def prorratear(filas: list[dict], total: Decimal, base: str, campo: str) -> None:
+    """Reparte `total` entre las filas en proporción a `base` (la cuota de cada
+    afiliado), al centavo, y deja la diferencia de redondeo en la de mayor base:
+    la columna suma exactamente el total, como el Anexo del acta de OSEDA."""
+    suma = sum((_d(f[base]) for f in filas), Decimal("0"))
+    for f in filas:
+        f[campo] = (total * _d(f[base]) / suma).quantize(CENT) if suma > 0 else Decimal("0")
+    if filas and suma > 0:
+        mayor = max(filas, key=lambda f: _d(f[base]))
+        mayor[campo] += total - sum((f[campo] for f in filas), Decimal("0"))
+
+
+def detalle_periodo(cur, p: dict, cuit: str, fecha_calculo: datetime.date, con_pagos_tarde: bool) -> dict:
+    """
+    Lo que hay detrás de un renglón de «Deuda por período» (`p`, de `calcular`
+    o de `fisca_acta_periodo`):
+
+        liq          la liquidación (origen, afiliados, remuneración)
+        afiliados    su detalle, con el saldo y el interés del período repartidos
+                     en proporción a la cuota de cada uno (el anexo por afiliado)
+        cobros       lo aplicado a la cuota: en término, fuera de término (con su
+                     interés si el acta lo reclama) o cobrado después del cálculo
+        tramos       el interés del saldo por tramo de tasa de ARCA, o
+        error_tramos si falta una tasa
+    """
+    cur.execute("SELECT * FROM fisca_liquidacion WHERE id = %s", (p["id_liquidacion"],))
+    liq = cur.fetchone() or {}
+    cur.execute("""SELECT d.cuil, d.id_afiliado, COALESCE(d.apellido_nombres, a.apellido_nombres) AS nombre,
+                          d.remuneracion, d.cuota, d.fuente, d.activo
+                     FROM fisca_liquidacion_detalle d
+                     LEFT JOIN p_afiliados a ON a.id_afiliado = d.id_afiliado
+                    WHERE d.id_liquidacion = %s
+                    ORDER BY d.cuota = 0, nombre, d.cuil""", (p["id_liquidacion"],))
+    afiliados = list(cur.fetchall())
+    prorratear(afiliados, _d(p["saldo"]), "cuota", "saldo")
+    prorratear(afiliados, _d(p["interes_saldo"]) + _d(p["interes_pagos"]), "cuota", "interes")
+
+    venc = p["vencimiento"]
+    tarde_por_cobro = {g["id_detalle"]: g for g in (p.get("pagos") or [])}
+    cobros = []
+    for a in fa.aplicaciones_de(cur, cuit):
+        if a["id_liquidacion"] != p["id_liquidacion"] or a["muerta"]:
+            continue
+        f = a["fecha_cobro"]
+        g = tarde_por_cobro.get(a["id_detalle"])
+        if not f or f > fecha_calculo:
+            situacion, tipo, dias, interes = "Después del cálculo", "neutro", None, None
+        elif f <= venc:
+            situacion, tipo, dias, interes = "En término", "ok", None, None
+        else:
+            dias = (f - venc).days
+            situacion, tipo = f"{dias} día(s) tarde", "warn"
+            interes = g["interes"] if g else None
+        cobros.append(dict(a, situacion=situacion, situacion_tipo=tipo, dias=dias, interes=interes))
+
+    tramos, error_tramos = [], None
+    if _d(p["saldo"]) > 0:
+        try:
+            tramos = FI.tramos(FI.tasas(cur), venc, fecha_calculo)
+        except ValueError as e:
+            error_tramos = str(e)
+        for t in tramos:
+            t["interes"] = (_d(p["saldo"]) * t["coef"]).quantize(CENT)
+    return {"p": p, "liq": liq, "afiliados": afiliados, "cobros": cobros, "tramos": tramos,
+            "error_tramos": error_tramos, "fecha_calculo": fecha_calculo, "con_pagos_tarde": con_pagos_tarde,
+            "cuit": cuit}
+
+
+@fisca_acta_bp.route("/actas/periodo")
+def acta_periodo():
+    """
+    El detalle de un período del acta, en HTML para el modal de la grilla
+    «Deuda por período» (`fisca/_acta_periodo.html`). De un acta guardada
+    (`id_acta`) muestra lo grabado; del acta nueva, lo mismo que calcula la
+    pantalla con sus datos (`cuit`, `fecha_calculo`, `con_pagos_tarde`).
+    Lo pide la pantalla por fetch: sin sesión o sin permiso contesta el código,
+    no la pantalla de ingreso.
+    """
+    if not validasesion():
+        return "La sesión venció: volvé a ingresar.", 401
+    if not puede(URL_ACTAS):
+        return "No tenés permiso para las actas.", 403
+    per = periodo_de(request.args.get("periodo"))
+    if not per:
+        return "Falta el período.", 400
+    id_acta = request.args.get("id_acta", type=int)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if id_acta:
+                a = leer_acta(cur, id_acta)
+                if not a:
+                    return "No existe esa acta.", 404
+                cuit, fecha, con_pagos = a["cuit"], a["fecha_calculo"], bool(a["con_pagos_tarde"])
+                p = next((x for x in a["periodos"] if x["periodo"] == per), None)
+            else:
+                cuit = _cuit(request.args.get("cuit"))
+                fecha = _fecha(request.args.get("fecha_calculo")) or datetime.date.today()
+                con_pagos = request.args.get("con_pagos_tarde", "1") == "1"
+                if not cuit:
+                    return "Falta el CUIT.", 400
+                try:
+                    calc = calcular(cur, cuit, fecha, per, per, con_pagos)
+                except ValueError as e:
+                    return render_template("fisca/_acta_periodo.html", error=str(e))
+                p = next((x for x in calc["periodos"] if x["periodo"] == per), None)
+            if not p:
+                return render_template("fisca/_acta_periodo.html",
+                                       error=f"El período {per[:4]}-{per[4:]} ya no está en el cálculo.")
+            d = detalle_periodo(cur, p, cuit, fecha, con_pagos)
+    return render_template("fisca/_acta_periodo.html", error=None, origenes=fl.ORIGENES, fuentes=fl.FUENTES,
+                           fuente_tipo=fl.FUENTE_TIPO, puede_cc=puede("/empleadores/cc"),
+                           puede_padron=puede("/afiliados/padron") or puede("/afiliados"),
+                           puede_rec=puede(URL_RECIBOS), **d)
 
 
 def _datos_form(form) -> dict:

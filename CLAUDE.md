@@ -144,7 +144,9 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/lsd           presentaciones del LSD, ?periodo, ?estado; /subir POST; /<id> ficha; /<id>/confirmar,
                              /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
 /fiscalizacion/actas         actas: ?q, ?estado; /nueva?cuit= (&fecha_calculo, &periodo_desde, &periodo_hasta,
-                             &con_pagos_tarde: recalcula sin guardar); /guardar POST; /<id> ficha; /<id>/cerrar,
+                             &con_pagos_tarde: recalcula sin guardar); /periodo (?id_acta=&periodo= o ?cuit=&periodo=
+                             &fecha_calculo=&con_pagos_tarde=: el detalle de un período, HTML para el diálogo);
+                             /guardar POST; /<id> ficha; /<id>/cerrar,
                              /<id>/anular POST; /<id>/pdf; /<id>/acuerdo (?id=), /<id>/acuerdo/guardar POST
 /fiscalizacion/acuerdos      acuerdos: ?estado; /<id>/estado POST (anular, cancelar, judicializar); /<id>/pdf;
                              /<id>/cobrar GET/POST (el recibo de fiscalización con cuenta y fecha)
@@ -552,11 +554,19 @@ corriente de acá.
   período, pagos fuera de término, tasas usadas, intimación, firmas) y acuerdo (partes, deuda, cronograma, cláusula,
   firmas). Los textos legales están en `TEXTO_*` de `fisca_actas.py`: **a revisar con el asesor legal**. Lugar de pago
   y plazo de intimación en Datos del Sindicato (`acta_lugar_pago`, `acta_plazo_dias`).
+- **Detalle de un período** (pedido del 15/11/2026, como los diálogos «por CUIL» y «tramos de interés» de la Deuda por
+  Empleador de gestion_adm): el ojo de cada renglón de «Deuda por período» abre un diálogo (`modal-caja pantalla`) con
+  `fisca_acta.acta_periodo` → `_acta_periodo.html`: las cifras del renglón; los afiliados de la liquidación con el
+  saldo y el interés repartidos en proporción a su cuota (`prorratear`, la diferencia de redondeo a la mayor: la
+  columna suma justo el total; es el anexo por afiliado, exportable); los cobros aplicados a la cuota (en término,
+  N días tarde con su interés, o después del cálculo) y el interés del saldo por tramo de tasa (`FI.tramos`). De un
+  acta guardada muestra lo grabado; de la nueva, lo que calcula la pantalla con sus datos.
 - La cuenta corriente marca en cada período el acta que lo reclama y tiene el botón «Acta de fiscalización».
 - **Cobros del acuerdo** (14/11/2026): con los recibos de fiscalización (ver «Recibos: talonarios y fiscalización»).
   El acuerdo muestra lo pagado y el saldo de cada cuota y sus recibos; sin saldo pasa solo a «cancelado»; con
   recibos no se modifica. La lista de acuerdos tiene Cobrado y Falta.
-- **Pendiente**: multas, anexo nominativo por afiliado y el envío por mail.
+- **Pendiente**: multas, el anexo por afiliado en el PDF del acta (en pantalla ya está, en el detalle del período) y
+  el envío por mail.
 
 ## Presentación del Libro de Sueldos Digital (cuota sindical)
 
