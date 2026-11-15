@@ -752,6 +752,9 @@ Correo Saliente, Procesos Desatendidos, Talonarios y lo del Asistente.
   18 × 18. Pintan con degradados por `id`, y `url(#id)` apunta al PRIMER elemento con ese id de la página: si el
   mismo ícono sale dos veces y el primero está en un submenú cerrado, Chrome no lo dibuja. Por eso se dibujan con
   el filtro `svg_unico` de app.py (renombra los id cada vez), en el menú lateral y en el ABM del menú.
+  Las opciones que se agregan después quedan sin ícono: `sql/menu_iconos_color_20261114.sql` les puso el suyo a las
+  de Fiscalización (LSD, recibos, escalas, actas, acuerdos, fiscalizadores), por URL. Los íconos salen del paquete npm
+  `@iconify-json/fluent-color` (`icons.json`, variante `-24`), con los id `SVG…` renombrados a `m<id de menú>SVG…`.
 - **Menú lateral**: buscador de opciones arriba (el de gestion_adm: filtra el árbol en el navegador, cada palabra en
   la opción y en sus ramas; flechas, Enter va, Esc limpia; solo busca pantallas, `a.mn-hoja`). Cada nivel con su
   tamaño, peso y color (módulo .88rem 700 negro; hijo .82rem 500 #1c5a8f; nieto .78rem 400 #2c5c96; bisnieto
