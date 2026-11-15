@@ -71,7 +71,9 @@ from flask import (Blueprint, abort, flash, redirect, render_template, request, 
 import contable_oseda
 import fisca_intereses as FI
 import fisca_liquidacion as FL
+import fisca_novedades as NOV
 import lsd_lector
+from pagos_datos import leer_importe
 from db import get_connection, puede, usuario_actual, validasesion
 from exportar import xlsx
 
@@ -214,10 +216,13 @@ def _cuota(remuneracion, alicuota: Decimal) -> Decimal:
     return (Decimal(str(remuneracion or 0)) * alicuota / 100).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
-def armar_planilla(lectura: dict, padron: dict, alicuota: Decimal) -> dict:
+def armar_planilla(lectura: dict, padron: dict, alicuota: Decimal, altas: dict | None = None) -> dict:
     """
     La planilla de cuota sindical del archivo, sin base de datos (la prueban los
-    tests). `padron` es el de FL.leer_padron.
+    tests). `padron` es el de FL.leer_padron. `altas`, las que informó la
+    empresa y están pendientes ({cuil: {apellido_nombres, fecha, id_afiliado}},
+    fisca_novedades.altas_pendientes): la cuota ya las toma desde su fecha, con
+    fuente «alta», estén o no en el archivo.
 
     {"cuit", "periodo", "lineas": [{cuil, id_afiliado, nombre, remuneracion,
     cuota, fuente, activo, retenido, fecha_alta, fecha_baja}], "trabajadores",
@@ -229,19 +234,24 @@ def armar_planilla(lectura: dict, padron: dict, alicuota: Decimal) -> dict:
     del_periodo = FL.afiliados_del_periodo(periodo, padron)
     activos = FL.activos_por_empleador(periodo, padron, del_periodo).get(cuit, {})
 
+    altas = _altas_del_periodo(altas, periodo, activos)
     lineas, no_afiliados = {}, 0
     for t in lectura["trabajadores"]:
         a = del_periodo.get(t["cuil"])
-        if not a:
+        alta = altas.get(t["cuil"])
+        if not a and not alta:
             no_afiliados += 1
             continue
         base = (t["f931"] or {}).get("base_imponible_5") or Decimal("0")
         ret = [c["importe"] for c in t["conceptos"]
                if (c["codigo"] or "").strip() == lsd_lector.CONCEPTO_CUOTA_SINDICAL and c["dc"] == "D"]
-        lineas[t["cuil"]] = {"cuil": t["cuil"], "id_afiliado": a["id_afiliado"], "nombre": a["apellido_nombres"],
-                             "remuneracion": base, "fuente": "lsd", "activo": t["cuil"] in activos,
+        lineas[t["cuil"]] = {"cuil": t["cuil"], "id_afiliado": (a or alta)["id_afiliado"],
+                             "nombre": (a or alta)["apellido_nombres"], "remuneracion": base,
+                             "fuente": "alta" if alta else "lsd", "activo": t["cuil"] in activos,
                              "retenido": sum(ret, Decimal("0")) if ret else None,
-                             "fecha_alta": a["fecha_alta"], "fecha_baja": a["fecha_baja"]}
+                             "fecha_alta": (a or {}).get("fecha_alta"), "fecha_baja": (a or {}).get("fecha_baja")}
+    for cuil, alta in altas.items():
+        lineas.setdefault(cuil, _linea_alta(cuil, alta, Decimal("0")))
     for cuil, a in activos.items():
         lineas.setdefault(cuil, {"cuil": cuil, "id_afiliado": a["id_afiliado"], "nombre": a["apellido_nombres"],
                                  "remuneracion": Decimal("0"), "fuente": "sin_lsd", "activo": True,
@@ -254,19 +264,66 @@ def armar_planilla(lectura: dict, padron: dict, alicuota: Decimal) -> dict:
         l["cuota"] = _cuota(l["remuneracion"], alicuota) if l["remuneracion"] > 0 else Decimal("0.00")
         salida.append(l)
     salida.sort(key=lambda l: (l["fuente"] == "sin_lsd", (l["nombre"] or "").upper(), l["cuil"]))
+    return _totales(cuit, periodo, salida, activos, no_afiliados,
+                    sum(1 for t in lectura["trabajadores"] if t["f931"]))
+
+
+def _altas_del_periodo(altas: dict | None, periodo: str, activos: dict) -> dict:
+    """Las altas pendientes que cuentan en el período: con fecha de alta hasta el
+    último día del mes y que no figuran ya como activos del empleador."""
+    hasta = FL.limites(periodo)[1]
+    return {c: a for c, a in (altas or {}).items() if c not in activos and a["fecha"] and a["fecha"] <= hasta}
+
+
+def _linea_alta(cuil: str, alta: dict, remuneracion: Decimal) -> dict:
+    return {"cuil": cuil, "id_afiliado": alta.get("id_afiliado"), "nombre": alta.get("apellido_nombres"),
+            "remuneracion": remuneracion, "fuente": "alta", "activo": False, "retenido": None,
+            "fecha_alta": alta.get("fecha"), "fecha_baja": None}
+
+
+def _totales(cuit: str, periodo: str, salida: list[dict], activos: dict, no_afiliados: int,
+             trabajadores: int) -> dict:
     retenidos = [l["retenido"] for l in salida if l["retenido"] is not None]
     return {
         "cuit": cuit, "periodo": periodo, "lineas": salida,
-        "trabajadores": sum(1 for t in lectura["trabajadores"] if t["f931"]),
+        "trabajadores": trabajadores,
         "no_afiliados": no_afiliados,
         "activos": len(activos),
-        "en_archivo": sum(1 for l in salida if l["activo"] and l["fuente"] == "lsd"),
+        "en_archivo": sum(1 for l in salida if l["activo"] and l["fuente"] in ("lsd", "manual")
+                          and (l["fuente"] == "lsd" or l["remuneracion"] > 0)),
+        "altas": sum(1 for l in salida if l["fuente"] == "alta"),
         "fuera_nomina": sum(1 for l in salida if not l["activo"]),
         "afiliados": sum(1 for l in salida if l["cuota"] > 0),
         "remuneracion": sum((l["remuneracion"] for l in salida), Decimal("0")),
         "importe": sum((l["cuota"] for l in salida), Decimal("0")),
         "retenido": sum(retenidos, Decimal("0")) if retenidos else None,
     }
+
+
+def armar_planilla_manual(cuit: str, periodo: str, remuneraciones: dict, padron: dict, alicuota: Decimal,
+                          altas: dict | None = None) -> dict:
+    """
+    La planilla de una carga A MANO (sin el archivo del Libro de Sueldos
+    Digital): un renglón por afiliado activo de la empresa en el período (su
+    nómina según el padrón), con la remuneración que cargó la empresa (fuente
+    «manual»; sin cargar, cero), y uno por cada alta pendiente que cuenta en el
+    período (fuente «alta»). `remuneraciones`: {cuil: Decimal}. Sin base de datos.
+    """
+    del_periodo = FL.afiliados_del_periodo(periodo, padron)
+    activos = FL.activos_por_empleador(periodo, padron, del_periodo).get(cuit, {})
+    altas = _altas_del_periodo(altas, periodo, activos)
+    salida = []
+    for cuil, a in activos.items():
+        rem = Decimal(str(remuneraciones.get(cuil) or 0))
+        salida.append({"cuil": cuil, "id_afiliado": a["id_afiliado"], "nombre": a["apellido_nombres"],
+                       "remuneracion": rem, "fuente": "manual", "activo": True, "retenido": None,
+                       "fecha_alta": a["fecha_alta"], "fecha_baja": a["fecha_baja"]})
+    for cuil, alta in altas.items():
+        salida.append(_linea_alta(cuil, alta, Decimal(str(remuneraciones.get(cuil) or 0))))
+    for l in salida:
+        l["cuota"] = _cuota(l["remuneracion"], alicuota) if l["remuneracion"] > 0 else Decimal("0.00")
+    salida.sort(key=lambda l: (l["fuente"] == "alta", (l["nombre"] or "").upper(), l["cuil"]))
+    return _totales(cuit, periodo, salida, activos, 0, len(salida))
 
 
 def validar(lectura: dict, cuit_esperado: str | None = None) -> list[str]:
@@ -293,7 +350,29 @@ def calcular(cur, lectura: dict) -> dict:
     par = FL.parametros(cur)
     periodo = f"{lectura['cabecera']['periodo']:06d}"
     padron = FL.leer_padron(cur, *FL.limites(periodo))
-    return {**armar_planilla(lectura, padron, par["alicuota"]), **par}
+    altas = NOV.altas_pendientes(cur, lectura["cabecera"]["cuit"])
+    return {**armar_planilla(lectura, padron, par["alicuota"], altas), **par, "carga": "archivo"}
+
+
+def calcular_manual(cur, cuit: str, periodo: str, remuneraciones: dict) -> dict:
+    par = FL.parametros(cur)
+    padron = FL.leer_padron(cur, *FL.limites(periodo))
+    altas = NOV.altas_pendientes(cur, cuit)
+    return {**armar_planilla_manual(cuit, periodo, remuneraciones, padron, par["alicuota"], altas), **par,
+            "carga": "manual"}
+
+
+def remuneraciones_de(cur, id_pres: int) -> dict:
+    cur.execute("SELECT cuil, remuneracion FROM fisca_lsd_manual WHERE id_presentacion = %s", (id_pres,))
+    return {f["cuil"]: f["remuneracion"] for f in cur.fetchall()}
+
+
+def plan_actual(cur, pres: dict) -> dict:
+    """La planilla de una presentación con el padrón de hoy: del archivo o de
+    lo cargado a mano."""
+    if pres.get("carga") == "manual":
+        return calcular_manual(cur, pres["cuit"], pres["periodo"], remuneraciones_de(cur, pres["id"]))
+    return calcular(cur, _leer(pres["archivo"], pres["cuit"]))
 
 
 def _leer(contenido: bytes, cuit_esperado: str | None) -> dict:
@@ -334,6 +413,56 @@ def guardar_borrador(cur, contenido: bytes, nombre: str, origen: str, cuit_esper
     return cur.lastrowid
 
 
+MAX_REMUNERACION = Decimal("999999999.99")
+
+
+def leer_remuneraciones(form, prefijo: str = "rem_") -> tuple[dict, list[str]]:
+    """{cuil: Decimal} de los campos «rem_<cuil>» del formulario de la carga a
+    mano, y los errores. Vacío es cero."""
+    rems, errores = {}, []
+    for k in form:
+        if not k.startswith(prefijo):
+            continue
+        cuil = FL._digitos(k[len(prefijo):])
+        texto = (form.get(k) or "").strip()
+        if len(cuil) != 11 or not texto:
+            continue
+        v = leer_importe(texto)
+        if v is None or v < 0 or Decimal(str(v)) > MAX_REMUNERACION:
+            errores.append(f"CUIL {cuil}: «{texto}» no es una remuneración.")
+            continue
+        rems[cuil] = Decimal(str(v)).quantize(CENT)
+    return rems, errores
+
+
+def guardar_borrador_manual(cur, cuit: str, periodo: str, remuneraciones: dict, origen: str,
+                            id_enlace: int | None, id_usuario: int | None, ip: str | None) -> int:
+    """La carga a mano: arma la planilla y la guarda sin presentar, con las
+    remuneraciones en fisca_lsd_manual. Devuelve el id."""
+    periodo = FL.periodo_valido(periodo)
+    if not periodo:
+        raise ErrorPresentacion("Elijan el mes (período) de la cuota.")
+    if FL.limites(periodo)[0] > datetime.date.today():
+        raise ErrorPresentacion(f"El período {periodo[:4]}-{periodo[4:]} todavía no empezó.")
+    plan = calcular_manual(cur, cuit, periodo, remuneraciones)
+    if not plan["lineas"]:
+        raise ErrorPresentacion("En el período no hay afiliados activos en la empresa ni altas informadas: no hay "
+                                "nada que cargar. Si alguien falta, informen el alta.")
+    if not any(l["remuneracion"] > 0 for l in plan["lineas"]):
+        raise ErrorPresentacion("Carguen la remuneración de al menos un afiliado.")
+    cur.execute("DELETE FROM fisca_lsd_presentacion WHERE cuit = %s AND estado = 'borrador'", (cuit,))
+    cur.execute("""INSERT INTO fisca_lsd_presentacion
+                     (cuit, periodo, carga, archivo_nombre, trabajadores, no_afiliados, afiliados_activos,
+                      activos_en_archivo, afiliados, remuneracion, importe, estado, origen, id_enlace, id_usuario, ip)
+                   VALUES (%s, %s, 'manual', 'Carga manual', %s, 0, %s, %s, %s, %s, %s, 'borrador', %s, %s, %s, %s)""",
+                (cuit, periodo, len(plan["lineas"]), plan["activos"], plan["en_archivo"], plan["afiliados"],
+                 plan["remuneracion"], plan["importe"], origen, id_enlace, id_usuario, (ip or "")[:45] or None))
+    id_pres = cur.lastrowid
+    cur.executemany("INSERT INTO fisca_lsd_manual (id_presentacion, cuil, remuneracion) VALUES (%s, %s, %s)",
+                    [(id_pres, l["cuil"], l["remuneracion"]) for l in plan["lineas"]])
+    return id_pres
+
+
 def leer_presentacion(cur, id_pres: int, cuit: str | None = None, bloquear: bool = False) -> dict | None:
     cur.execute(f"""SELECT p.*, e.razon_social, e.id AS id_empresa, u.nombre AS usuario
                       FROM fisca_lsd_presentacion p
@@ -348,8 +477,10 @@ def planilla_de(cur, pres: dict) -> dict:
     """La planilla de una presentación: si es la vigente, la liquidación grabada
     (es lo que se cobra); si no se presentó, se reemplazó o se anuló, la que
     sale de su archivo con el padrón de hoy (la liquidación ya es de otra)."""
-    lectura = lsd_lector.leer_liquidacion(pres["archivo"])
-    plan = calcular(cur, lectura)
+    if pres.get("carga") == "manual":
+        plan = plan_actual(cur, pres)
+    else:
+        plan = calcular(cur, lsd_lector.leer_liquidacion(pres["archivo"]))
     if pres["estado"] == "presentada" and pres["id_liquidacion"]:
         cur.execute("""SELECT d.cuil, d.id_afiliado, COALESCE(d.apellido_nombres, a.apellido_nombres) AS nombre,
                               d.remuneracion, d.cuota, d.fuente, d.activo, a.fecha_alta, a.fecha_baja
@@ -401,13 +532,21 @@ def control_ddjj(plan: dict) -> dict:
 
 def _nota(pres: dict, plan: dict, aeda: dict | None) -> str:
     quien = "la empresa" if pres["origen"] == "empresa" else "el sindicato"
-    partes = [f"Liquidada con el Libro de Sueldos Digital que presentó {quien} el "
-              f"{datetime.date.today():%d/%m/%Y} (liquidación N.º {pres['nro_liquidacion'] or '—'}, "
-              f"presentación {pres['id']})."]
+    if pres.get("carga") == "manual":
+        partes = [f"Liquidada con las remuneraciones que cargó a mano {quien} el {datetime.date.today():%d/%m/%Y}, "
+                  f"sin el Libro de Sueldos Digital (presentación {pres['id']})."]
+    else:
+        partes = [f"Liquidada con el Libro de Sueldos Digital que presentó {quien} el "
+                  f"{datetime.date.today():%d/%m/%Y} (liquidación N.º {pres['nro_liquidacion'] or '—'}, "
+                  f"presentación {pres['id']})."]
     if plan["activos"] and not plan["en_archivo"]:
-        partes.append("Ningún afiliado activo del empleador figura en el archivo.")
-    if plan["fuera_nomina"]:
-        partes.append(f"{plan['fuera_nomina']} afiliado(s) en el archivo sin relación laboral con el empleador en el padrón.")
+        partes.append("Ningún afiliado activo del empleador "
+                      + ("tiene remuneración cargada." if pres.get("carga") == "manual" else "figura en el archivo."))
+    if plan.get("altas"):
+        partes.append(f"{plan['altas']} alta(s) informada(s) por la empresa, pendiente(s) de aprobación.")
+    if plan["fuera_nomina"] - plan.get("altas", 0) > 0:
+        partes.append(f"{plan['fuera_nomina'] - plan.get('altas', 0)} afiliado(s) en el archivo sin relación laboral "
+                      "con el empleador en el padrón.")
     if aeda:
         partes.append(aeda["texto"])
     return " ".join(partes)[:500]
@@ -421,8 +560,7 @@ def presentar(cur, id_pres: int, id_usuario: int | None, cuit: str | None = None
         raise ErrorPresentacion("No existe esa presentación.")
     if pres["estado"] != "borrador":
         raise ErrorPresentacion("Esa presentación ya se presentó o se descartó.")
-    lectura = _leer(pres["archivo"], pres["cuit"])
-    plan = calcular(cur, lectura)
+    plan = plan_actual(cur, pres)
     periodo, hoy = plan["periodo"], datetime.date.today()
     vto = FI.vencimiento_931(cur, pres["cuit"], periodo)
 
@@ -578,9 +716,12 @@ def datos_empleador(cur, empresa: dict) -> dict:
     if falta_esquema(cur):
         return {"falta_esquema": True, "sql": SQL_ESQUEMA}
     cuit = FL._digitos(empresa.get("CUIT"))
+    sin_novedades = NOV.falta_esquema(cur)
     return {"falta_esquema": False, "enlace": enlace_vigente(cur, cuit),
             "presentaciones": presentaciones(cur, cuit=cuit, limite=100),
-            "emails": emails_empresa(cur, empresa), "estados": ESTADOS}
+            "emails": emails_empresa(cur, empresa), "estados": ESTADOS,
+            "novedades": [] if sin_novedades else NOV.novedades(cur, cuit=cuit, limite=100),
+            "estados_nov": NOV.ESTADOS, "tipos_nov": NOV.TIPOS}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -606,16 +747,34 @@ def _portal_404(_e):
     return render_template("portal/invalido.html", inst=_institucion()), 404
 
 
-def _pagina_empresa(token: str, errores: list[str] | None = None, estado: int = 200):
+def periodo_anterior(hoy: datetime.date | None = None) -> str:
+    """El mes anterior, «AAAAMM»: el que normalmente se presenta."""
+    hoy = hoy or datetime.date.today()
+    m = hoy.year * 12 + hoy.month - 2
+    return f"{m // 12:04d}{m % 12 + 1:02d}"
+
+
+def _pagina_empresa(token: str, errores: list[str] | None = None, estado: int = 200, form=None,
+                    error_en: str | None = None):
+    """La página de la empresa. `error_en`: el bloque al que va el error (alta,
+    baja, archivo) para mostrarlo ahí y no arriba de todo."""
     with get_connection() as conn:
         with conn.cursor() as cur:
             enlace = _enlace_o_404(cur, token)
             cur.execute("UPDATE fisca_enlace_empresa SET ultimo_uso = NOW(), usos = usos + 1 WHERE id = %s",
                         (enlace["id"],))
             lista = presentaciones(cur, cuit=enlace["cuit"], limite=60)
+            sin_novedades = NOV.falta_esquema(cur)
+            nomina = NOV.nomina(cur, enlace["cuit"])
+            novedades = [] if sin_novedades else NOV.novedades(cur, cuit=enlace["cuit"], limite=60)
     return render_template("portal/empresa.html", enlace=enlace, token=token, lista=lista, estados=ESTADOS,
-                           confidencialidad=CONFIDENCIALIDAD,
-                           inst=_institucion(), max_mb=MAX_BYTES // (1024 * 1024), errores=errores), estado
+                           confidencialidad=CONFIDENCIALIDAD, nomina=nomina, novedades=novedades,
+                           sin_novedades=sin_novedades, estados_nov=NOV.ESTADOS, tipos_nov=NOV.TIPOS,
+                           periodo_sugerido=periodo_anterior(), hoy=datetime.date.today(),
+                           form=form or {}, error_en=error_en,
+                           ficha_mb=NOV.DOC.MAX_MB, inst=_institucion(), max_mb=MAX_BYTES // (1024 * 1024),
+                           errores=errores if not error_en else None,
+                           errores_bloque=errores if error_en else None), estado
 
 
 @portal_bp.route("/<token>")
@@ -637,13 +796,136 @@ def subir(token):
         conn.commit()
     except ErrorPresentacion as e:
         conn.rollback()
-        return _pagina_empresa(token, e.lista(), 422)
+        return _pagina_empresa(token, e.lista(), 422, error_en="archivo")
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
     return redirect(url_for("portal.presentacion", token=token, id_pres=id_pres))
+
+
+# ── Nómina: altas y bajas (fisca_novedades.py) ──────────────────────────────
+
+@portal_bp.route("/<token>/alta", methods=["POST"])
+def alta(token):
+    """La empresa informa el alta de un CUIL, con la ficha de afiliación si la adjunta."""
+    ficha = None
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            enlace = _enlace_o_404(cur, token)
+            if NOV.falta_esquema(cur):
+                raise NOV.ErrorNovedad("Por ahora no se pueden informar altas por acá: avisen al sindicato.")
+            ficha = NOV.guardar_ficha(request.files.get("ficha"))
+            NOV.informar_alta(cur, enlace["cuit"], request.form.get("cuil"), request.form.get("apellido_nombres"),
+                              request.form.get("fecha"), request.form.get("observaciones"), ficha, "empresa",
+                              enlace["id"], request.remote_addr)
+        conn.commit()
+    except NOV.ErrorNovedad as e:
+        conn.rollback()
+        if ficha:
+            ficha["ruta"].unlink(missing_ok=True)
+        return _pagina_empresa(token, [str(e)], 422, form=request.form, error_en="alta")
+    except Exception:
+        conn.rollback()
+        if ficha:
+            ficha["ruta"].unlink(missing_ok=True)
+        raise
+    finally:
+        conn.close()
+    flash("Alta informada. El sindicato la revisa; mientras tanto la cuota del mes ya la incluye desde su fecha.")
+    return redirect(url_for("portal.empresa", token=token) + "#novedades")
+
+
+@portal_bp.route("/<token>/baja", methods=["POST"])
+def baja(token):
+    """La empresa informa la baja de un CUIL que el padrón tiene activo."""
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            enlace = _enlace_o_404(cur, token)
+            if NOV.falta_esquema(cur):
+                raise NOV.ErrorNovedad("Por ahora no se pueden informar bajas por acá: avisen al sindicato.")
+            NOV.informar_baja(cur, enlace["cuit"], request.form.get("cuil"), request.form.get("fecha"),
+                              request.form.get("observaciones"), "empresa", enlace["id"], request.remote_addr)
+        conn.commit()
+    except NOV.ErrorNovedad as e:
+        conn.rollback()
+        return _pagina_empresa(token, [str(e)], 422, form=request.form, error_en="baja")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    flash("Baja informada. El sindicato la revisa: hasta que la apruebe, la cuota del mes lo sigue incluyendo.")
+    return redirect(url_for("portal.empresa", token=token) + "#novedades")
+
+
+@portal_bp.route("/<token>/novedad/<int:id_nov>/retirar", methods=["POST"])
+def retirar_novedad(token, id_nov):
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            enlace = _enlace_o_404(cur, token)
+            ok = NOV.retirar(cur, id_nov, enlace["cuit"])
+    flash("Novedad retirada." if ok else "!Esa novedad ya fue revisada por el sindicato: no se puede retirar.")
+    return redirect(url_for("portal.empresa", token=token) + "#novedades")
+
+
+# ── Cuota cargada a mano, sin el archivo ────────────────────────────────────
+
+def _remuneraciones_previas(cur, cuit: str, periodo: str) -> dict:
+    """Lo último que se cargó a mano para ese mes (el borrador o lo presentado),
+    para no volver a escribirlo."""
+    cur.execute("""SELECT id FROM fisca_lsd_presentacion
+                    WHERE cuit = %s AND periodo = %s AND carga = 'manual' AND estado IN ('borrador', 'presentada')
+                    ORDER BY estado = 'borrador' DESC, id DESC LIMIT 1""", (cuit, periodo))
+    f = cur.fetchone()
+    return remuneraciones_de(cur, f["id"]) if f else {}
+
+
+@portal_bp.route("/<token>/manual", methods=["GET", "POST"])
+def manual(token):
+    """La planilla para cargar a mano las remuneraciones del mes: la nómina del
+    período y las altas informadas. Guardarla la deja sin presentar, como un archivo."""
+    periodo = FL.periodo_valido(request.values.get("periodo"))
+    errores, rems = [], {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            enlace = _enlace_o_404(cur, token)
+            if falta_esquema_manual(cur):
+                flash("!Por ahora la cuota no se puede cargar a mano: avisen al sindicato o suban el archivo.")
+                return redirect(url_for("portal.empresa", token=token))
+            if not periodo:
+                flash("!Elijan el mes de la cuota.")
+                return redirect(url_for("portal.empresa", token=token))
+            if request.method == "POST":
+                rems, errores = leer_remuneraciones(request.form)
+                if not errores:
+                    try:
+                        conn.begin()
+                        id_pres = guardar_borrador_manual(cur, enlace["cuit"], periodo, rems, "empresa",
+                                                          enlace["id"], None, request.remote_addr)
+                        conn.commit()
+                        return redirect(url_for("portal.presentacion", token=token, id_pres=id_pres))
+                    except ErrorPresentacion as e:
+                        conn.rollback()
+                        errores = e.lista()
+            else:
+                rems = _remuneraciones_previas(cur, enlace["cuit"], periodo)
+            plan = calcular_manual(cur, enlace["cuit"], periodo, rems)
+    textos = {k[4:]: v for k, v in request.form.items() if k.startswith("rem_")} if request.method == "POST" else {}
+    return render_template("portal/manual.html", enlace=enlace, token=token, plan=plan, periodo=periodo,
+                           textos=textos, errores=errores, fuentes=FL.FUENTES, fuente_tipo=FL.FUENTE_TIPO,
+                           confidencialidad=CONFIDENCIALIDAD, inst=_institucion()), (422 if errores else 200)
+
+
+def falta_esquema_manual(cur) -> bool:
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE()
+                      AND table_name = 'fisca_lsd_presentacion' AND column_name = 'carga'""")
+    return not (cur.fetchone() or {}).get("n")
 
 
 @portal_bp.route("/<token>/presentacion/<int:id_pres>")
@@ -730,6 +1012,10 @@ def lista(errores: list[str] | None = None, estado_http: int = 200):
         return salida
     periodo = FL.periodo_valido(request.args.get("periodo"))
     estado = request.args.get("estado") if request.args.get("estado") in ESTADOS else None
+    # Novedades de las empresas (altas y bajas): por defecto las pendientes.
+    nov_estado = request.args.get("nov", "pendiente")
+    nov_estado = nov_estado if nov_estado in NOV.ESTADOS or nov_estado == "todas" else "pendiente"
+    novedades, sin_novedades = [], True
     with get_connection() as conn:
         with conn.cursor() as cur:
             if falta_esquema(cur):
@@ -737,8 +1023,14 @@ def lista(errores: list[str] | None = None, estado_http: int = 200):
                 filas = []
             else:
                 filas = presentaciones(cur, periodo=periodo, estado=estado)
+                sin_novedades = NOV.falta_esquema(cur)
+                if not sin_novedades:
+                    novedades = NOV.novedades(cur, estado=None if nov_estado == "todas" else nov_estado)
     return render_template("fisca/lsd.html", filas=filas, periodo=periodo, estado=estado, estados=ESTADOS,
-                           origenes=ORIGENES, max_mb=MAX_BYTES // (1024 * 1024), errores=errores), estado_http
+                           origenes=ORIGENES, max_mb=MAX_BYTES // (1024 * 1024), errores=errores,
+                           novedades=novedades, sin_novedades=sin_novedades, nov_estado=nov_estado,
+                           estados_nov=NOV.ESTADOS, tipos_nov=NOV.TIPOS, sql_novedades=NOV.SQL_ESQUEMA,
+                           puede_empleador=puede(url_for("empleadores.abm_empleadores"))), estado_http
 
 
 @fisca_lsd_bp.route("/lsd/subir", methods=["POST"])
@@ -876,10 +1168,70 @@ def archivo_interno(id_pres):
     with get_connection() as conn:
         with conn.cursor() as cur:
             pres = leer_presentacion(cur, id_pres)
-    if not pres:
+    if not pres or not pres["archivo"]:
         abort(404)
     return send_file(io.BytesIO(pres["archivo"]), as_attachment=True, download_name=pres["archivo_nombre"],
                      mimetype="text/plain")
+
+
+# ── Novedades de las empresas: aprobar o rechazar (fisca_novedades.py) ──────
+
+def _volver_novedades():
+    v = request.form.get("volver") or ""
+    return v if v.startswith("/") and not v.startswith("//") else url_for("fisca_lsd.lista") + "#novedades"
+
+
+@fisca_lsd_bp.route("/lsd/novedad/<int:id_nov>/aprobar", methods=["POST"])
+def aprobar_novedad(id_nov):
+    salida = _guardia()
+    if salida:
+        return salida
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cur:
+            hecho = NOV.aprobar(cur, id_nov, _id_usuario())
+        conn.commit()
+        flash("Novedad aprobada: " + hecho + ".")
+    except NOV.ErrorNovedad as e:
+        conn.rollback()
+        flash("!" + str(e))
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return redirect(_volver_novedades())
+
+
+@fisca_lsd_bp.route("/lsd/novedad/<int:id_nov>/rechazar", methods=["POST"])
+def rechazar_novedad(id_nov):
+    salida = _guardia()
+    if salida:
+        return salida
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                NOV.rechazar(cur, id_nov, request.form.get("motivo"), _id_usuario())
+        flash("Novedad rechazada. La empresa ve el motivo en su enlace.")
+    except NOV.ErrorNovedad as e:
+        flash("!" + str(e))
+    return redirect(_volver_novedades())
+
+
+@fisca_lsd_bp.route("/lsd/novedad/<int:id_nov>/ficha")
+def ficha_novedad(id_nov):
+    salida = _guardia()
+    if salida:
+        return salida
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            nov = NOV.una(cur, id_nov)
+    ruta = NOV.ruta_ficha(nov)
+    if not ruta:
+        abort(404)
+    return send_file(ruta, download_name=nov["ficha_nombre"] or ruta.name,
+                     mimetype=NOV.DOC.MIME.get(ruta.suffix.lower(), "application/octet-stream"))
 
 
 @fisca_lsd_bp.route("/lsd/enlace/<int:id_empresa>", methods=["POST"])

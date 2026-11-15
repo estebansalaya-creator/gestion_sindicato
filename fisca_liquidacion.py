@@ -77,15 +77,18 @@ CENT = Decimal("0.01")
 ALICUOTA_DEFECTO = Decimal("2.50")
 DIA_VTO_DEFECTO = 20
 #: «nomina» ya no se genera (12/11/2026); queda para leer lo que se haya liquidado así.
-#: «lsd»: la presentó la empresa con su Libro de Sueldos Digital (fisca_lsd.py).
+#: «lsd»: la presentó la empresa por su enlace, con su Libro de Sueldos Digital o
+#: cargada a mano (fisca_lsd.py; la carga a mano, desde el 15/11/2026).
 ORIGENES = {"ddjj": "DDJJ de OSEDA", "aeda": "AEDA", "nomina": "Nómina del empleador",
-            "lsd": "Libro de Sueldos Digital"}
+            "lsd": "Presentada por la empresa"}
 ORIGEN_TIPO = {"ddjj": "info", "aeda": "neutro", "nomina": "ok", "lsd": "ok"}
 #: De dónde sale cada renglón del detalle.
 FUENTES = {"ddjj": "Con DDJJ", "sin_ddjj": "Sin DDJJ", "aeda": "AEDA", "nomina": "Nómina",
-           "lsd": "En el archivo", "sin_lsd": "No está en el archivo"}
+           "lsd": "En el archivo", "sin_lsd": "No está en el archivo",
+           # La empresa por su enlace (fisca_lsd.py, fisca_novedades.py, 15/11/2026):
+           "manual": "Cargada a mano", "alta": "Alta informada"}
 FUENTE_TIPO = {"ddjj": "ok", "sin_ddjj": "warn", "aeda": "neutro", "nomina": "info",
-               "lsd": "ok", "sin_lsd": "warn"}
+               "lsd": "ok", "sin_lsd": "warn", "manual": "ok", "alta": "info"}
 #: Tramos del porcentaje de activos con DDJJ (filtro de la grilla).
 TRAMOS = {"100": "100 %", "50": "50 % a 99 %", "1": "1 % a 49 %", "0": "0 %", "sin": "Sin activos"}
 MAX_PERIODOS = 48

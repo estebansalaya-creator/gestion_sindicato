@@ -125,6 +125,35 @@ def guardar(cur, entidad: str, entidad_id: int, id_tipo_doc, archivo, observacio
             "nombre_original": original, "archivo": destino}
 
 
+def guardar_copia(cur, entidad: str, entidad_id: int, id_tipo_doc: int, origen: Path, nombre_original: str,
+                  observaciones: str, usuario: str) -> dict:
+    """Como `guardar`, con un archivo que ya está en disco: lo copia. Lo usa la
+    aprobación de un alta informada por la empresa (fisca_novedades.py): la
+    ficha de afiliación que adjuntó pasa a la documentación del afiliado."""
+    import shutil
+    original = Path(nombre_original or origen.name).name.strip() or origen.name
+    ext = (Path(original).suffix or origen.suffix).lower()
+    if ext not in EXTENSIONES:
+        raise DocumentoError(f"{original}: solo PDF o imagen (JPG, PNG, WEBP, TIF).")
+    carpeta = _carpeta(entidad, entidad_id)
+    carpeta.mkdir(parents=True, exist_ok=True)
+    nombre = uuid.uuid4().hex + ext
+    destino = carpeta / nombre
+    shutil.copyfile(origen, destino)
+    tam = destino.stat().st_size
+    try:
+        cur.execute("""INSERT INTO p_documentacion
+                           (entidad_tipo, entidad_id, id_tipo_doc, nombre_original, nombre_archivo,
+                            extension, mime_type, tamanio_bytes, observaciones, subido_por)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                    (entidad, entidad_id, int(id_tipo_doc), original[:255], nombre, ext.lstrip("."),
+                     MIME.get(ext), tam, (observaciones or "").strip()[:300] or None, (usuario or "")[:80]))
+    except Exception:
+        destino.unlink(missing_ok=True)
+        raise
+    return {"id_documento": cur.lastrowid, "nombre_original": original, "archivo": destino}
+
+
 def uno(cur, entidad: str, entidad_id: int, id_documento: int) -> dict | None:
     """El documento, solo si es de esa entidad: el id solo no alcanza para servirlo."""
     cur.execute("""SELECT d.*, t.descripcion AS tipo FROM p_documentacion d

@@ -1,0 +1,107 @@
+{% extends "portal/base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuota sindical {{ periodo | periodo }} · carga manual{% endblock %}
+
+{#
+  La cuota de un mes cargada a mano, sin el archivo del Libro de Sueldos
+  Digital (fisca_lsd.manual): un renglón por afiliado de la nómina en el
+  período y por cada alta informada, con la remuneración a cargar. «Armar la
+  planilla» la guarda sin presentar y lleva a revisarla, como con el archivo.
+  El total y la cuota se recalculan en la pantalla mientras se escribe; los
+  que valen son los del servidor.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuota sindical {{ periodo | periodo }}: carga a mano</h1>
+    <p>{{ enlace.razon_social or '' }} · CUIT {{ enlace.cuit }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('portal.empresa', token=token), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{{ ui.aviso(confidencialidad, 'info') }}
+
+<div class="card">
+  {{ ui.card_head('Remuneraciones de ' ~ (periodo | periodo), nota='La remuneración sujeta a aportes del mes de cada uno (la misma que declaran en el F.931). Si alguien no cobró en el mes, déjenlo vacío.') }}
+  {% if not plan.lineas %}
+  <div class="card-body">
+    {{ ui.aviso('En ' ~ (periodo | periodo) ~ ' el padrón del sindicato no tiene afiliados trabajando en la empresa ni hay altas informadas. Si alguien falta, informen el alta y vuelvan a esta página.', 'warning') }}
+    <div class="form-acciones">{{ ui.boton('Informar un alta', 'primary', href=url_for('portal.empresa', token=token) ~ '#alta', icono_='agregar') }}</div>
+  </div>
+  {% else %}
+  <form method="post" action="{{ url_for('portal.manual', token=token) }}" id="frm-manual">
+    <input type="hidden" name="periodo" value="{{ periodo }}">
+    <div class="data-table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>CUIL</th><th>Apellido y nombres</th><th>Origen</th>
+          <th class="th-right">Remuneración</th><th class="th-right">Cuota ({{ ('%.2f' | format(plan.alicuota | float)).replace('.', ',') }} %)</th>
+        </tr></thead>
+        <tbody>
+          {% for l in plan.lineas %}
+          {%- set texto = textos.get(l.cuil) if l.cuil in textos else (((l.remuneracion | miles) if l.remuneracion and l.remuneracion > 0 else '')) -%}
+          <tr>
+            <td class="td-mono">{{ l.cuil }}</td>
+            <td class="td-fuerte">{{ l.nombre or '' }}</td>
+            <td>{{ ui.estado('Nómina' if l.fuente == 'manual' else fuentes[l.fuente], fuente_tipo[l.fuente]) }}
+              {% if l.fuente == 'alta' and l.fecha_alta %}<div class="chico muted">desde el {{ l.fecha_alta.strftime('%d/%m/%Y') }} · en revisión</div>{% endif %}</td>
+            <td class="td-right"><input type="text" name="rem_{{ l.cuil }}" class="importe-celda" inputmode="decimal"
+                                        autocomplete="off" value="{{ texto }}" placeholder="0,00" aria-label="Remuneración de {{ l.nombre or l.cuil }}"></td>
+            <td class="td-right td-fuerte" data-cuota>—</td>
+          </tr>
+          {% endfor %}
+          <tr class="total-row">
+            <td></td><td class="td-fuerte">Total</td><td></td>
+            <td class="td-right td-fuerte" id="tot-rem">—</td>
+            <td class="td-right td-fuerte" id="tot-cuota">—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      <p class="muted chico">¿Falta alguien? <a href="{{ url_for('portal.empresa', token=token) }}#alta">Informen el alta</a> y vuelvan a esta página: aparece en la lista.
+        ¿Hay alguien que ya no trabaja? Déjenlo vacío e <a href="{{ url_for('portal.empresa', token=token) }}#nomina">informen la baja</a>.</p>
+      <div class="form-acciones">
+        {{ ui.boton('Armar la planilla', 'primary', submit=True, icono_='guardar') }}
+      </div>
+      <p class="muted chico">Todavía no se presenta: en el paso siguiente la revisan y la presentan.</p>
+    </div>
+  </form>
+  {% endif %}
+</div>
+
+<script>
+// Total y cuota mientras se escribe: el mismo criterio que el servidor
+// (pagos_datos.leer_importe): con coma, el punto es de miles.
+(function () {
+  var ALICUOTA = {{ plan.alicuota | float }};
+  function leer(t) {
+    t = (t || '').replace(/\s|\$/g, '');
+    if (!t) return 0;
+    if (t.indexOf(',') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, '');
+    var n = parseFloat(t);
+    return isNaN(n) || n < 0 ? NaN : n;
+  }
+  function pesos(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function recalcular() {
+    var tr = 0, tc = 0;
+    document.querySelectorAll('#frm-manual input.importe-celda').forEach(function (inp) {
+      var v = leer(inp.value), celda = inp.closest('tr').querySelector('[data-cuota]');
+      inp.classList.toggle('invalido', isNaN(v));
+      if (isNaN(v)) { celda.textContent = '¿?'; return; }
+      var c = Math.round(v * ALICUOTA) / 100;
+      celda.textContent = v ? pesos(c) : '—';
+      tr += v; tc += c;
+    });
+    var r = document.getElementById('tot-rem'), c = document.getElementById('tot-cuota');
+    if (r) { r.textContent = pesos(tr); c.textContent = pesos(tc); }
+  }
+  document.addEventListener('input', function (e) { if (e.target.classList.contains('importe-celda')) recalcular(); });
+  recalcular();
+})();
+</script>
+{% endblock %}

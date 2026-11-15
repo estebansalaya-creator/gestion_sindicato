@@ -3,9 +3,18 @@
 {% block title %}{{ enlace.razon_social or enlace.cuit }}{% endblock %}
 
 {#
-  Portal de la empresa (fisca_lsd.empresa): subir el archivo de liquidación del
-  Libro de Sueldos Digital y ver lo presentado.
+  Portal de la empresa (fisca_lsd.empresa), un bloque debajo del otro:
+    1. Presentar la cuota de un mes: subir el archivo del Libro de Sueldos
+       Digital, o cargar las remuneraciones a mano (fisca_lsd.manual).
+    2. La nómina: los afiliados que según el padrón trabajan en la empresa, con
+       «Informar baja» en cada renglón.
+    3. Informar un alta: CUIL, apellido y nombre, fecha y la ficha de afiliación.
+    4. Las altas y bajas informadas, con su estado (las revisa el sindicato).
+    5. Lo presentado.
+  Altas y bajas: fisca_novedades.py. Quedan pendientes hasta que el sindicato
+  las revisa; la cuota del mes ya toma el alta, no la baja.
 #}
+{% set f = form %}
 {% block content %}
 <div class="page-header">
   <div>
@@ -17,33 +26,184 @@
 {{ ui.mensajes(errores) }}
 {{ ui.aviso(confidencialidad, 'info') }}
 
-<div class="card">
+<!-- ── 1. Presentar la cuota ─────────────────────────────────────────────── -->
+<div class="card" id="presentar">
   {{ ui.card_head('Presentar la cuota sindical de un mes') }}
   <div class="card-body">
-    <p>Suban el archivo de <strong>liquidación del Libro de Sueldos Digital</strong> que su sistema de sueldos genera para
-       ARCA (el <code>.txt</code> de «Liquidación de SyJ – DJ F931»). El sistema toma el período del archivo, busca a los
-       afiliados y arma la planilla con la cuota a pagar. Antes de presentarla la pueden revisar.</p>
-    <p class="muted">Si en el mes hicieron más de una liquidación (por ejemplo el SAC aparte), suban la última: trae las
-       bases acumuladas del mes. Lo último que presenten para un mes reemplaza a lo anterior.</p>
-    <form method="post" action="{{ url_for('portal.subir', token=token) }}" enctype="multipart/form-data">
+    {% if error_en == 'archivo' %}{{ ui.mensajes(errores_bloque) }}{% endif %}
+    <div class="bloque">
+      <div class="bloque-titulo">Con el archivo del Libro de Sueldos Digital</div>
+      <p>Suban el archivo de <strong>liquidación del Libro de Sueldos Digital</strong> que su sistema de sueldos genera para
+         ARCA (el <code>.txt</code> de «Liquidación de SyJ – DJ F931»). El sistema toma el período del archivo, busca a los
+         afiliados y arma la planilla con la cuota a pagar. Antes de presentarla la pueden revisar.</p>
+      <p class="muted">Si en el mes hicieron más de una liquidación (por ejemplo el SAC aparte), suban la última: trae las
+         bases acumuladas del mes. Lo último que presenten para un mes reemplaza a lo anterior.</p>
+      <form method="post" action="{{ url_for('portal.subir', token=token) }}" enctype="multipart/form-data">
+        <div class="campos">
+          <div class="campo" style="--span:8">
+            <label class="drop-zone chica">
+              {{ ui.icono('subir', 20) }}
+              <input type="file" name="archivo" accept=".txt,text/plain" required>
+              <span>Archivo .txt, hasta {{ max_mb }} MB</span>
+            </label>
+          </div>
+        </div>
+        <div class="form-acciones">
+          {{ ui.boton('Leer el archivo', 'primary', submit=True, icono_='subir') }}
+        </div>
+      </form>
+    </div>
+    <div class="bloque">
+      <div class="bloque-titulo">Sin el archivo: cargar las remuneraciones a mano</div>
+      <p>Si no tienen el archivo, carguen la remuneración del mes de cada afiliado de su nómina (la remuneración sujeta a
+         aportes, la misma que declaran en el F.931). Después revisan la planilla y la presentan igual que con el archivo.</p>
+      <form method="get" action="{{ url_for('portal.manual', token=token) }}">
+        <div class="campos">
+          <div class="campo" style="--span:3">
+            <label for="periodo-manual">Mes de la cuota</label>
+            <input type="month" name="periodo" id="periodo-manual" required value="{{ periodo_sugerido | periodo }}"
+                   max="{{ hoy.strftime('%Y-%m') }}">
+          </div>
+        </div>
+        <div class="form-acciones">
+          {{ ui.boton('Cargar las remuneraciones', 'secondary', submit=True, icono_='editar') }}
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ── 2. Nómina ─────────────────────────────────────────────────────────── -->
+<div class="card" id="nomina">
+  {{ ui.card_head('Nómina', nota='Los afiliados que, según el padrón del sindicato, trabajan hoy en la empresa. Si alguien ya no trabaja, informen la baja; si falta alguien, informen el alta más abajo.') }}
+  {% if error_en == 'baja' %}<div class="card-body">{{ ui.mensajes(errores_bloque) }}</div>{% endif %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-nomina">
+      <thead><tr>
+        <th>CUIL</th><th>Apellido y nombres</th><th>En la empresa desde</th><th>Estado</th>
+        {% if not sin_novedades %}<th class="col-acciones">Baja</th>{% endif %}
+      </tr></thead>
+      <tbody>
+        {% for n in nomina %}
+        <tr>
+          <td class="td-mono">{{ n.cuil }}</td>
+          <td class="td-fuerte">{{ n.apellido_nombres }}</td>
+          <td class="td-mono">{{ n.fecha_inicio.strftime('%d/%m/%Y') if n.fecha_inicio else '—' }}</td>
+          <td>{% if n.baja_pendiente %}{{ ui.estado('Baja informada el ' ~ n.baja_pendiente.fecha.strftime('%d/%m/%Y') ~ ' · en revisión', 'warn') }}
+              {% else %}{{ ui.estado('Activo', 'ok') }}{% endif %}</td>
+          {% if not sin_novedades %}
+          <td>
+            {% if not n.baja_pendiente %}
+            <details class="en-linea"{{ ' open' if error_en == 'baja' and f.get('cuil') == n.cuil }}>
+              <summary class="btn btn-secondary btn-sm">Informar baja</summary>
+              <form method="post" action="{{ url_for('portal.baja', token=token) }}" class="fila">
+                <input type="hidden" name="cuil" value="{{ n.cuil }}">
+                <label class="chico">Fecha de baja
+                  <input type="date" name="fecha" required max="{{ hoy.isoformat() }}"
+                         value="{{ f.get('fecha', '') if f.get('cuil') == n.cuil else '' }}"></label>
+                <input type="text" name="observaciones" maxlength="300" placeholder="Motivo (opcional)"
+                       value="{{ f.get('observaciones', '') if f.get('cuil') == n.cuil else '' }}">
+                {{ ui.boton('Informar', 'danger', submit=True, chico=True) }}
+              </form>
+            </details>
+            {% else %}<span class="muted chico">—</span>{% endif %}
+          </td>
+          {% endif %}
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="5" class="no-data">El padrón del sindicato no tiene afiliados trabajando hoy en la empresa.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if not sin_novedades %}
+<!-- ── 3. Informar un alta ───────────────────────────────────────────────── -->
+<div class="card" id="alta">
+  {{ ui.card_head('Informar un alta', nota='Un trabajador afiliado al que le corresponde cuota sindical y no está en la nómina.') }}
+  <div class="card-body">
+    {% if error_en == 'alta' %}{{ ui.mensajes(errores_bloque) }}{% endif %}
+    <form method="post" action="{{ url_for('portal.alta', token=token) }}#alta" enctype="multipart/form-data">
       <div class="campos">
-        <div class="campo" style="--span:8">
+        <div class="campo" style="--span:3">
+          <label for="alta-cuil">CUIL <span class="req">*</span></label>
+          <input type="text" name="cuil" id="alta-cuil" class="mono" maxlength="13" inputmode="numeric" required
+                 placeholder="20-12345678-9" value="{{ f.get('cuil', '') if error_en == 'alta' else '' }}">
+        </div>
+        <div class="campo" style="--span:6">
+          <label for="alta-nombre">Apellido y nombres</label>
+          <input type="text" name="apellido_nombres" id="alta-nombre" maxlength="100" style="text-transform:uppercase"
+                 value="{{ f.get('apellido_nombres', '') if error_en == 'alta' else '' }}">
+          <small class="campo-ayuda">Obligatorio si todavía no es afiliado del sindicato.</small>
+        </div>
+        <div class="campo" style="--span:3">
+          <label for="alta-fecha">Fecha de alta en la empresa <span class="req">*</span></label>
+          <input type="date" name="fecha" id="alta-fecha" required value="{{ f.get('fecha', '') if error_en == 'alta' else '' }}">
+        </div>
+        <div class="campo" style="--span:6">
+          <label>Ficha de afiliación</label>
           <label class="drop-zone chica">
             {{ ui.icono('subir', 20) }}
-            <input type="file" name="archivo" accept=".txt,text/plain" required>
-            <span>Archivo .txt, hasta {{ max_mb }} MB</span>
+            <input type="file" name="ficha" accept=".pdf,.jpg,.jpeg,.png,.webp,.tif,.tiff,application/pdf,image/*">
+            <span>La ficha firmada por el trabajador, en PDF o foto (hasta {{ ficha_mb }} MB). Opcional.</span>
           </label>
         </div>
+        <div class="campo" style="--span:6">
+          <label for="alta-obs">Observaciones</label>
+          <input type="text" name="observaciones" id="alta-obs" maxlength="300"
+                 value="{{ f.get('observaciones', '') if error_en == 'alta' else '' }}">
+        </div>
       </div>
+      <p class="muted chico">El sindicato revisa el alta. Mientras tanto, la cuota del mes ya lo incluye desde la fecha de alta.</p>
       <div class="form-acciones">
-        {{ ui.boton('Leer el archivo', 'primary', submit=True, icono_='subir') }}
+        {{ ui.boton('Informar el alta', 'primary', submit=True, icono_='agregar') }}
       </div>
     </form>
   </div>
 </div>
 
+<!-- ── 4. Altas y bajas informadas ───────────────────────────────────────── -->
+<div class="card" id="novedades">
+  {{ ui.card_head('Altas y bajas informadas', nota=novedades | length ~ ' novedad(es). Las revisa el sindicato; las pendientes se pueden retirar.') }}
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th>Informada</th><th>Novedad</th><th>CUIL</th><th>Apellido y nombres</th><th>Fecha</th><th>Ficha</th>
+        <th>Estado</th><th class="col-acciones">Acciones</th>
+      </tr></thead>
+      <tbody>
+        {% for n in novedades %}
+        <tr class="{{ 'fila-baja' if n.estado in ('rechazada', 'retirada') }}">
+          <td class="td-mono">{{ n.creado.strftime('%d/%m/%Y') }}</td>
+          <td>{{ ui.estado(tipos_nov[n.tipo], 'info' if n.tipo == 'alta' else 'danger') }}</td>
+          <td class="td-mono">{{ n.cuil }}</td>
+          <td>{{ n.nombre or '—' }}</td>
+          <td class="td-mono">{{ n.fecha.strftime('%d/%m/%Y') }}</td>
+          <td>{{ ui.si_no(n.ficha_archivo) if n.tipo == 'alta' else '—' }}</td>
+          <td>{{ ui.estado(estados_nov[n.estado][0] if n.estado != 'pendiente' else 'En revisión', estados_nov[n.estado][1]) }}
+            {% if n.motivo %}<div class="chico td-motivo">{{ n.motivo }}</div>{% endif %}</td>
+          <td>
+            {% if n.estado == 'pendiente' %}
+            <form method="post" action="{{ url_for('portal.retirar_novedad', token=token, id_nov=n.id) }}"
+                  onsubmit="return confirm('¿Retirar esta novedad? El sindicato ya no la va a revisar.');">
+              {{ ui.boton('Retirar', 'secondary', submit=True, chico=True) }}
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no informaron altas ni bajas.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ── 5. Presentaciones ─────────────────────────────────────────────────── -->
 <div class="card">
-  {{ ui.card_head('Presentaciones', nota=lista | length ~ ' archivo(s)') }}
+  {{ ui.card_head('Presentaciones', nota=lista | length ~ ' presentación(es)') }}
   <div class="data-table-wrap">
     <table class="data-table">
       <thead><tr>
@@ -59,7 +219,7 @@
             {% if p.estado != 'borrador' %}{{ ui.accion('planilla', href=url_for('portal.planilla_portal', token=token, id_pres=p.id), titulo='Descargar la planilla') }}{% endif %}
           </div></td>
           <td class="td-mono">{{ p.periodo | periodo }}</td>
-          <td>{{ p.nro_liquidacion or '—' }}{% if p.envio == 'RE' %} {{ ui.estado('Rectificativa', 'info') }}{% endif %}</td>
+          <td>{% if p.archivo_nombre == 'Carga manual' %}—{% else %}{{ p.nro_liquidacion or '—' }}{% if p.envio == 'RE' %} {{ ui.estado('Rectificativa', 'info') }}{% endif %}{% endif %}</td>
           <td class="td-recorte" title="{{ p.archivo_nombre }}">{{ p.archivo_nombre }}</td>
           <td>{{ ui.estado(estados[p.estado][0], estados[p.estado][1]) }}</td>
           <td>{{ p.presentado.strftime('%d/%m/%Y %H:%M') if p.presentado else '—' }}</td>
@@ -67,7 +227,7 @@
           <td class="td-right td-fuerte">{{ (p.importe or 0) | miles }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no presentaron ningún archivo.</td></tr>
+        <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no presentaron ninguna cuota.</td></tr>
         {% endfor %}
       </tbody>
     </table>

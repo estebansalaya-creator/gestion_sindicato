@@ -66,7 +66,7 @@ TIPOS_BLOQUE = {"texto", "lista", "pasos", "campos", "criterio", "aviso"}
 #: manual, lo marca tests/test_ayuda.py.
 SIN_AYUDA = {
     "static", "login", "logout", "estilos", "ayuda.indice", "ayuda.manual",
-    "portal.empresa", "portal.presentacion", "portal.planilla_portal",
+    "portal.empresa", "portal.presentacion", "portal.planilla_portal", "portal.manual",
     "institucion.logo", "contactos.abm_areas",
 }
 #: Lo mismo por forma del endpoint: lo que devuelve datos o un archivo.

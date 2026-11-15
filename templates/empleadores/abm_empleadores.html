@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% import "fisca/_novedades.html" as nov %}
 {% block title %}Empleadores{% endblock %}
 
 {#
@@ -395,6 +396,16 @@
       </table>
     </div>
   </div>
+
+  {# Las altas y bajas que informó la empresa por su enlace (fisca_novedades.py). #}
+  {% if cuota.novedades %}
+  <div class="card">
+    {{ ui.card_head('Altas y bajas que informó la empresa', nota='Aprobarlas cambia el padrón; rechazarlas pide un motivo, que la empresa ve.') }}
+    {{ nov.tabla(cuota.novedades, cuota.estados_nov, cuota.tipos_nov,
+                 volver=url_for('empleadores.abm_empleadores', edit=empleador.id, solapa='cuota'),
+                 con_empresa=False, id='tbl-novedades-emp') }}
+  </div>
+  {% endif %}
   {% endif %}
 </div>
 {% endif %}

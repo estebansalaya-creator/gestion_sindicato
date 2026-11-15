@@ -1,18 +1,21 @@
 {% extends "base.html" %}
 {% import "_ui.html" as ui %}
+{% import "fisca/_novedades.html" as nov %}
 {% block title %}Presentaciones LSD{% endblock %}
 
 {#
   Fiscalización de Cuotas → Presentaciones LSD (fisca_lsd.lista): los archivos
   del Libro de Sueldos Digital que presentaron las empresas (por su enlace) o
   que subió el sindicato por ellas. Cada uno presentado es la liquidación de
-  la cuota sindical de su CUIT y período.
+  la cuota sindical de su CUIT y período. Arriba, las altas y bajas de
+  afiliados que informaron las empresas (fisca_novedades.py), para aprobar o
+  rechazar: aprobarlas cambia el padrón.
 #}
 {% block content %}
 <div class="page-header">
   <div>
     <h1>Presentaciones del Libro de Sueldos Digital</h1>
-    <p>Lo que presentan las empresas para liquidar la cuota sindical. El enlace de cada empresa se genera en Empleadores, solapa «Cuota sindical».</p>
+    <p>Lo que presentan las empresas para liquidar la cuota sindical —con el archivo del Libro de Sueldos Digital o cargado a mano— y las altas y bajas que informan. El enlace de cada empresa se genera en Empleadores, solapa «Cuota sindical».</p>
   </div>
   <div class="page-header-acciones">
     {% if puede(url_for('fisca_liq.liquidacion')) %}{{ ui.boton('Liquidación de cuota sindical', 'secondary', href=url_for('fisca_liq.liquidacion', periodo=periodo)) }}{% endif %}
@@ -20,6 +23,23 @@
 </div>
 
 {{ ui.mensajes(errores) }}
+
+{% if sin_novedades %}
+{{ ui.aviso('Falta correr ' ~ sql_novedades ~ ': hasta entonces las empresas no pueden informar altas ni bajas ni cargar la cuota a mano.', 'warning') }}
+{% else %}
+<div class="card" id="novedades">
+  {{ ui.card_head('Altas y bajas que informaron las empresas', nota='Aprobarlas cambia el padrón: el alta abre la relación laboral (y da de alta al afiliado si no está); la baja la cierra. Mientras está pendiente, la cuota del mes ya toma el alta, no la baja.') }}
+  {% call ui.barra_filtros('Buscar por CUIT, empresa, CUIL o nombre…', tam_pagina=20) %}
+    {% call ui.filtro('Estado') %}<select class="filtro-srv" onchange="location.href='?nov=' + this.value + '#novedades'">
+      <option value="pendiente" {{ 'selected' if nov_estado == 'pendiente' }}>Pendientes</option>
+      {% for k, (t, _) in estados_nov.items() if k != 'pendiente' %}<option value="{{ k }}" {{ 'selected' if nov_estado == k }}>{{ t }}s</option>{% endfor %}
+      <option value="todas" {{ 'selected' if nov_estado == 'todas' }}>Todas</option>
+    </select>{% endcall %}
+  {% endcall %}
+  {{ nov.tabla(novedades, estados_nov, tipos_nov, volver=url_for('fisca_lsd.lista', nov=nov_estado) ~ '#novedades') }}
+  {{ ui.paginacion() }}
+</div>
+{% endif %}
 
 <div class="card">
   {{ ui.card_head('Subir un archivo por una empresa', nota='Para la que lo manda por mail. El CUIT y el período salen del archivo.') }}
@@ -71,7 +91,7 @@
           <td class="td-mono">{{ f.periodo | periodo }}</td>
           <td class="td-mono">{{ f.cuit }}</td>
           <td class="td-fuerte">{{ f.razon_social or '(no está en Empleadores)' }}</td>
-          <td>{{ f.nro_liquidacion or '—' }}{% if f.envio == 'RE' %} {{ ui.estado('RE', 'info') }}{% endif %}</td>
+          <td>{% if f.archivo_nombre == 'Carga manual' %}{{ ui.estado('A mano', 'info') }}{% else %}{{ f.nro_liquidacion or '—' }}{% if f.envio == 'RE' %} {{ ui.estado('RE', 'info') }}{% endif %}{% endif %}</td>
           <td>{{ ui.estado(estados[f.estado][0], estados[f.estado][1]) }}</td>
           <td>{{ 'Empresa' if f.origen == 'empresa' else (f.usuario or 'Sindicato') }}</td>
           <td>{{ f.presentado.strftime('%d/%m/%Y %H:%M') if f.presentado else '—' }}</td>
@@ -89,5 +109,8 @@
   </div>
   {{ ui.paginacion() }}
 </div>
-<script>document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-lsd', { pageSize: 50 }); });</script>
+<script>document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-lsd', { pageSize: 50 });
+  if (document.getElementById('tbl-novedades')) gestion_admTable('tbl-novedades', { pageSize: 20 });
+});</script>
 {% endblock %}

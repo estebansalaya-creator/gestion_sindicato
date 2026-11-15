@@ -1196,7 +1196,9 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
    La página a la que entra una empresa con su enlace: sin menú ni sesión. La
    barra de arriba es la del login; adentro, las mismas tarjetas y grillas.
      .portal-page > .portal-top + .portal-cuerpo + .portal-pie
-     .enlace-nuevo   el enlace recién generado, para copiar (se ve una vez)   */
+     .enlace-nuevo   el enlace recién generado, para copiar (se ve una vez)
+     details.en-linea  formulario que se abre en el renglón (informar una baja)
+     input.importe-celda  importe dentro de una grilla (la carga a mano)     */
 .portal-page { min-height: 100vh; display: flex; flex-direction: column; }
 .portal-top { background: linear-gradient(135deg, var(--header), var(--header-mid)); color: #fff; padding: 18px 24px; }
 .portal-top h1 { font-size: 1.1rem; font-weight: 700; }
@@ -1207,6 +1209,17 @@ a.nro-exp:hover { color: var(--blue-hover); border-bottom-style: solid; }
   display: block; padding: 10px 12px; border: 1px dashed var(--info-borde); border-radius: var(--radius-sm);
   background: var(--surface-2); font-family: var(--mono); font-size: .8rem; overflow-wrap: anywhere; user-select: all;
 }
+/* Un formulario chico que se abre en el renglón de una grilla (informar una
+   baja en el portal, rechazar una novedad adentro): <details class="en-linea">
+   con el <summary> como botón. */
+details.en-linea > summary { list-style: none; cursor: pointer; display: inline-flex; }
+details.en-linea > summary::-webkit-details-marker { display: none; }
+details.en-linea[open] > summary { margin-bottom: 6px; }
+details.en-linea input[type=text], details.en-linea input[type=date] { padding: 5px 8px; font-size: .8rem; }
+/* La planilla para cargar la cuota a mano: el importe a la derecha y angosto. */
+.data-table input.importe-celda { width: 140px; padding: 5px 8px; text-align: right; font-variant-numeric: tabular-nums;
+  font-family: var(--font); font-size: .84rem; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.data-table input.importe-celda.invalido { border-color: var(--danger); background: var(--danger-bg); }
 
 /* ── 18b. Aviso de pantalla completa (404, pantalla pendiente) ──────────── */
 .pantalla-aviso { max-width: 560px; margin: 60px auto; text-align: center; }

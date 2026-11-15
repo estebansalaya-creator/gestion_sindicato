@@ -1,6 +1,6 @@
 {#
-  La planilla de cuota sindical que sale de un Libro de Sueldos Digital
-  (fisca_lsd.py): un renglón por afiliado. La usan el portal de la empresa y la
+  La planilla de cuota sindical que sale de un Libro de Sueldos Digital o de
+  lo que la empresa cargó a mano (fisca_lsd.py): un renglón por afiliado. La usan el portal de la empresa y la
   ficha interna de la presentación.
 
     {% import "fisca/_planilla_lsd.html" as planilla %}
@@ -19,7 +19,7 @@
   <table class="data-table" id="{{ id }}" data-exportar="Cuota sindical {{ plan.periodo | periodo }} {{ plan.cuit }}">
     <thead><tr>
       {% if interno %}<th class="col-acciones" data-no-sort>Acciones</th>{% endif %}
-      <th>CUIL</th><th>Apellido y nombres</th><th>En el archivo</th><th>Activo de la empresa</th>
+      <th>CUIL</th><th>Apellido y nombres</th><th>Origen</th><th>Activo de la empresa</th>
       <th class="th-right">Remuneración</th><th class="th-right">Cuota</th>
       {% if con_retenido %}<th class="th-right" title="Concepto 810004 «Cuota Sindical» de los recibos">Retenido en el recibo</th>{% endif %}
       {% if con_ddjj %}<th class="th-right" title="Remuneración imponible 5 de la DDJJ de OSEDA de este CUIT">DDJJ OSEDA</th>
@@ -45,7 +45,7 @@
         {% endif %}
       </tr>
       {% else %}
-      <tr class="no-data-row"><td colspan="10" class="no-data">Ningún afiliado de AEDA entre los trabajadores del archivo ni activo de la empresa en el período.</td></tr>
+      <tr class="no-data-row"><td colspan="10" class="no-data">Ningún afiliado de AEDA {{ 'activo de la empresa en el período' if plan.carga == 'manual' else 'entre los trabajadores del archivo ni activo de la empresa en el período' }}.</td></tr>
       {% endfor %}
       {% if plan.lineas %}
       <tr class="total-row">

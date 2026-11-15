@@ -48,7 +48,7 @@ cc_emp_bp = Blueprint("cc_emp", __name__, url_prefix="/empleadores/cc")
 
 URL = "/empleadores/cc"
 URL_APLIC = "/empleadores/cc/aplicaciones"
-ORIGENES = {"ddjj": "DDJJ OSEDA", "lsd": "Libro de Sueldos", "nomina": "Nómina", "aeda": "AEDA"}
+ORIGENES = {"ddjj": "DDJJ OSEDA", "lsd": "Presentada por la empresa", "nomina": "Nómina", "aeda": "AEDA"}
 AVISO_ESQUEMA = "!Falta correr sql/fisca_aplicaciones_20261114.sql en la base (DBeaver, como root)."
 
 

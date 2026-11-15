@@ -44,8 +44,9 @@ SECCIONES = [
       "es la principal) y los <b>impuestos</b> registrados, activos primero, con el período desde el "
       "que rigen. Queda guardado con la fecha y quién consultó; si nunca se consultó, se consulta "
       "sola al abrir la solapa, y <b>Consultar ARCA</b> la actualiza."),
-     ("Cuota sindical", "El enlace para que la empresa presente su Libro de Sueldos Digital y sus "
-      "presentaciones."),
+     ("Cuota sindical", "El enlace para que la empresa presente su cuota (con el Libro de Sueldos "
+      "Digital o a mano), sus presentaciones y las altas y bajas que informó, para aprobarlas o "
+      "rechazarlas."),
      ("Cuenta corriente", "El botón de arriba lleva a su estado de cuenta."),
    ]},
    {"tipo": "criterio", "html":
@@ -101,6 +102,14 @@ SECCIONES = [
      "de quien lo manda dirigido a los correos de la ficha y de los contactos, con el texto de "
      "confidencialidad.",
      "La empresa entra con ese enlace, sin usuario ni clave, sube su archivo y lo presenta.",
+   ]},
+   {"tipo": "campos", "items": [
+     ("Lo que ve la empresa", "Su nómina (los afiliados que según el padrón trabajan ahí), lo que "
+      "presentó y las altas y bajas que informó, con su estado."),
+     ("Lo que puede hacer", "Presentar la cuota con el archivo del Libro de Sueldos Digital o "
+      "cargando a mano las remuneraciones; informar el alta de un CUIL (con la fecha y la ficha de "
+      "afiliación) y la baja de uno de su nómina. Las altas y bajas quedan pendientes hasta que el "
+      "sindicato las aprueba (Presentaciones LSD o la solapa Cuota sindical)."),
    ]},
    {"tipo": "criterio", "html":
     "El sistema no guarda el enlace, solo una huella: por eso no se puede volver a ver. Si se perdió, "

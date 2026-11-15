@@ -140,8 +140,8 @@ SECCIONES = [
  "id": "fis_lsd",
  "titulo": "Presentaciones LSD",
  "url": "/fiscalizacion/lsd",
- "endpoints": ["fisca_lsd.lista", "fisca_lsd.ficha"],
- "resumen": "La empresa sube su Libro de Sueldos Digital y la cuota se liquida con él.",
+ "endpoints": ["fisca_lsd.lista", "fisca_lsd.ficha", "fisca_lsd.ficha_novedad"],
+ "resumen": "La empresa presenta su cuota (con el Libro de Sueldos Digital o a mano) e informa altas y bajas.",
  "bloques": [
    {"tipo": "texto", "html":
     "En lugar de completar una planilla a mano, la empresa sube el <b>archivo de liquidación del "
@@ -151,9 +151,10 @@ SECCIONES = [
    {"tipo": "pasos", "items": [
      "En Empleadores, solapa <b>Cuota sindical</b>, se genera el <b>enlace personal</b> de la empresa "
      "y se le manda por correo (ver el manual de Empleadores).",
-     "La empresa entra con su enlace, sube el archivo del período y revisa la planilla.",
+     "La empresa entra con su enlace, sube el archivo del período —o, si no lo tiene, <b>carga a mano</b> "
+     "la remuneración de cada afiliado de su nómina— y revisa la planilla.",
      "La empresa la <b>presenta</b>: la planilla pasa a ser la liquidación del período, con origen "
-     "«Libro de Sueldos Digital».",
+     "«Presentada por la empresa».",
      "Acá se ve la presentación, se controla contra la DDJJ y, si hace falta, se anula.",
    ]},
    {"tipo": "campos", "items": [
@@ -167,11 +168,29 @@ SECCIONES = [
       "ese empleador: se marcan diferencias de $ 1 o más."),
      ("Planilla · Archivo original", "La planilla de aportes en Excel y el archivo tal como se subió."),
      ("Anular presentación", "Con un motivo: la liquidación vuelve a la DDJJ de OSEDA."),
+     ("Carga a mano", "Sin el archivo: la empresa carga la remuneración de cada afiliado de su nómina "
+      "en el período (y de las altas que informó). En la lista dice «A mano»; el control contra la DDJJ "
+      "de OSEDA es el mismo."),
+   ]},
+   {"tipo": "texto", "html":
+    "<b>Altas y bajas que informan las empresas.</b> Por su enlace, la empresa ve su nómina —los "
+    "afiliados que según el padrón trabajan ahí— y puede informar el <b>alta</b> de un CUIL que "
+    "corresponde cuota (con la fecha y, si quiere, la ficha de afiliación; si no está en el padrón, "
+    "con apellido y nombre) y la <b>baja</b> de uno que el padrón tiene activo. Quedan pendientes en "
+    "el bloque de arriba de esta pantalla (y en la solapa Cuota sindical del empleador)."},
+   {"tipo": "campos", "items": [
+     ("Aprobar un alta", "Si el CUIL no está en el padrón, se da de alta al afiliado (titular, con la "
+      "fecha de alta); se abre la relación laboral con el empleador, y la ficha adjunta pasa a la "
+      "documentación del afiliado. Un afiliado dado de baja no se reactiva solo: se avisa."),
+     ("Aprobar una baja", "Se cierra la relación laboral con esa fecha. La afiliación no se toca."),
+     ("Rechazar", "Con un motivo, que la empresa ve en su enlace."),
+     ("Ficha", "El ojo abre la ficha de afiliación que adjuntó la empresa."),
    ]},
    {"tipo": "criterio", "html":
     "Manda la <b>última presentación</b> del período. Si el mes tuvo varias liquidaciones de sueldo, "
     "se sube la última, que trae las bases acumuladas. Liquidar por DDJJ no pisa un período presentado "
-    "por LSD."},
+    "por la empresa. Un <b>alta pendiente</b> ya cuenta en la cuota del mes desde su fecha; una "
+    "<b>baja pendiente</b>, recién cuando se aprueba."},
    {"tipo": "aviso", "html":
     "El archivo es de texto y se puede editar antes de subirlo: por eso el control contra la DDJJ de "
     "OSEDA. Los afiliados con otra obra social no se pueden controlar así. El enlace no lleva clave: "

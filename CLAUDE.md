@@ -94,6 +94,7 @@ gestion_sindicato/
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   arca_constancia.py      constancia de inscripción (ws_sr_constancia_inscripcion): empleadores y proveedores
+  fisca_novedades.py      altas y bajas de afiliados que informa la empresa por su enlace, y su aprobación
   empleadores_arca.py     «Actualizar desde ARCA»: constancia y domicilio fiscal de los empleadores que aportan
   probar_arca.py          prueba desde la consola el certificado, el token de cada servicio y una consulta
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
@@ -152,7 +153,9 @@ repetiría en la URL lo que dice el dominio.
 /api/cuotas          API del tab
 /fiscalizacion/liquidacion   liquidación de cuota sindical, ?periodo=AAAAMM; /generar POST (desde, hasta); /<id> ficha
 /fiscalizacion/lsd           presentaciones del LSD, ?periodo, ?estado; /subir POST; /<id> ficha; /<id>/confirmar,
-                             /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST
+                             /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST;
+                             ?nov=pendiente|aprobada|rechazada|retirada|todas (altas y bajas de las empresas);
+                             /novedad/<id>/aprobar, /rechazar POST; /novedad/<id>/ficha
 /fiscalizacion/actas         actas: ?q, ?estado; /nueva?cuit= (&fecha_calculo, &periodo_desde, &periodo_hasta,
                              &con_pagos_tarde: recalcula sin guardar); /periodo (?id_acta=&periodo= o ?cuit=&periodo=
                              &fecha_calculo=&con_pagos_tarde=: el detalle de un período, HTML para el diálogo);
@@ -167,7 +170,8 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
-                             /descartar POST, /planilla.xlsx)
+                             /descartar POST, /planilla.xlsx); /manual?periodo= (GET y POST: la cuota a mano);
+                             /alta, /baja POST; /novedad/<id>/retirar POST
 /login /logout /menu   /menu: el panel de inicio con los accesos directos (sin ninguno, al Panel de Fiscalización)
 /accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
 /empleadores         ABM, ?edit=ID, ?solapa=arca|cuota; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa
@@ -635,6 +639,27 @@ el empleador completaba a mano («no era nada seguro»).
   falta Railway). La presentación reemplazada antes no vuelve sola: se sube de nuevo.
 - **Excel**: `exportar.xlsx(..., encabezado=[…])` con el formato de la planilla de aportes del art. 38 (CUIT, período y
   empresa en la fila 3; renglones desde la 5), el que lee Importar Cuotas, más lo retenido y una observación.
+- **Carga a mano, sin el archivo** (pedido del 15/11/2026; `sql/fisca_novedades_empresa_20261115.sql`):
+  `/empresas/<token>/manual?periodo=` muestra la nómina del período (activos del empleador, la regla de siempre) y las
+  altas pendientes que cuentan, con la remuneración a cargar (`armar_planilla_manual`, fuente **«manual»**; vacío =
+  cero; las altas, **«alta»**). Se guarda como borrador (`fisca_lsd_presentacion.carga = 'manual'`, sin archivo,
+  `archivo_nombre` = «Carga manual»; las remuneraciones en `fisca_lsd_manual`) y se revisa, corrige y presenta igual
+  que el archivo (`plan_actual` elige). Origen de la liquidación: «lsd», que ahora se lee «Presentada por la
+  empresa». El control contra la DDJJ de OSEDA es el mismo. Volver a cargar el mes trae lo último cargado.
+- **Nómina, altas y bajas de la empresa** (`fisca_novedades.py`, pedido del 15/11/2026): en su enlace la empresa ve
+  su nómina (titulares con relación laboral vigente hoy con el CUIT) e informa el **alta** de un CUIL (fecha de alta,
+  ficha de afiliación opcional en PDF o imagen, `SIND_ADJUNTOS/novedades_empresa/`; si no está en el padrón, con
+  apellido y nombre) o la **baja** de uno de su nómina (fecha). Quedan **pendientes** (`fisca_novedad_empresa`;
+  decidido el 15/11/2026): el sindicato las aprueba o rechaza (con motivo, que la empresa ve) en Presentaciones LSD
+  —bloque de arriba— o en la solapa Cuota sindical del empleador. La empresa puede retirar una pendiente. **La cuota
+  del mes ya toma el alta pendiente** desde su fecha (archivo o carga a mano, fuente «alta», aunque no esté en el
+  padrón); la baja pendiente no cambia nada hasta aprobarse. **Aprobar un alta**: si el CUIL no está en el padrón se
+  crea el titular (documento y sexo del CUIL, fecha de alta = la informada, empleador); un familiar con ese CUIL no se
+  aprueba; uno dado de baja no se reactiva solo (se avisa); se abre la relación laboral (si no estaba) y la ficha pasa
+  a la documentación del afiliado (tipo «Ficha de afiliación»). **Aprobar una baja**: cierra la relación con esa fecha
+  (estado inactiva si ya pasó); la afiliación no se toca. Todo con su renglón en `p_afiliados_movimientos` y el
+  empleador de la ficha sincronizado (`afiliados._sincronizar_empleador`). Probado de punta a punta contra una base
+  MariaDB armada con estas tablas.
 - **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo) y avisarle a la empresa los meses
   que no presentó.
 

@@ -138,6 +138,44 @@ ok(re.search(r"Cuit[:\s]+(\d{11})", f3).group(1) == CUIT and re.search(r"Per[ií
 ok("CUIL" in filas["4"] and A in filas["5"], "encabezado en la fila 4 y renglones desde la 5")
 ok("Total" in list(filas.values())[-1], "última fila: el total")
 
+print("\nAltas informadas por la empresa (pendientes)")
+F = "20666666667"
+altas = {E: {"id": 9, "cuil": E, "fecha": d(2026, 10, 15), "apellido_nombres": "NUEVO NO AFILIADO", "id_afiliado": None},
+         F: {"id": 10, "cuil": F, "fecha": d(2026, 10, 1), "apellido_nombres": "NUEVO SIN ARCHIVO", "id_afiliado": None},
+         "20777777778": {"id": 11, "cuil": "20777777778", "fecha": d(2026, 11, 2), "apellido_nombres": "DEL MES QUE VIENE",
+                         "id_afiliado": None},
+         A: {"id": 12, "cuil": A, "fecha": d(2026, 10, 1), "apellido_nombres": "YA ACTIVO", "id_afiliado": 1}}
+plan2 = L.armar_planilla(lec, padron, Decimal("2.50"), altas)
+por2 = {l["cuil"]: l for l in plan2["lineas"]}
+ok(por2[E]["fuente"] == "alta" and por2[E]["cuota"] == Decimal("20000.00") and por2[E]["nombre"] == "NUEVO NO AFILIADO",
+   "un alta que está en el archivo: se liquida con su base 5, aunque no esté en el padrón")
+ok(por2[F]["fuente"] == "alta" and por2[F]["cuota"] == 0, "un alta que no está en el archivo: en cero, para que la vean")
+ok("20777777778" not in por2, "un alta con fecha posterior al período no cuenta")
+ok(por2[A]["fuente"] == "lsd", "el alta de alguien que ya es activo no cambia nada")
+ok(plan2["no_afiliados"] == 1 and plan2["altas"] == 2 and plan2["importe"] == Decimal("55000.00"),
+   "el alta ya no cuenta como no afiliado; el total la incluye")
+
+print("\nLa carga a mano")
+plan3 = L.armar_planilla_manual(CUIT, "202610", {A: Decimal("1000000"), C: Decimal("0"), E: Decimal("400000"),
+                                                  B: Decimal("999")}, padron, Decimal("2.50"), altas)
+por3 = {l["cuil"]: l for l in plan3["lineas"]}
+ok(set(por3) == {A, C, E, F}, "la nómina del período (no el de baja ni el sin relación) y las altas que cuentan")
+ok(por3[A]["fuente"] == "manual" and por3[A]["activo"] and por3[A]["cuota"] == Decimal("25000.00"), "lo cargado × 2,50 %")
+ok(por3[C]["cuota"] == 0 and por3[E]["fuente"] == "alta" and por3[E]["cuota"] == Decimal("10000.00"), "sin cargar, cero; el alta")
+ok((plan3["activos"], plan3["en_archivo"], plan3["altas"], plan3["afiliados"], plan3["importe"])
+   == (2, 1, 2, 2, Decimal("35000.00")), "contadores: activos, con remuneración, altas, con cuota, total")
+ok(plan3["lineas"][-1]["fuente"] == "alta", "las altas al final")
+
+
+class Form(dict):
+    pass
+
+
+r, e = L.leer_remuneraciones(Form({"rem_" + A: "1.234.567,89", "rem_" + C: "", "rem_" + E: "1500.5",
+                                   "rem_" + F: "-3", "otro": "x", "rem_123": "5"}))
+ok(r == {A: Decimal("1234567.89"), E: Decimal("1500.50")}, "importes en formato argentino o con punto decimal; vacío no va")
+ok(len(e) == 1 and F in e[0], "un negativo es un error, con su CUIL")
+
 print("\nEl mail del enlace")
 m = L.mailto({"razon_social": "EMPRESA SA"}, ["a@b.com"], "https://x/empresas/t", {"sigla": "AEDA"})
 ok(m.startswith("mailto:a@b.com?subject=") and "Ley%2025.326" in m, "lleva el texto de confidencialidad")

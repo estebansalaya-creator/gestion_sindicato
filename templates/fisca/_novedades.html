@@ -1,0 +1,69 @@
+{#
+  Las altas y bajas que informan las empresas por su enlace (fisca_novedades.py),
+  con los botones para aprobarlas o rechazarlas. La usan Presentaciones LSD y la
+  solapa «Cuota sindical» de la ficha del empleador.
+
+    {% import "fisca/_novedades.html" as nov %}
+    {{ nov.tabla(novedades, estados_nov, tipos_nov, volver=request.full_path, con_empresa=True) }}
+
+  Aprobar cambia el padrón (crea el afiliado si no está, abre o cierra la
+  relación laboral); rechazar pide un motivo, que la empresa ve en su enlace.
+#}
+{% import "_ui.html" as ui %}
+
+{% macro tabla(novedades, estados_nov, tipos_nov, volver, con_empresa=True, id='tbl-novedades', puede_resolver=True) -%}
+<div class="data-table-wrap">
+  <table class="data-table" id="{{ id }}" data-exportar="Novedades de las empresas">
+    <thead><tr>
+      <th class="col-acciones" data-no-sort>Acciones</th>
+      <th>Informada</th>
+      {% if con_empresa %}<th>Empresa</th>{% endif %}
+      <th>Novedad</th><th>CUIL</th><th>Apellido y nombres</th><th>Fecha</th><th>Ficha</th>
+      <th>Estado</th><th>Observaciones</th>
+    </tr></thead>
+    <tbody>
+      {% for n in novedades %}
+      <tr class="{{ 'fila-baja' if n.estado in ('rechazada', 'retirada') }}">
+        <td><div class="acciones">
+          {% if n.ficha_archivo %}{{ ui.accion('ver', href=url_for('fisca_lsd.ficha_novedad', id_nov=n.id), titulo='Ver la ficha de afiliación', blank=True) }}{% endif %}
+          {% if n.id_afiliado %}{{ ui.accion('editar', href=url_for('afiliados.abm_afiliados', edit=n.id_afiliado), titulo='Ficha del afiliado', blank=True) }}{% endif %}
+        </div></td>
+        <td class="td-mono">{{ n.creado.strftime('%d/%m/%Y %H:%M') }}</td>
+        {% if con_empresa %}<td class="td-fuerte">{{ n.razon_social or n.cuit }}<div class="chico muted mono">{{ n.cuit }}</div></td>{% endif %}
+        <td>{{ ui.estado(tipos_nov[n.tipo], 'info' if n.tipo == 'alta' else 'danger') }}</td>
+        <td class="td-mono">{{ n.cuil }}</td>
+        <td>{{ n.nombre or '—' }}{% if n.tipo == 'alta' and not n.nombre_padron %}<div class="chico muted">No está en el padrón</div>{% endif %}</td>
+        <td class="td-mono">{{ n.fecha.strftime('%d/%m/%Y') }}</td>
+        <td>{{ ui.si_no(n.ficha_archivo) if n.tipo == 'alta' else '—' }}</td>
+        <td>{{ ui.estado(estados_nov[n.estado][0], estados_nov[n.estado][1]) }}
+          {% if n.resuelto and n.estado in ('aprobada', 'rechazada') %}<div class="chico muted">{{ n.resuelto.strftime('%d/%m/%Y') }}{{ ' · ' ~ n.usuario if n.usuario }}</div>{% endif %}</td>
+        <td class="chico">
+          {% if n.observaciones %}<div>Empresa: {{ n.observaciones }}</div>{% endif %}
+          {% if n.motivo %}<div class="td-motivo">Rechazo: {{ n.motivo }}</div>{% endif %}
+          {% if n.resultado %}<div class="muted">{{ n.resultado }}</div>{% endif %}
+          {% if n.estado == 'pendiente' and puede_resolver %}
+          <div class="fila">
+            <form method="post" action="{{ url_for('fisca_lsd.aprobar_novedad', id_nov=n.id) }}"
+                  onsubmit="return confirm('{{ ('¿Aprobar el alta? Se abre la relación laboral' ~ (' y se da de alta al afiliado' if not n.nombre_padron else '') ~ '.') if n.tipo == 'alta' else '¿Aprobar la baja? Se cierra la relación laboral el ' ~ n.fecha.strftime('%d/%m/%Y') ~ '.' }}');">
+              <input type="hidden" name="volver" value="{{ volver }}">
+              {{ ui.boton('Aprobar', 'primary', submit=True, chico=True, icono_='guardar') }}
+            </form>
+            <details class="en-linea">
+              <summary class="btn btn-secondary btn-sm">Rechazar</summary>
+              <form method="post" action="{{ url_for('fisca_lsd.rechazar_novedad', id_nov=n.id) }}" class="fila">
+                <input type="hidden" name="volver" value="{{ volver }}">
+                <input type="text" name="motivo" maxlength="300" required placeholder="Motivo (lo ve la empresa)">
+                {{ ui.boton('Rechazar', 'danger', submit=True, chico=True) }}
+              </form>
+            </details>
+          </div>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr class="no-data-row"><td colspan="{{ 10 if con_empresa else 9 }}" class="no-data">No hay novedades.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{%- endmacro %}
