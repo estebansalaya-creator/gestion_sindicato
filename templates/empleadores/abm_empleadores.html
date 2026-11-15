@@ -72,14 +72,15 @@
     <h1>Empleadores</h1>
     <p>Empresas que aportan cuota sindical. Domicilio legal y fiscal.</p>
   </div>
-  {% if empleador %}
   <div class="page-header-acciones">
-    {% if empleador.get('CUIT') and puede('/empleadores/cc') %}
+    {% if empleador and empleador.get('CUIT') and puede('/empleadores/cc') %}
     {{ ui.boton('Cuenta corriente', 'secondary', href=url_for('cc_emp.estado_cuenta', cuit='%011d' % empleador.CUIT)) }}
     {% endif %}
+    {{ ui.boton('Actualizar desde ARCA', 'secondary', onclick='arcaActAbrir()', icono_='reactivar') }}
+    {% if empleador %}
     {{ ui.boton('Nuevo empleador', href=url_for('empleadores.abm_empleadores'), icono_='agregar') }}
+    {% endif %}
   </div>
-  {% endif %}
 </div>
 
 {{ ui.mensajes(errores) }}
@@ -99,6 +100,22 @@
 
 <!-- ── Listado ────────────────────────────────────────────────────────────── -->
 <div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  {# «Actualizar desde ARCA»: la constancia de los empleadores que aportan y su
+     domicilio fiscal, en el servidor (empleadores_arca.py). Se puede cerrar la
+     pantalla; al volver, si sigue corriendo, se ve el avance. #}
+  <div class="card oculto" id="arca-act">
+    {% call ui.card_head('Actualizar desde ARCA', nota='Constancia de inscripción y domicilio fiscal de los empleadores que aportan') %}
+      {{ ui.boton('Cerrar', 'ghost', chico=True, icono_='cerrar', onclick='arcaActCerrar()') }}
+    {% endcall %}
+    <div class="card-body">
+      <div id="arca-act-alcance" class="muted">Contando a los empleadores…</div>
+      <div class="form-acciones">
+        {{ ui.boton('Actualizar ahora', 'primary', icono_='reactivar', onclick='arcaActEmpezar()', id='arca-act-btn') }}
+      </div>
+      <div id="arca-act-res" aria-live="polite"></div>
+    </div>
+  </div>
+
   <div class="card">
     {% call ui.barra_filtros('Filtrar por CUIT, razón social, localidad…') %}
       {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
@@ -468,6 +485,28 @@
       </table>
     </div>
   </div>
+
+  {% if arca.cambios %}
+  <div class="card">
+    {{ ui.card_head('Domicilio fiscal: cambios tomados de ARCA', nota='Por «Actualizar desde ARCA».') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-arca-cambios" data-exportar="Cambios ARCA {{ empleador.razon_social }}">
+        <thead><tr><th>Fecha</th><th>Campo</th><th>Antes</th><th>Después</th><th>Usuario</th></tr></thead>
+        <tbody>
+          {% for k in arca.cambios %}
+          <tr>
+            <td class="td-mono">{{ k.fecha.strftime('%d/%m/%Y %H:%M') if k.fecha else '—' }}</td>
+            <td>{{ arca_campos.get(k.campo, k.campo) }}</td>
+            <td class="muted">{{ k.antes if k.antes is not none else '—' }}</td>
+            <td class="td-fuerte">{{ k.despues if k.despues is not none else '—' }}</td>
+            <td class="muted">{{ k.usuario or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -656,6 +695,131 @@ function arcaSolapaConsultar() {
     .finally(function () { btn.disabled = false; });
 }
 
+// ── Actualizar desde ARCA (todos) ────────────────────────────────────────────
+// Arranca la corrida en el servidor y sigue su avance cada 2 segundos. El
+// texto viene de ARCA y de la base: todo con textContent.
+var ARCA_ACT_URL = "{{ url_for('empleadores.empleadores_arca_actualizar') }}";
+var ARCA_EST_URL = "{{ url_for('empleadores.empleadores_arca_estado') }}";
+var ARCA_FICHA_URL = "{{ url_for('empleadores.abm_empleadores') }}?solapa=arca&edit=";
+var arcaTimer = null;
+
+function arcaEl(tag, clase, texto) {
+  var e = document.createElement(tag);
+  if (clase) e.className = clase;
+  if (texto !== undefined && texto !== null) e.textContent = texto;
+  return e;
+}
+function arcaActCerrar() { document.getElementById('arca-act').classList.add('oculto'); }
+// `quieto`: al cargar la página con una corrida en curso, sin cambiar de solapa.
+function arcaActAbrir(quieto) {
+  var card = document.getElementById('arca-act');
+  card.classList.remove('oculto');
+  if (!quieto) { abmSolapa('listado'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+  fetch(ARCA_EST_URL + '?alcance=1', { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { arcaActAlcance(d.alcance || {}); if (d.corrida) { arcaActPintar(d.corrida); if (!d.corrida.terminado) arcaActSeguir(); } })
+    .catch(function (e) { document.getElementById('arca-act-alcance').textContent = 'No se pudo contar a los empleadores: ' + e.message; });
+}
+function arcaActAlcance(a) {
+  var c = document.getElementById('arca-act-alcance'), btn = document.getElementById('arca-act-btn');
+  c.textContent = '';
+  c.className = '';
+  var problema = a.falta_tabla ? 'Falta correr ' + a.sql + ': sin esas tablas no se puede actualizar.'
+               : a.no_configurado ? 'No se puede consultar ARCA: ' + a.no_configurado + '.'
+               : a.error ? 'No se pudo contar a los empleadores: ' + a.error : '';
+  if (problema) { c.appendChild(arcaEl('div', 'alert alert-warning', problema)); btn.disabled = true; return; }
+  var p = arcaEl('p');
+  p.appendChild(document.createTextNode('Se consultan en ARCA los '));
+  p.appendChild(arcaEl('strong', '', String(a.total)));
+  p.appendChild(document.createTextNode(' empleadores con afiliados activos o cuota sindical desde ' + a.desde
+    + (a.nunca ? ' (' + a.nunca + ' nunca consultados)' : '')
+    + ', primero los que hace más tiempo que no se consultan. De cada uno se guarda la constancia (solapa ARCA) y se actualiza el '));
+  p.appendChild(arcaEl('strong', '', 'domicilio fiscal'));
+  p.appendChild(document.createTextNode(' si ARCA informa otro. El domicilio legal y la razón social no se tocan.'));
+  c.appendChild(p);
+  c.appendChild(arcaEl('p', 'muted chico', 'Tarda unos ' + Math.max(1, Math.round(a.total * 0.7 / 60))
+    + ' minutos. Corre en el servidor: se puede cerrar la pantalla.'));
+  btn.disabled = false;
+}
+function arcaActEmpezar() {
+  var btn = document.getElementById('arca-act-btn');
+  btn.disabled = true;
+  fetch(ARCA_ACT_URL, { method: 'POST', credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) {
+      if (d.error) { arcaActPintar({ error_inicio: d.error }); btn.disabled = false; return; }
+      arcaActPintar(d); arcaActSeguir();
+    })
+    .catch(function (e) { arcaActPintar({ error_inicio: e.message }); btn.disabled = false; });
+}
+function arcaActSeguir() {
+  if (arcaTimer) return;
+  arcaTimer = setInterval(function () {
+    fetch(ARCA_EST_URL, { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.corrida) return;
+        arcaActPintar(d.corrida);
+        if (d.corrida.terminado) { clearInterval(arcaTimer); arcaTimer = null; }
+      });
+  }, 2000);
+}
+function arcaActTabla(cont, titulo, columnas, filas, celdas) {
+  cont.appendChild(arcaEl('div', 'bloque-titulo', titulo));
+  var wrap = arcaEl('div', 'data-table-wrap'), t = arcaEl('table', 'data-table');
+  var tr = arcaEl('tr');
+  columnas.forEach(function (c) { tr.appendChild(arcaEl('th', '', c)); });
+  var thead = arcaEl('thead'); thead.appendChild(tr); t.appendChild(thead);
+  var tb = arcaEl('tbody');
+  filas.forEach(function (f) { var r = arcaEl('tr'); celdas(r, f); tb.appendChild(r); });
+  t.appendChild(tb); wrap.appendChild(t); cont.appendChild(wrap);
+}
+function arcaActCuit(td, f) {
+  var a = arcaEl('a', '', arcaCuit(f.cuit));
+  a.href = ARCA_FICHA_URL + encodeURIComponent(f.id);
+  td.appendChild(a);
+}
+function arcaActPintar(d) {
+  var cont = document.getElementById('arca-act-res'), btn = document.getElementById('arca-act-btn');
+  cont.textContent = '';
+  if (d.error_inicio) { cont.appendChild(arcaEl('div', 'alert alert-danger', 'No se pudo empezar: ' + d.error_inicio)); return; }
+  btn.disabled = !d.terminado;
+  var barra = arcaEl('div', 'progreso'), relleno = arcaEl('div', 'progreso-barra');
+  relleno.style.width = (d.total ? Math.round(100 * d.hechos / d.total) : 100) + '%';
+  barra.appendChild(relleno); cont.appendChild(barra);
+  var datos = arcaEl('div', 'datos');
+  [['Consultados', d.hechos + ' de ' + d.total], ['Domicilio actualizado', d.actualizados.length],
+   ['Con error', d.errores.length], [d.terminado ? 'Terminó' : 'Empezó', d.terminado ? d.fin : d.inicio]
+  ].forEach(function (x) {
+    var dd = arcaEl('div', 'dato');
+    dd.appendChild(arcaEl('div', 'dato-lbl', x[0])); dd.appendChild(arcaEl('div', 'dato-val', String(x[1])));
+    datos.appendChild(dd);
+  });
+  cont.appendChild(datos);
+  if (d.ya_en_curso) cont.appendChild(arcaEl('p', 'muted chico', 'Ya había una actualización en curso: es ésta.'));
+  if (d.actual) cont.appendChild(arcaEl('p', 'muted chico', 'Consultando ' + d.actual + '…'));
+  if (d.cortado) cont.appendChild(arcaEl('div', 'alert alert-warning', 'Se cortó: ' + d.cortado));
+  if (d.actualizados.length) {
+    arcaActTabla(cont, 'Domicilio fiscal actualizado', ['CUIT', 'Razón social', 'Cambios'], d.actualizados, function (tr, f) {
+      var td = arcaEl('td', 'td-mono'); arcaActCuit(td, f); tr.appendChild(td);
+      tr.appendChild(arcaEl('td', 'td-fuerte', f.razon_social));
+      var tc = arcaEl('td', 'chico');
+      f.cambios.forEach(function (c) {
+        tc.appendChild(arcaEl('div', '', c.rotulo + ': ' + (c.antes == null || c.antes === '' ? '—' : c.antes)
+                                         + ' → ' + (c.despues == null || c.despues === '' ? '—' : c.despues)));
+      });
+      tr.appendChild(tc);
+    });
+  }
+  if (d.errores.length) {
+    arcaActTabla(cont, 'Con error', ['CUIT', 'Razón social', 'Error'], d.errores, function (tr, f) {
+      var td = arcaEl('td', 'td-mono'); arcaActCuit(td, f); tr.appendChild(td);
+      tr.appendChild(arcaEl('td', '', f.razon_social));
+      tr.appendChild(arcaEl('td', 'chico', f.error));
+    });
+  }
+}
+
 // ── CUIT: mismo cálculo que el servidor, para avisar antes de enviar ─────────
 function cuitValido(cuit) {
   if (!/^\d{11}$/.test(cuit)) return false;
@@ -721,6 +885,12 @@ document.addEventListener('DOMContentLoaded', function () {
   }
   var cuit = document.getElementById('CUIT');
   if (cuit && cuit.value) validarCuit(cuit);
+
+  // Si hay una actualización desde ARCA corriendo, se muestra su avance.
+  fetch(ARCA_EST_URL, { credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (d) { if (d.corrida && !d.corrida.terminado) arcaActAbrir(true); })
+    .catch(function () {});
 
   // Solapa ARCA: si nunca se consultó este CUIT, al abrirla se consulta sola.
   function arcaAlAbrir() {

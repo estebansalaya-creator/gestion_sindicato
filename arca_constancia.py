@@ -458,6 +458,16 @@ def leer(cur, cuit) -> dict | None:
                      FROM arca_constancia_actividades WHERE cuit = %s
                      ORDER BY orden IS NULL, orden, id_actividad""", (cuit,))
     out["actividades"] = cur.fetchall()
+    # Lo que «Actualizar desde ARCA» cambió del domicilio fiscal (empleadores_arca.py).
+    try:
+        cur.execute("""SELECT k.fecha, k.campo, k.antes, k.despues, u.nombre AS usuario
+                         FROM arca_constancia_cambios k LEFT JOIN s_usuarios u ON u.id = k.id_usuario
+                        WHERE k.cuit = %s ORDER BY k.fecha DESC, k.id DESC LIMIT 50""", (cuit,))
+        out["cambios"] = cur.fetchall()
+    except Exception as e:                                   # noqa: BLE001
+        if "1146" not in str(e):
+            raise
+        out["cambios"] = []
     return out
 
 

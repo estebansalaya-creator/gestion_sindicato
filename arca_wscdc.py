@@ -283,12 +283,21 @@ def _ta_archivo(servicio: str) -> dict | None:
         return None
 
 
+#: El último token de cada servicio en este proceso: una corrida de cientos de
+#: consultas (Actualizar desde ARCA) no va a la base a buscarlo cada vez.
+_memoria: dict = {}
+
+
 def _leer_ta(servicio: str = SERVICIO) -> dict | None:
-    return _vigente(_ta_base(servicio)) or _vigente(_ta_archivo(servicio))
+    ta = _vigente(_memoria.get(servicio)) or _vigente(_ta_base(servicio)) or _vigente(_ta_archivo(servicio))
+    if ta:
+        _memoria[servicio] = ta
+    return ta
 
 
 def _guardar_ta(servicio: str, ta: dict) -> None:
     """En la base (la que leen todos los servidores) y en el archivo."""
+    _memoria[servicio] = ta
     try:
         from db import get_connection
         vence = datetime.datetime.fromisoformat(ta["expira"]).astimezone(datetime.timezone.utc)

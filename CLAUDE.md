@@ -94,6 +94,7 @@ gestion_sindicato/
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   arca_constancia.py      constancia de inscripción (ws_sr_constancia_inscripcion): empleadores y proveedores
+  empleadores_arca.py     «Actualizar desde ARCA»: constancia y domicilio fiscal de los empleadores que aportan
   probar_arca.py          prueba desde la consola el certificado, el token de cada servicio y una consulta
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
   buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
@@ -169,7 +170,8 @@ repetiría en la URL lo que dice el dominio.
                              /descartar POST, /planilla.xlsx)
 /login /logout /menu   /menu: el panel de inicio con los accesos directos (sin ninguno, al Panel de Fiscalización)
 /accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
-/empleadores         ABM, ?edit=ID; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa la ficha (JSON)
+/empleadores         ABM, ?edit=ID, ?solapa=arca|cuota; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa
+                     la ficha (JSON); /empleadores/arca/actualizar POST y /empleadores/arca/estado (?alcance=1)
 /empleadores/cc      cuenta corriente: ?q, ?saldo=deuda|favor|todos, ?desde, ?hasta (AAAAMM); /<cuit> estado de cuenta
                      (?desde, ?hasta, ?con_saldo=1); /<cuit>/<periodo> la cuota del período (?volver);
                      /aplicaciones (?cuit=), /aplicaciones/aplicar,
@@ -1049,7 +1051,18 @@ comprobantes (36), en «Cuenta corriente de proveedores».
   ficha de empleadores o de proveedores) se guarda por CUIT en `arca_constancia`, `_impuestos` y
   `_actividades` (`sql/arca_constancia_20261115.sql`; `arca_constancia.guardar` / `leer`); lo del A13 o
   una constancia que ARCA no emite no pisa lo guardado. Si nunca se consultó, la solapa consulta sola al
-  abrirse. Sin la «Actualización desde ARCA» masiva de gestion_adm ni sus cambios de domicilio.
+  abrirse.
+- **Actualizar desde ARCA** (botón del listado de Empleadores, pedido del 15/11/2026, el de gestion_adm;
+  `empleadores_arca.py`): consulta la constancia de los empleadores que aportan —afiliados con relación
+  laboral vigente o cuota en `fisca_cuotarecepcion` en los últimos 12 meses; ~370 de los ~3.100—, del que
+  hace más tiempo que no se consulta (o nunca) al más reciente. Guarda la constancia y actualiza el
+  **domicilio fiscal** (`fdom_*`) si ARCA informa otro; el legal (`dom_*`, el de las actas) y la razón
+  social no se tocan (en gestion_adm el bloque que actualiza es `dom_*`, que allá es el fiscal de ARCA).
+  Cada campo cambiado, con el valor de antes, en `arca_constancia_cambios` (sin esa tabla no corre), que
+  la solapa ARCA muestra. Corre en un hilo con el estado en memoria (un solo proceso: gunicorn con un
+  worker, IIS con maxInstances=1); la pantalla sigue el avance. 15 errores seguidos con el mismo motivo la
+  cortan. Consola: `python empleadores_arca.py [--dry-run] [--limite N] [--cuits …]`. Test:
+  `python tests/test_empleadores_arca.py`.
 - **Solapa Mesa de entradas** (pedido del 11/11/2026, como gestion_adm): área y usuario destino de los
   expedientes del proveedor (`id_area_destino`, `id_usuario_destino`; `/proveedores/<id>/mesa` POST, con su
   fila en la auditoría) y los últimos 10 expedientes. La carga de comprobantes ya derivaba el expediente a

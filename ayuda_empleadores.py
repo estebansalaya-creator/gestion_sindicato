@@ -48,6 +48,13 @@ SECCIONES = [
       "presentaciones."),
      ("Cuenta corriente", "El botón de arriba lleva a su estado de cuenta."),
    ]},
+   {"tipo": "criterio", "html":
+    "<b>Actualizar desde ARCA</b> (arriba, en el listado) consulta la constancia de inscripción de "
+    "todos los empleadores que aportan —con afiliados activos o cuota sindical en los últimos 12 "
+    "meses—, empezando por los que hace más tiempo que no se consultan. De cada uno guarda lo que se "
+    "ve en la solapa ARCA y actualiza el <b>domicilio fiscal</b> si ARCA informa otro; el domicilio "
+    "legal y la razón social no se tocan. Cada cambio queda en la solapa ARCA, con el valor de antes. "
+    "Corre en el servidor: se puede cerrar la pantalla y volver a ver el avance."},
    {"tipo": "aviso", "html":
     "<b>Eliminar</b> borra la ficha: usarlo solo con un empleador cargado por error. Uno con afiliados, "
     "liquidaciones o cobros tiene que quedar, porque su historia se busca por el CUIT. Los que vinieron "

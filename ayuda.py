@@ -74,9 +74,11 @@ _RE_SIN_AYUDA = re.compile(
     r"(^|[._])(api|pdf|exportar|descargar|archivo|planilla|adjunto|constancia|logo|tmp|json)([._]|$)"
     r"|^(buscador|exportar)\.|_pdf|_ruta$|pdf_tmp|ver_documento"
     # Lo que la pantalla pide por detrás: la solapa de aportes, la consulta a
-    # ARCA, la razón social de un CUIT, el código del plan, el detalle de un
-    # período del acta, el saldo inicial y con qué se canceló un comprobante.
-    r"|\.(aportes|consultar_arca|buscar_empleador|plan_codigo|acta_periodo|saldo_inicial_json|aplicaciones_de)$"
+    # ARCA (y el avance de «Actualizar desde ARCA»), la razón social de un CUIT,
+    # el código del plan, el detalle de un período del acta, el saldo inicial y
+    # con qué se canceló un comprobante.
+    r"|\.(aportes|consultar_arca|empleadores_arca_estado|buscar_empleador|plan_codigo|acta_periodo"
+    r"|saldo_inicial_json|aplicaciones_de)$"
 )
 
 _cargados: dict[str, dict] = {}

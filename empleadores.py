@@ -13,7 +13,9 @@ diferencias obligadas y una de convención:
    Completa lo vacío; lo cargado y distinto lo ofrece. El domicilio legal solo
    se completa si está vacío entero: ARCA da el fiscal. La solapa ARCA de la
    ficha muestra los impuestos y las actividades registradas, guardados por
-   CUIT en cada consulta (arca_constancia.leer).
+   CUIT en cada consulta (arca_constancia.leer). «Actualizar desde ARCA» del
+   listado hace lo mismo con todos los que aportan y actualiza su domicilio
+   fiscal (empleadores_arca.py).
 2. **Contactos en su propia solapa**, con el parcial `_contactos.html` y la
    lógica de `contactos.py` —los mismos que usa afiliados—.
 3. La edición entra por `?edit=<id>` y no por `?id=<id>`, que es la convención
@@ -22,11 +24,12 @@ diferencias obligadas y una de convención:
 
 from datetime import date
 
-from flask import (Blueprint, render_template, request, jsonify,
+from flask import (Blueprint, render_template, request, jsonify, current_app,
                    redirect, url_for, session, flash)
 
 import arca_constancia
 import contactos as _contactos
+import empleadores_arca
 import contable_oseda
 from db import get_connection, puede, validasesion
 
@@ -351,6 +354,7 @@ def abm_empleadores():
         nomina=nomina,
         aviso_ddjj=aviso_ddjj,
         arca=arca,
+        arca_campos=empleadores_arca.CAMPOS,
         cuota=cuota,
         enlace_nuevo=enlace_nuevo,
         solapa=request.args.get("solapa"),
@@ -404,4 +408,40 @@ def consultar_arca():
         "actividad_principal": d["actividad_principal"], "avisos": d["avisos"],
     }
     return jsonify(r)
+
+
+# «Actualizar desde ARCA» del listado: la constancia de todos los del alcance
+# y su domicilio fiscal, en segundo plano (empleadores_arca.py).
+
+@empleadores_bp.route("/empleadores/arca/actualizar", methods=["POST"])
+def empleadores_arca_actualizar():
+    if not validasesion():
+        return jsonify({"error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede(url_for("empleadores.abm_empleadores")):
+        return jsonify({"error": "No tenés permiso para el ABM de empleadores."}), 403
+    try:
+        return jsonify(empleadores_arca.empezar(get_connection, session.get("sind_usuario_id")))
+    except Exception as e:                                   # noqa: BLE001
+        current_app.logger.exception("empleadores_arca_actualizar")
+        return jsonify({"error": str(e)}), 500
+
+
+@empleadores_bp.route("/empleadores/arca/estado")
+def empleadores_arca_estado():
+    """{alcance, corrida}: cuántos entran y la corrida en curso o la última."""
+    if not validasesion():
+        return jsonify({"error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede(url_for("empleadores.abm_empleadores")):
+        return jsonify({"error": "No tenés permiso para el ABM de empleadores."}), 403
+    salida = {"corrida": empleadores_arca.estado()}
+    if request.args.get("alcance"):
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    salida["alcance"] = empleadores_arca.resumen_alcance(cur)
+        except Exception as e:                               # noqa: BLE001
+            salida["alcance"] = {"error": str(e)}
+        ok, motivo = arca_constancia.configurado()
+        salida["alcance"]["no_configurado"] = "" if ok else motivo
+    return jsonify(salida)
 

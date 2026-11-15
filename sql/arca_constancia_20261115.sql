@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Constancia de inscripción de ARCA guardada por CUIT (15/11/2026)
 --
--- Cada «Consultar ARCA» de empleadores y proveedores (ws_sr_constancia_inscripcion,
+-- Cada «Consultar ARCA» de empleadores y proveedores (y «Actualizar desde ARCA») (ws_sr_constancia_inscripcion,
 -- arca_constancia.py) guarda lo que informó ARCA del CUIT: estado de la clave,
 -- condición de IVA, impuestos y actividades registradas. La ficha del empleador
 -- lo muestra en la solapa ARCA. Las mismas tablas que gestion_adm tiene en
@@ -50,6 +50,23 @@ CREATE TABLE IF NOT EXISTS arca_constancia_actividades (
     periodo_desde VARCHAR(8)   NULL COMMENT 'AAAAMM',
     PRIMARY KEY (id),
     KEY ix_arca_constancia_actividades_cuit (cuit)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+-- Lo que «Actualizar desde ARCA» (empleadores_arca.py) cambió en el domicilio
+-- fiscal de p_empresas (fdom_*): campo por campo, con el valor de antes. Sin
+-- esta tabla la actualización no se corre.
+CREATE TABLE IF NOT EXISTS arca_constancia_cambios (
+    id          INT          NOT NULL AUTO_INCREMENT,
+    fecha       DATETIME     NOT NULL,
+    cuit        CHAR(11)     NOT NULL,
+    id_empresa  INT          NULL COMMENT 'p_empresas.id',
+    campo       VARCHAR(40)  NOT NULL,
+    antes       VARCHAR(200) NULL,
+    despues     VARCHAR(200) NULL,
+    id_usuario  INT          NULL COMMENT 's_usuarios.id',
+    PRIMARY KEY (id),
+    KEY ix_arca_constancia_cambios_cuit (cuit),
+    KEY ix_arca_constancia_cambios_fecha (fecha)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 -- En `sindicato` ya estaban creadas el 15/11/2026 en utf8mb4_unicode_ci (la
