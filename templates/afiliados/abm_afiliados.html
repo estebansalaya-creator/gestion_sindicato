@@ -41,9 +41,11 @@
    también desde la consulta. #}
 {% set inicial = 'datos' if (afiliado or errores or (not consulta and request.args.get('nuevo'))) else 'listado' %}
 {# ?solapa=… vuelve a la solapa desde la que se guardó (empleadores, documentación). #}
-{% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'documentacion', 'contactos', 'movimientos') %}
+{% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'aportes', 'documentacion', 'contactos', 'movimientos') %}
   {% set inicial = request.args.get('solapa') %}
 {% endif %}
+{# «Aportes OSEDA» no está en la lista: solo la tiene quien tiene o tuvo DDJJ de
+   OSEDA, y eso lo dice Railway. La agrega cargarAportes() cuando llega. #}
 {% set lista_solapas = [('listado', 'Listado', pag.total)] %}
 {# En la consulta no hay «Nuevo»: la solapa de datos aparece solo con una ficha abierta. #}
 {% if not consulta or editando %}
@@ -591,6 +593,14 @@
   </div>
 </div>
 
+<!-- ── Aportes OSEDA ──────────────────────────────────────────────────────── -->
+{# Al dibujar la ficha tiene solo el «Consultando…»: lo llena cargarAportes() con
+   /afiliados/<id>/aportes (afiliados/_aportes_oseda.html), o lo saca si no hay DDJJ. #}
+<div class="abm-panel {{ 'oculto' if inicial != 'aportes' }}" data-panel="aportes" id="panel-aportes"
+     data-url="{{ url_for('afiliados.aportes', id_af=a.get('id_afiliado')) }}">
+  {{ ui.aviso('Consultando los aportes en OSEDA…', 'info') }}
+</div>
+
 <!-- ── Documentación ───────────────────────────────────────────────────────── -->
 <div class="abm-panel {{ 'oculto' if inicial != 'documentacion' }}" data-panel="documentacion">
   <div class="card">
@@ -800,7 +810,48 @@ function sincronizarTitular() {
   if (esTitular) titular.value = document.getElementById('cuil').value.replace(/\D/g, '');
 }
 
+// ── Aportes OSEDA ───────────────────────────────────────────────────────────
+// La solapa solo existe si alguien del grupo tiene o tuvo DDJJ de OSEDA, y eso
+// lo sabe Railway: la ficha no lo espera. Se pide con la ficha ya dibujada;
+// con 204 no hay solapa (y si se había pedido con ?solapa=aportes, se abre la
+// ficha). Va después de Empleadores.
+function cargarAportes() {
+  var panel = document.getElementById('panel-aportes');
+  if (!panel) return;
+  function sinSolapa() {
+    if (!panel.classList.contains('oculto')) abmSolapa('datos');
+    panel.remove();
+  }
+  fetch(panel.dataset.url, { credentials: 'same-origin' })
+    .then(function (r) { return r.status === 200 ? r.text() : null; })
+    .then(function (html) {
+      if (!html) return sinSolapa();
+      panel.innerHTML = html;
+      var raiz = panel.querySelector('.aportes-oseda');
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.className = 'abm-tab' + (panel.classList.contains('oculto') ? '' : ' activa');
+      b.dataset.panel = 'aportes';
+      b.textContent = 'Aportes OSEDA';
+      if (raiz && raiz.dataset.conteo) {
+        var c = document.createElement('span');
+        c.className = 'conteo';
+        c.textContent = raiz.dataset.conteo;
+        b.appendChild(c);
+      }
+      b.addEventListener('click', function () { abmSolapa('aportes'); });
+      var previa = document.querySelector('.abm-tab[data-panel="empleadores"]');
+      if (previa) previa.insertAdjacentElement('afterend', b);
+      else document.querySelector('.abm-tabs').appendChild(b);
+      panel.querySelectorAll('table.data-table').forEach(function (t) { gestion_admTable(t, { pageSize: 20 }); });
+      panel.querySelectorAll('.data-table-wrap').forEach(scrollArriba);
+    })
+    .catch(sinSolapa);
+}
+
 document.addEventListener('DOMContentLoaded', function () {
+  cargarAportes();
   // El listado lo maneja el servidor (data-servidor): no se inicializa acá.
   if (document.getElementById('tbl-movimientos')) gestion_admTable('tbl-movimientos', { pageSize: 20 });
 

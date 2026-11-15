@@ -214,3 +214,76 @@ def padron_oseda_aeda(rotulo: str = "AEDA") -> list[dict]:
         raise ContableNoDisponible(f"Error al leer el padrón de OSEDA en contable: {e}") from e
     finally:
         cn.close()
+
+
+def aportes_de_cuiles(cuiles) -> dict:
+    """
+    Todo lo que hace falta para la solapa «Aportes OSEDA» de la ficha del
+    afiliado (afiliado_aportes.py), en UNA conexión: la solapa se pide al abrir
+    la ficha y no conviene abrir cuatro.
+
+        ddjj            [{cuil, cuit, periodo, remosimp, rem5, aporte_decl, contrib_decl}]
+                        TODA la historia de esos CUIL (dice desde cuándo los declaran)
+        transferencias  [{cuil, cuit, periodo, aporte_perc, contrib_perc, total_percibido, monotributo}]
+                        lo que ARCA transfirió, sumado por CUIT + CUIL + período
+        deuda_empresa   {(cuit, periodo): {emp_decl, emp_deuda}}  la situación del empleador
+        empresas        {cuit: razón social}  del padrón de empresas de OSEDA
+
+    Sin DDJJ de ninguno de esos CUIL vuelve solo `ddjj` vacía: la solapa no se
+    muestra y no tiene sentido seguir consultando. Son los mismos datos que la
+    solapa Aportes del Análisis de afiliado de gestion_adm
+    (`afiliado_analisis._aportes`).
+    """
+    cuiles = sorted({str(c) for c in cuiles if c})
+    vacio = {"ddjj": [], "transferencias": [], "deuda_empresa": {}, "empresas": {}}
+    if not cuiles:
+        return vacio
+    marcas = ",".join(["%s"] * len(cuiles))
+    cn = _conexion()
+    try:
+        with cn.cursor() as cur:
+            # f_ddjj_procesada tiene una fila por CUIT + CUIL + período; el SUM
+            # es por las dudas, para que una fila repetida no duplique renglones.
+            cur.execute(f"""SELECT cuil, cuit, periodo,
+                                   SUM(COALESCE(remosimp, 0))                  AS remosimp,
+                                   SUM(COALESCE(rem5, 0))                      AS rem5,
+                                   SUM(COALESCE(deuda_neto_aportes, 0))        AS aporte_decl,
+                                   SUM(COALESCE(deuda_neto_contribuciones, 0)) AS contrib_decl
+                              FROM f_ddjj_procesada
+                             WHERE codosoc = %s AND cuil IN ({marcas})
+                             GROUP BY cuil, cuit, periodo""", [CODOSOC_OSEDA, *cuiles])
+            ddjj = list(cur.fetchall())
+            if not ddjj:
+                return vacio
+            # Monotributo y servicio doméstico no tienen DDJJ: es el pago del
+            # período (en gestion_adm, migrar_sp_acreditaciones_monotributo).
+            cur.execute(f"""SELECT cuil, cuit, periodo,
+                                   SUM(COALESCE(aportes, 0))         AS aporte_perc,
+                                   SUM(COALESCE(contribuciones, 0))  AS contrib_perc,
+                                   SUM(COALESCE(total_percibido, 0)) AS total_percibido,
+                                   SUM(COALESCE(monotributo, 0) + COALESCE(servicio_domestico, 0)) AS monotributo
+                              FROM f_transferencias_procesadas
+                             WHERE cuil IN ({marcas})
+                             GROUP BY cuil, cuit, periodo""", cuiles)
+            transf = list(cur.fetchall())
+            cuits = sorted({f["cuit"] for f in ddjj + transf if f["cuit"]})
+            deuda, empresas = {}, {}
+            if cuits:
+                mc = ",".join(["%s"] * len(cuits))
+                cur.execute(f"""SELECT cuit, periodo,
+                                       SUM(deuda_total_os_neta)   AS emp_decl,
+                                       SUM(deuda_total_calculada) AS emp_deuda
+                                  FROM f_deuda_empresa
+                                 WHERE cuit IN ({mc})
+                                 GROUP BY cuit, periodo""", cuits)
+                deuda = {(f["cuit"], f["periodo"]): f for f in cur.fetchall()}
+                numeros = [int(c) for c in cuits if c.isdigit()]
+                if numeros:
+                    mn = ",".join(["%s"] * len(numeros))
+                    cur.execute(f"SELECT CUIT, razon_social FROM p_empresas WHERE CUIT IN ({mn})", numeros)
+                    empresas = {str(f["CUIT"]).zfill(11): f["razon_social"] for f in cur.fetchall()}
+        return {"ddjj": ddjj, "transferencias": transf, "deuda_empresa": deuda, "empresas": empresas}
+    except pymysql.MySQLError as e:
+        raise ContableNoDisponible(f"Error al leer los aportes en contable: {e}") from e
+    finally:
+        cn.close()

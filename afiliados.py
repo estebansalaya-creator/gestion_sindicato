@@ -23,6 +23,8 @@ agrega es lo que un afiliado tiene y una empresa no:
   la solapa, no en el formulario, para que no haya dos lugares que digan cosas
   distintas. En el alta sí se carga, y nace la primera relación.
 - **Documentación** adjunta, con el parcial de documentacion.py.
+- **Aportes OSEDA**, solo si alguien del grupo tiene o tuvo DDJJ de OSEDA:
+  la ficha la pide aparte, ya dibujada (`aportes`, afiliado_aportes.py).
 
 **Dos opciones de menú, una pantalla.** «Consulta del padrón»
 (`/afiliados/padron?ver=ID`) es de solo lectura; «ABM de afiliados»
@@ -46,7 +48,9 @@ from datetime import date, datetime
 from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file)
 
+import afiliado_aportes as _aportes
 import contactos as _contactos
+import contable_oseda
 import documentacion as _doc
 import paginar
 from exportar import xlsx
@@ -787,6 +791,49 @@ def ver_documento(id_af, id_documento):
                      download_name=doc["nombre_original"])
 
 
+def _grupo(cur, cuil_titular) -> list[dict]:
+    """Los integrantes del grupo familiar, el titular incluido."""
+    cur.execute("""
+        SELECT a.id_afiliado, a.cuil, a.apellido_nombres, a.cod_parentesco,
+               p.descripcion AS parentesco, a.activo, a.fecha_baja,
+               TIMESTAMPDIFF(YEAR, a.fecha_nacimiento, CURDATE()) AS edad
+          FROM p_afiliados a
+          LEFT JOIN p_parentesco p ON p.codigo = a.cod_parentesco
+         WHERE a.cuil_titular = %s
+         ORDER BY a.cod_parentesco, a.fecha_nacimiento
+    """, (cuil_titular,))
+    return list(cur.fetchall())
+
+
+@afiliados_bp.route("/afiliados/<int:id_af>/aportes")
+def aportes(id_af):
+    """
+    La solapa «Aportes OSEDA» de la ficha (afiliado_aportes.py), en HTML para
+    meter en su panel. 204 si nadie del grupo tiene ni tuvo DDJJ de OSEDA: la
+    ficha no muestra la solapa. Va aparte de la ficha para que abrirla no
+    espere a Railway; si Railway no responde, la solapa sale con el aviso.
+    """
+    if not validasesion():
+        return "", 401
+    if not puede_consulta():
+        return "", 403
+    s, error = None, None
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            af = _afiliado(cur, id_af)
+            if af is None:
+                return "", 404
+            grupo = _grupo(cur, af["cuil_titular"]) if af.get("cuil_titular") else []
+            try:
+                s = _aportes.solapa(cur, af, grupo)
+            except contable_oseda.ContableNoDisponible as e:
+                log.warning("aportes OSEDA de %s: %s", af.get("cuil"), e)
+                error = str(e)
+    if s is None and error is None:
+        return "", 204
+    return render_template("afiliados/_aportes_oseda.html", s=s, error=error)
+
+
 def _insertar(cur, d: dict, cat: dict) -> int:
     columnas = list(CAMPOS) + ["activo", "cod_obra_social"]
     valores = [d[c] for c in CAMPOS] + [1, ""]
@@ -1167,16 +1214,7 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
             areas = _contactos.areas(cur)
             ref = afiliado or {}
             if ref.get("cuil_titular"):
-                cur.execute("""
-                    SELECT a.id_afiliado, a.cuil, a.apellido_nombres, a.cod_parentesco,
-                           p.descripcion AS parentesco, a.activo, a.fecha_baja,
-                           TIMESTAMPDIFF(YEAR, a.fecha_nacimiento, CURDATE()) AS edad
-                      FROM p_afiliados a
-                      LEFT JOIN p_parentesco p ON p.codigo = a.cod_parentesco
-                     WHERE a.cuil_titular = %s
-                     ORDER BY a.cod_parentesco, a.fecha_nacimiento
-                """, (ref["cuil_titular"],))
-                grupo = cur.fetchall()
+                grupo = _grupo(cur, ref["cuil_titular"])
             if ref.get("cuit_empleador"):
                 cur.execute("SELECT id, razon_social FROM p_empresas WHERE CUIT = %s",
                             (ref["cuit_empleador"],))

@@ -51,6 +51,7 @@ gestion_sindicato/
   fisca_aplicaciones.py   qué cobro cancela qué cuota (fisca_aplicacion): aplicar, desaplicar, aplicación automática
   aplicar_cobros.py       la aplicación automática por consola; simula por defecto, --aplicar graba
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
+  afiliado_aportes.py     solapa «Aportes OSEDA» de la ficha: DDJJ contra lo transferido por ARCA (de gestion_adm)
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
   afiliados_metricas.py   métricas del padrón: indicadores, altas y bajas, pirámide, empleadores, controles
   documentacion.py        documentación adjunta de cualquier entidad (p_documentacion), parcial _documentacion.html
@@ -163,7 +164,8 @@ repetiría en la URL lo que dice el dominio.
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
 /afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
                      listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
-                     ?orden, ?dir, ?tam, ?pagina (lo mismo en /afiliados/padron); /afiliados/exportar (.xlsx)
+                     ?orden, ?dir, ?tam, ?pagina (lo mismo en /afiliados/padron); /afiliados/exportar (.xlsx);
+                     /afiliados/<id>/aportes la solapa Aportes OSEDA (HTML, 204 sin DDJJ; la pide la ficha)
 /afiliados/empleador razón social de un CUIT (ayuda del formulario)
 /afiliados/metricas  tablero; ?estado=todos, ?personas=titulares, ?desde=&hasta=, ?control=<clave>
 /contactos/<tipo>/<id>  POST alta/edición/baja de contacto (tipo: empresa | afiliado | proveedor)
@@ -424,6 +426,18 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   de `afiliados_tablas.py`: el código de las tablas SSS lo pone quien carga y no se cambia después;
   lo que se usa no se borra (se desactiva si la tabla tiene `activo`); el parentesco 0 y el DU no se
   borran.
+- **Aportes OSEDA** (solapa de la ficha, pedido del 15/11/2026; `afiliado_aportes.py`, `_aportes_oseda.html`): la
+  solapa Aportes del Análisis de afiliado de gestion_adm (`afiliado_analisis._aportes` + `padron._fila_diferencia`),
+  **solo para quien tiene o tuvo DDJJ de OSEDA**: si nadie del grupo familiar figura en `f_ddjj_procesada`, no hay
+  solapa. En vivo de contable en Railway (`contable_oseda.aportes_de_cuiles`, una conexión: DDJJ, transferencias,
+  `f_deuda_empresa` y razón social). La ficha se dibuja sin esperar a Railway y la pide después
+  (`cargarAportes()`, `/afiliados/<id>/aportes`): con 204 no aparece; si Railway no responde, sale con el aviso.
+  Por período, últimos 36 con DDJJ o transferencia: remuneración, Rem. 5, aporte y contribución declarados, lo
+  percibido, monotributo, pagado y diferencia, más la **cuota sindical liquidada** al afiliado (`fisca_liquidacion`
+  vigente; el CUIT lleva a la cuota del período de la cuenta corriente). La diferencia sale del empleador: su parte
+  de lo que el empleador quedó debiendo en el período, no lo prorrateado por CUIL; hasta $ 1,50 es redondeo. Los
+  aportes son del titular: la ficha de un familiar muestra los del titular, y quien aporta a su nombre (relación de
+  dependencia o monotributo) tiene su propia grilla. Test: `python tests/test_afiliado_aportes.py`, sin base.
 
 ## Métricas del padrón
 

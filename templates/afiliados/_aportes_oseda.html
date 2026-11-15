@@ -1,0 +1,139 @@
+{% import "_ui.html" as ui %}
+{#
+  La solapa «Aportes OSEDA» de la ficha del afiliado (afiliado_aportes.py).
+  No se dibuja con la ficha: la pide la ficha ya cargada a
+  /afiliados/<id>/aportes y la mete en su panel (abm_afiliados.html). Si nadie
+  del grupo tiene ni tuvo DDJJ de OSEDA, la ruta devuelve 204 y no hay solapa.
+
+  `s`: lo de afiliado_aportes.solapa; `error`: Railway no respondió.
+  data-conteo es el número de la solapa.
+
+  Es la solapa Aportes del Análisis de afiliado de gestion_adm, con dos
+  columnas del gremio: Rem. 5 (la base de la cuota) y la cuota liquidada.
+#}
+
+{% macro kpi(icono, tipo, rotulo, valor, clase='', sub='') -%}
+<div class="kpi-card"><div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div><div>
+  <div class="kpi-lbl">{{ rotulo }}</div>
+  <div class="kpi-val {{ clase }}">{{ valor }}</div>
+  {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+</div></div>
+{%- endmacro %}
+
+{% macro cifras(tot, rot_periodos='Períodos') -%}
+<div class="kpi-row">
+  {{ kpi('calendario', '', rot_periodos, tot.periodos or 0, '',
+         ('Declarado desde ' ~ (tot.ddjj_desde | periodo)) if tot.ddjj_desde else 'Sin DDJJ propia') }}
+  {{ kpi('reloj', '', 'Último', (tot.ultimo | periodo) if tot.ultimo else '—', '',
+         ('Última DDJJ ' ~ (tot.ddjj_hasta | periodo)) if tot.ddjj_hasta else '') }}
+  {{ kpi('dinero', '', 'Total a pagar', (tot.total_a_pagar or 0) | miles, 'monto', 'Aportes y contribuciones declarados') }}
+  {{ kpi('dinero', 'ok', 'Total pagado', (tot.total_pagado or 0) | miles, 'monto importe-ok') }}
+  {% set dif = tot.diferencia or 0 %}
+  {{ kpi('alerta' if dif > 0 else 'ok', 'warn' if dif > 0 else 'ok', 'Diferencia', dif | miles,
+         'monto ' ~ ('importe-pendiente' if dif > 0 else 'importe-ok')) }}
+  {{ kpi('planilla', '', 'Cuota sindical', (tot.cuota or 0) | miles, 'monto', 'Liquidada en estos períodos') }}
+</div>
+{%- endmacro %}
+
+{# Una grilla por CUIL. `id`: el de la tabla (lo inicializa la ficha). #}
+{% macro grilla(ap, id, titulo, nota='', excel='Aportes') -%}
+<div class="card">
+  {{ ui.card_head(titulo, nota=nota) }}
+  {{ ui.barra_filtros('Filtrar por período, CUIT o empleador…') }}
+  <div class="data-table-wrap">
+    <table class="data-table compacta" id="{{ id }}" data-exportar="{{ excel }}">
+      <thead><tr>
+        <th data-orden="desc">Período</th>
+        <th>Empleador</th>
+        <th class="th-right" title="Remuneración imponible de la obra social">Remuneración</th>
+        <th class="th-right" title="Remuneración imponible 5: la base de la cuota sindical">Rem. 5</th>
+        <th class="th-right">Aporte decl.</th>
+        <th class="th-right">Contrib. decl.</th>
+        <th class="th-right">Total a pagar</th>
+        <th class="th-right" title="Lo que ARCA transfirió a OSEDA, prorrateado a este CUIL">Aporte perc.</th>
+        <th class="th-right">Contrib. perc.</th>
+        <th class="th-right" title="Monotributo y servicio doméstico: no tienen DDJJ">Monotributo</th>
+        <th class="th-right">Total pagado</th>
+        <th class="th-right">Diferencia</th>
+        <th class="th-right" title="La cuota sindical que se le liquidó al afiliado en el período">Cuota sindical</th>
+      </tr></thead>
+      <tbody>
+        {% for r in ap.detalle %}
+        <tr>
+          <td class="td-mono">{{ r.periodo | periodo }}</td>
+          <td>
+            {%- for e in r.empleadores_det %}
+            <div>
+              {%- if e.liquidada and puede('/empleadores/cc') -%}
+              <a href="{{ url_for('cc_emp.periodo', cuit=e.cuit, periodo=r.periodo) }}" class="mono"
+                 title="Ver la cuota sindical de {{ r.periodo | periodo }} del empleador">{{ e.cuit }}</a>
+              {%- else -%}
+              <span class="mono">{{ e.cuit }}</span>
+              {%- endif %}
+              {% if e.razon_social %}<span class="td-muted chico">{{ e.razon_social }}</span>{% endif -%}
+            </div>
+            {%- else -%}—{%- endfor -%}
+          </td>
+          <td class="td-right" data-num="{{ r.remuneracion }}">{{ r.remuneracion | miles }}</td>
+          <td class="td-right" data-num="{{ r.rem5 }}">{{ r.rem5 | miles }}</td>
+          <td class="td-right" data-num="{{ r.aporte_decl }}">{{ r.aporte_decl | miles }}</td>
+          <td class="td-right" data-num="{{ r.contrib_decl }}">{{ r.contrib_decl | miles }}</td>
+          <td class="td-right td-fuerte" data-num="{{ r.total_a_pagar }}">{{ r.total_a_pagar | miles }}</td>
+          <td class="td-right importe-ok" data-num="{{ r.aporte_perc }}">{{ r.aporte_perc | miles }}</td>
+          <td class="td-right importe-ok" data-num="{{ r.contrib_perc }}">{{ r.contrib_perc | miles }}</td>
+          <td class="td-right importe-ok" data-num="{{ r.monotributo }}">{{ r.monotributo | miles }}</td>
+          <td class="td-right td-fuerte importe-ok" data-num="{{ r.total_pagado }}">{{ r.total_pagado | miles }}</td>
+          <td class="td-right{{ ' importe-pendiente td-fuerte' if r.diferencia > 0.5 }}" data-num="{{ r.diferencia }}">{{ r.diferencia | miles }}</td>
+          <td class="td-right{{ ' td-muted' if not r.cuota }}" data-num="{{ r.cuota }}">{{ r.cuota | miles }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="13" class="no-data">Sin aportes a nombre de este CUIL.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+{%- endmacro %}
+
+<div class="aportes-oseda" data-conteo="{{ s.conteo if s else '' }}">
+{% if error %}
+  {{ ui.aviso('No se pudieron consultar las DDJJ de OSEDA en contable (Railway): ' ~ error, 'warning') }}
+{% else %}
+  {% set tit = s.titular %}
+  {% if not s.es_titular %}
+    {{ ui.aviso(('Es familiar a cargo. ' ~ ('Primero sus aportes propios; después los del titular del grupo, CUIL '
+                 if s.propio else 'No aporta a su nombre: se muestran los del titular del grupo, CUIL ')
+                 ~ s.cuil_titular ~ '.'), 'info') }}
+  {% endif %}
+
+  {% if s.propio %}
+  {% set p = s.propio %}
+  {{ cifras(p.aportes.totales, 'Períodos propios') }}
+  {{ grilla(p.aportes, 'tbl-aportes-propio', 'Aportes propios — ' ~ p.apellido_nombres,
+            'CUIL ' ~ p.cuil ~ ' · ' ~ (p.aportes.totales.tipo or 'aportes propios'),
+            'Aportes OSEDA ' ~ p.cuil) }}
+  {% endif %}
+
+  {{ cifras(tit.totales) }}
+  {{ grilla(tit, 'tbl-aportes-titular', 'Titular — ' ~ (tit.totales.tipo or 'por período'),
+            'CUIL ' ~ tit.cuil ~ (' · declarado en OSEDA de ' ~ (tit.totales.ddjj_desde | periodo) ~ ' a '
+                                  ~ (tit.totales.ddjj_hasta | periodo) if tit.totales.ddjj_desde else ''),
+            'Aportes OSEDA ' ~ tit.cuil) }}
+
+  {% for o in s.otros %}
+  {{ grilla(o.aportes, 'tbl-aportes-' ~ loop.index,
+            (o.parentesco or 'Familiar') ~ ' — ' ~ o.apellido_nombres,
+            'CUIL ' ~ o.cuil ~ ' · ' ~ (o.aportes.totales.tipo or 'aportes propios')
+            ~ ' · ' ~ o.aportes.totales.periodos ~ ' períodos, pagado ' ~ (o.aportes.totales.total_pagado | miles)
+            ~ (' · BAJA' if not o.activo else ''),
+            'Aportes OSEDA ' ~ o.cuil) }}
+  {% endfor %}
+
+  {{ ui.aviso('Lo declarado en la DDJJ de OSEDA contra lo que ARCA transfirió, más el pago de monotributo (que no tiene DDJJ), '
+              ~ 'en los últimos 36 períodos. La diferencia sale de la situación del empleador en el período: si pagó toda su '
+              ~ 'nómina, el afiliado no debe nada aunque el prorrateo de ARCA le haya asignado de más o de menos (eso se ve en '
+              ~ 'aporte y contrib. percibidos); si el empleador debe, al afiliado le toca su parte. Hasta $ 1,50 es redondeo. '
+              ~ 'Cuota sindical: la liquidada al afiliado en ese período (el CUIT lleva a la cuota del empleador).', 'info') }}
+{% endif %}
+</div>
