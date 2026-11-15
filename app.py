@@ -61,6 +61,7 @@ from cc_proveedores import cc_prov_bp                           # noqa: E402
 from cc_empleadores import cc_emp_bp                            # noqa: E402
 from extractos import extractos_bp                              # noqa: E402
 from conciliacion import conc_bp                                # noqa: E402
+from buscador import buscador_bp                                # noqa: E402
 
 
 def _secret_key() -> str:
@@ -434,6 +435,8 @@ app.register_blueprint(cc_prov_bp)
 app.register_blueprint(cc_emp_bp)
 app.register_blueprint(extractos_bp)
 app.register_blueprint(conc_bp)
+# El buscador general de la barra superior (/api/busqueda).
+app.register_blueprint(buscador_bp)
 
 
 if __name__ == "__main__":

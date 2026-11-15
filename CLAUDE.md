@@ -93,6 +93,7 @@ gestion_sindicato/
   lector_pdf_ocr.py       texto del PDF, OCR de escaneos, cotejo PDF ↔ datos (de gestion_adm)
   arca_wscdc.py           constatación con ARCA (WSAA + WSCDC), certificado propio y opcional
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
+  buscador.py             buscador general de la barra superior (GET /api/busqueda): afiliados, empleadores, proveedores
   paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
   crear_usuario.py        alta de usuarios por consola (el primero no se puede crear desde la app)
   importar_aeda.py        empleadores y contactos desde AEDA; simula por defecto, --aplicar graba
@@ -216,6 +217,7 @@ repetiría en la URL lo que dice el dominio.
 /pagos/emision  /pagos/emitidos  /pagos/certificados (/<id>, /<id>/pdf)
 /pagos/config_aprobadores  /pagos/imputaciones   ABM
 /exportar/excel      POST JSON → .xlsx (lo llama el botón Exportar a Excel de las grillas)
+/api/busqueda        buscador general de la barra superior, ?q= (JSON)
 /estilos             guía visual del sistema
 ```
 
@@ -1546,6 +1548,14 @@ colores, `.btn-accion` definido dos veces): acá eso no se repite.
   `.campo-ayuda` (`.ok` / `.error`); casillas con `label.campo-check`; pie `.form-acciones`. Selects de
   catálogo con `ui.opciones(items, valor)`: si el valor guardado no está en el catálogo lo agrega en
   vez de dejar que el navegador elija la primera opción y lo cambie al guardar.
+- **Buscador general** (barra superior, `buscador.py`, pedido del 15/11/2026; el `/api/busqueda_rapida` de
+  gestion_adm): afiliados (titulares y familiares), empleadores y proveedores por CUIL o CUIT, DNI o nombre. Cada
+  palabra tiene que estar (en el nombre, o en el CUIL / documento / CUIT si es un número de 3 dígitos o más, con
+  puntos o guiones); lo que coincide entero va primero. Solo busca lo que el usuario puede abrir (`db.puede`):
+  afiliado → ficha del ABM o de la consulta; empleador → su ficha; proveedor → cuenta corriente o ficha. Busca a
+  los 300 ms de dejar de tipear; Enter abre el elegido o el único; flechas y Escape. Sin la consulta a ARCA ni
+  los aportes de un CUIL que no está en el padrón (de gestion_adm). En la guía, «Buscador general». Test:
+  `python tests/test_buscador.py`.
 - **Mensajes**: `ui.mensajes(errores)` (flash en verde; un flash que empieza con «!» sale como
   advertencia) y `ui.aviso(texto, tipo)`.
 - **Solapas**: `ui.solapas([(panel, texto, conteo)], inicial)` + `.abm-panel` + `abmSolapa()`.

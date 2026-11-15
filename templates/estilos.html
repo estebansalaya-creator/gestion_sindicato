@@ -15,7 +15,7 @@
   ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
-  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('importacion', 'Importación'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('importacion', 'Importación'),
   ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
@@ -516,6 +516,28 @@
       <div><div class="kpi-lbl">Por pagar</div><div class="kpi-val">7</div><div class="kpi-sub">con enlace: a.kpi-card</div></div></a>
   </div>
   {{ ej("<div class=\"kpi-row\">\n  <div class=\"kpi-card\"><div class=\"kpi-ico ok\">{{ ui.icono('ok', 20) }}</div>\n    <div><div class=\"kpi-lbl\">Titulares</div><div class=\"kpi-val\">3.068</div></div></div>\n</div>                     .kpi-ico  ok | warn | danger · <a class=\"kpi-card\" href=…> si lleva a una pantalla · .kpi-sub, la línea de abajo") }}
+</div>
+
+{# ── Buscador general ────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="buscador-general">
+  {{ ui.card_head('Buscador general', nota='El de la barra superior (buscador.py): la lista, agrupada por tipo, es la misma en todas las pantallas.') }}
+  <div class="card-body">
+    <div class="guia-buscador">
+      <div class="buscador-lista" role="listbox">
+        <div class="buscador-titulo">Afiliados · 2</div>
+        <a class="buscador-item activo" href="#"><div class="buscador-dato"><div class="buscador-nombre">GOMEZ MARIA LAURA</div>
+          <div class="buscador-sub">CUIL 27301234561 · DNI 30123456</div></div></a>
+        <a class="buscador-item" href="#"><div class="buscador-dato"><div class="buscador-nombre">PEREZ JUAN CARLOS</div>
+          <div class="buscador-sub">CUIL 20281234563 · DNI 28123456</div></div>
+          {{ ui.estado('Cónyuge', 'info') }}</a>
+        <div class="buscador-titulo">Empleadores · 1</div>
+        <a class="buscador-item" href="#"><div class="buscador-dato"><div class="buscador-nombre">GOMEZ HNOS SA (LA ESQUINA)</div>
+          <div class="buscador-sub">CUIT 30712345674</div></div>{{ ui.estado('Baja', 'danger') }}</a>
+      </div>
+    </div>
+  </div>
+  {{ ej(".buscador > input + .buscador-lista > .buscador-titulo | a.buscador-item(.activo) > .buscador-dato > .buscador-nombre + .buscador-sub
+                       · al costado ui.estado(): el parentesco de un familiar (info) y «Baja» (danger) · .buscando mientras consulta") }}
 </div>
 
 {# ── Importación ─────────────────────────────────────────────────────────── #}

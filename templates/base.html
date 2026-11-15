@@ -372,6 +372,24 @@ function mascaraImporte(inp, idOculto) {
 
   <div class="header-spacer"></div>
 
+  {% if session.get('sind_validausuario') %}
+  {# Buscador general (buscador.py, el de gestion_adm): afiliados, empleadores y
+     proveedores por CUIL o CUIT, DNI o nombre, solo los que el usuario puede
+     abrir. Lo maneja el script «Buscador general» de más abajo. #}
+  <div class="buscador" id="buscador" data-url="{{ url_for('buscador.buscar') }}">
+    <svg class="buscador-lupa" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <circle cx="11" cy="11" r="7"/><path d="m21 21-4-4"/>
+    </svg>
+    <svg class="buscador-giro" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+      <path d="M21 12a9 9 0 1 1-6.22-8.56"/>
+    </svg>
+    <input type="text" id="buscador-q" enterkeyhint="search" placeholder="Buscar CUIL, CUIT, DNI o nombre…" autocomplete="off"
+           role="combobox" aria-expanded="false" aria-controls="buscador-lista" aria-autocomplete="list"
+           aria-label="Buscar afiliados, empleadores y proveedores">
+    <div class="buscador-lista oculto" id="buscador-lista" role="listbox"></div>
+  </div>
+  {% endif %}
+
   {% if session.get('sind_usuario_nombre') %}
   {# Reloj de la barra.
      Se arma en el navegador y no en el servidor por dos motivos. Uno: una hora
@@ -453,6 +471,130 @@ function mascaraImporte(inp, idOculto) {
        navegadores estiran los timers de las pestañas ocultas. */
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) pintar();
+    });
+  })();
+</script>
+
+<script>
+  /* ── Buscador general ─────────────────────────────────────────────────
+     El cuadro de la barra (buscador.py). Busca solo, un rato después de
+     dejar de tipear; Enter busca ya o abre el elegido; flechas recorren la
+     lista; Escape la cierra. Cada resultado es un enlace: con Ctrl o el
+     botón del medio abre en otra pestaña. Lo que viene de la base se escribe
+     con textContent, nunca con innerHTML. */
+  (function () {
+    var caja = document.getElementById('buscador');
+    if (!caja) return;
+    var input = document.getElementById('buscador-q');
+    var lista = document.getElementById('buscador-lista');
+    var URL = caja.dataset.url;
+    var TITULOS = { afiliado: 'Afiliados', empleador: 'Empleadores', proveedor: 'Proveedores' };
+    var timer = null, pedido = 0, ultimo = null, sel = -1;
+
+    function items() { return lista.querySelectorAll('.buscador-item'); }
+    function abrir(si) {
+      lista.classList.toggle('oculto', !si);
+      input.setAttribute('aria-expanded', si ? 'true' : 'false');
+    }
+    function marcar(i) {
+      var its = items();
+      if (!its.length) return;
+      sel = Math.max(0, Math.min(i, its.length - 1));
+      its.forEach(function (a, k) { a.classList.toggle('activo', k === sel); a.setAttribute('aria-selected', k === sel); });
+      its[sel].scrollIntoView({ block: 'nearest' });
+    }
+    function el(tag, clase, texto) {
+      var e = document.createElement(tag);
+      if (clase) e.className = clase;
+      if (texto != null) e.textContent = texto;
+      return e;
+    }
+    function aviso(texto) {
+      lista.textContent = '';
+      lista.appendChild(el('div', 'buscador-vacio', texto));
+      sel = -1;
+      abrir(true);
+    }
+    function dibujar(res) {
+      lista.textContent = '';
+      sel = -1;
+      if (!res.length) return aviso('Sin resultados.');
+      var tipo = null;
+      res.forEach(function (r) {
+        if (r.tipo !== tipo) {
+          tipo = r.tipo;
+          var n = res.filter(function (x) { return x.tipo === tipo; }).length;
+          lista.appendChild(el('div', 'buscador-titulo', (TITULOS[tipo] || tipo) + ' · ' + n));
+        }
+        var a = el('a', 'buscador-item');
+        a.href = r.url;
+        a.setAttribute('role', 'option');
+        var dato = el('div', 'buscador-dato');
+        dato.appendChild(el('div', 'buscador-nombre', r.nombre));
+        var sub = [];
+        if (r.numero) sub.push((r.tipo === 'afiliado' ? 'CUIL ' : 'CUIT ') + r.numero);
+        if (r.documento) sub.push('DNI ' + r.documento);
+        dato.appendChild(el('div', 'buscador-sub', sub.join(' · ') || '—'));
+        a.appendChild(dato);
+        if (r.familiar) a.appendChild(el('span', 'estado estado-info', r.familiar));
+        if (!r.activo) a.appendChild(el('span', 'estado estado-danger', 'Baja'));
+        a.addEventListener('mousemove', function () {
+          var i = Array.prototype.indexOf.call(items(), a);
+          if (i !== sel) marcar(i);
+        });
+        lista.appendChild(a);
+      });
+      abrir(true);
+    }
+    function buscar() {
+      clearTimeout(timer);
+      var q = input.value.trim();
+      if (q.length < 2) { abrir(false); ultimo = null; return; }
+      if (q === ultimo && lista.childElementCount) { abrir(true); return; }
+      var n = ++pedido;
+      caja.classList.add('buscando');
+      fetch(URL + '?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+        .then(function (r) {
+          return r.json().catch(function () { throw new Error(r.status + ' ' + r.statusText); });
+        })
+        .then(function (d) {
+          if (n !== pedido) return;          // llegó tarde: ya se tipeó otra cosa
+          ultimo = q;
+          if (!d.ok) return aviso(d.error || 'No se pudo buscar.');
+          dibujar(d.resultados || []);
+        })
+        .catch(function (e) { if (n === pedido) aviso('No se pudo buscar: ' + e.message); })
+        .finally(function () { if (n === pedido) caja.classList.remove('buscando'); });
+    }
+
+    input.addEventListener('input', function () {
+      clearTimeout(timer);
+      if (input.value.trim().length < 2) { abrir(false); return; }
+      timer = setTimeout(buscar, 300);
+    });
+    input.addEventListener('focus', function () {
+      if (input.value.trim() === ultimo && lista.childElementCount) abrir(true);
+    });
+    input.addEventListener('keydown', function (e) {
+      var visible = !lista.classList.contains('oculto');
+      if (e.key === 'ArrowDown' && visible) { e.preventDefault(); marcar(sel + 1); }
+      else if (e.key === 'ArrowUp' && visible) { e.preventDefault(); marcar(sel - 1); }
+      else if (e.key === 'Enter') {
+        e.preventDefault();
+        var its = items();
+        // Con uno elegido, o con un único resultado, Enter lo abre.
+        if (visible && input.value.trim() === ultimo && (sel >= 0 || its.length === 1)) {
+          location.href = its[Math.max(sel, 0)].href;
+        } else {
+          buscar();
+        }
+      } else if (e.key === 'Escape') {
+        if (visible) { abrir(false); e.stopPropagation(); }
+        else input.blur();
+      }
+    });
+    document.addEventListener('click', function (e) {
+      if (!caja.contains(e.target)) abrir(false);
     });
   })();
 </script>
