@@ -744,6 +744,43 @@ def _impedimentos_movimiento(cur, id_mov, fecha) -> list[str]:
     return motivos
 
 
+def _impedimentos_lote(cur, filas: list[dict], admin: bool) -> None:
+    """Le pone a cada fila de la grilla sus `impedimentos`: las reglas de
+    `_impedimentos_ingreso` / `_impedimentos_movimiento` / anulaciones.py, con
+    una consulta por regla para todos los renglones."""
+    por_origen = {"pago": [], "ingreso": [], "movimiento": []}
+    for x in filas:
+        por_origen[x["origen"]].append(x)
+    for origen, lista in por_origen.items():
+        motivos = anulaciones.motivos_en_lote(cur, origen, lista)
+        for x in lista:
+            x["impedimentos"] = motivos.get(int(x["id"]), [])
+    for x in por_origen["pago"]:
+        if x["de_aeda"]:
+            x["impedimentos"].insert(0, IMPEDIMENTO_AEDA)
+        if not admin:
+            x["impedimentos"].insert(0, "anular un pago es de Administrador")
+    # Los valores de terceros: un cheque de la orden que ya salió de la cartera,
+    # o uno depositado por el movimiento que después cambió de estado.
+    extra = (("ingreso", """SELECT m.id_ingreso AS id, v.nro_cheque, v.estado FROM c_valores_de_terceros_movimientos m
+                               JOIN c_valores_de_terceros v ON v.id = m.id_valor
+                              WHERE m.id_ingreso IN ({marcas}) AND m.estado_anterior IS NULL
+                                AND v.estado NOT IN ('en_cartera', 'anulado')""",
+              "el valor {nro_cheque} ya no está en cartera ({estado})"),
+             ("movimiento", """SELECT DISTINCT vm.id_movimiento_cuentas AS id, v.nro_cheque, v.estado
+                                 FROM c_valores_de_terceros_movimientos vm
+                                 JOIN c_valores_de_terceros v ON v.id = vm.id_valor
+                                WHERE vm.id_movimiento_cuentas IN ({marcas}) AND vm.estado_nuevo = 'depositado'
+                                  AND v.estado <> 'depositado'""",
+              "el cheque {nro_cheque} ya está {estado}"))
+    for origen, sql, texto in extra:
+        lista = {int(x["id"]): x for x in por_origen[origen]}
+        for parte, marcas in anulaciones._tandas(list(lista)):
+            cur.execute(sql.format(marcas=marcas), parte)
+            for v in cur.fetchall():
+                lista[int(v["id"])]["impedimentos"].append(texto.format(**v))
+
+
 def _filtros_anulaciones(args) -> dict:
     """Los últimos 90 días por defecto: el mes en curso y los dos anteriores,
     que es donde cae lo que se corrige (en gestion_adm el día 1 del mes
@@ -832,17 +869,8 @@ def anulaciones_lista():
             filas = _anulables(cur, f)
             # Por qué NO se puede, calculado al dibujar: evita el intento a ciegas.
             # Se vuelve a validar al anular, porque entre una cosa y otra puede cambiar todo.
-            for x in filas:
-                if x["origen"] == "pago":
-                    x["impedimentos"] = anulaciones.motivos_para_no_anular(cur, "pago", x["id"], x["fecha"])
-                    if x["de_aeda"]:
-                        x["impedimentos"].insert(0, IMPEDIMENTO_AEDA)
-                    if not admin:
-                        x["impedimentos"].insert(0, "anular un pago es de Administrador")
-                elif x["origen"] == "ingreso":
-                    x["impedimentos"] = _impedimentos_ingreso(cur, x["id"], x["fecha"])
-                else:
-                    x["impedimentos"] = _impedimentos_movimiento(cur, x["id"], x["fecha"])
+            # En lote: una consulta por regla, no por renglón (ver anulaciones.motivos_en_lote).
+            _impedimentos_lote(cur, filas, admin)
     return render_template("tesoreria/anulaciones.html", filas=filas, f=f, tipos=TIPOS_ANULABLES,
                            anulables=sum(1 for x in filas if not x["impedimentos"]),
                            puede_ordenes=puede(_url("pagos.ordenes")))

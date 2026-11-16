@@ -32,7 +32,11 @@ def _fuera_de_periodo(cur, fecha) -> str | None:
         fecha = fecha.date()
     cur.execute("""SELECT estado FROM c_periodos WHERE %s BETWEEN fecha_inicio AND fecha_fin
                     ORDER BY id_periodo DESC LIMIT 1""", (fecha,))
-    per = cur.fetchone()
+    return _evaluar_periodo(cur.fetchone(), fecha)
+
+
+def _evaluar_periodo(per: dict | None, fecha: datetime.date) -> str | None:
+    """`per`: el período contable de `fecha` (el de id más alto que la contiene)."""
     if per and per.get("estado") in ("cerrado", "bloqueado"):
         return f"el período contable de esa fecha está {per['estado']}"
     if EXIGIR_MES_CORRIENTE:
@@ -137,3 +141,99 @@ def motivos_para_no_anular(cur, origen: str, id_comprobante: int, fecha=None) ->
     except Exception as e:                                  # noqa: BLE001 — ante la duda, no se anula
         motivos.append(f"no se pudo verificar la conciliación ({e})")
     return motivos
+
+
+# =============================================================================
+# En lote: la grilla de Anulaciones
+# =============================================================================
+# La grilla muestra cientos de comprobantes y dice de cada uno si se puede
+# anular. `motivos_para_no_anular` hace de 3 a 6 consultas por comprobante:
+# con 900 renglones eran miles de viajes a la base (desde el IIS, cada uno
+# hasta Railway) y la pantalla tardaba minutos (15/11/2026). Acá son las mismas
+# reglas con una consulta por regla para todos los renglones. Al anular se
+# vuelve a validar el comprobante con `motivos_para_no_anular`.
+
+_TANDA = 500
+
+
+def _tandas(ids: list[int]):
+    for i in range(0, len(ids), _TANDA):
+        parte = ids[i:i + _TANDA]
+        yield parte, ",".join(["%s"] * len(parte))
+
+
+def _ids(cur, sql: str, ids: list[int]) -> set[int]:
+    """Los ids de `ids` que cumplen `sql` (con «{marcas}» donde van los ids)."""
+    salida = set()
+    for parte, marcas in _tandas(ids):
+        cur.execute(sql.format(marcas=marcas), parte)
+        salida |= {int(f["id"]) for f in cur.fetchall() if f["id"] is not None}
+    return salida
+
+
+def motivos_en_lote(cur, origen: str, filas: list[dict]) -> dict[int, list[str]]:
+    """Lo mismo que `motivos_para_no_anular` para muchos comprobantes de un
+    mismo origen. `filas`: dicts con «id» y «fecha». Devuelve id → motivos."""
+    ids = [int(f["id"]) for f in filas]
+    salida: dict[int, list[str]] = {i: [] for i in ids}
+    if not ids:
+        return salida
+    cur.execute("SELECT fecha_inicio, fecha_fin, estado FROM c_periodos ORDER BY id_periodo DESC")
+    periodos = cur.fetchall()
+    for f in filas:
+        fecha = f.get("fecha")
+        if not fecha:
+            # Sin fecha en la grilla: la regla de siempre, que la busca en el libro.
+            salida[int(f["id"])] = motivos_para_no_anular(cur, origen, int(f["id"]))
+            continue
+        if isinstance(fecha, datetime.datetime):
+            fecha = fecha.date()
+        per = next((p for p in periodos if p["fecha_inicio"] <= fecha <= p["fecha_fin"]), None)
+        fuera = _evaluar_periodo(per, fecha)
+        if fuera:
+            salida[int(f["id"])].append(fuera)
+    con_fecha = [int(f["id"]) for f in filas if f.get("fecha")]
+    try:
+        if origen == "pago":
+            conciliados = _ids(cur, f"SELECT p.id FROM pago_pagos p WHERE p.id IN ({{marcas}}) "
+                                    f"AND {sql_pago_conciliado('p')}", con_fecha)
+            transferidos = _ids(cur, """SELECT DISTINCT d.id_pago AS id FROM pago_transferencias_lote_det d
+                                         JOIN pago_transferencias_lote l ON l.id = d.id_lote
+                                        WHERE d.id_pago IN ({marcas}) AND d.incluida = 1
+                                          AND l.fecha_anulacion IS NULL""", con_fecha)
+        elif origen == "ingreso":
+            conciliados = _ids(cur, f"""SELECT DISTINCT cc.id_ingreso AS id FROM conciliacion_comprobantes cc
+                                          JOIN conciliacion_items ci ON ci.id = cc.id_item
+                                          JOIN conciliacion_header ch ON ch.id = ci.id_conciliacion
+                                         WHERE cc.id_ingreso IN ({{marcas}}) AND {_CONCILIADO}""", con_fecha)
+            conciliados |= _ids(cur, _SQL_LIBRO.format(col="ingreso_ordenesId", marcas="{marcas}"), con_fecha)
+            transferidos = set()
+        else:
+            conciliados = _ids(cur, f"""SELECT DISTINCT mf.c_movimiento_entre_cuentasId AS id
+                                          FROM c_movimientos_de_fondos mf
+                                          JOIN c_debitos_creditos_bancarios dc ON dc.c_movimientos_de_fondosId = mf.id
+                                          JOIN conciliacion_items ci ON ci.id_debito_credito = dc.id
+                                          JOIN conciliacion_header ch ON ch.id = ci.id_conciliacion
+                                         WHERE mf.c_movimiento_entre_cuentasId IN ({{marcas}}) AND {_CONCILIADO}""",
+                               con_fecha)
+            conciliados |= _ids(cur, _SQL_LIBRO.format(col="c_movimiento_entre_cuentasId", marcas="{marcas}"),
+                                con_fecha)
+            transferidos = set()
+    except Exception as e:                                  # noqa: BLE001 — ante la duda, no se anula
+        for i in con_fecha:
+            salida[i].append(f"no se pudo verificar la conciliación ({e})")
+        return salida
+    for i in con_fecha:
+        if i in conciliados:
+            salida[i].append("está conciliado con el extracto bancario")
+        if i in transferidos:
+            salida[i].append("ya salió en un archivo de transferencias")
+    return salida
+
+
+#: `sql_conciliado_libro` para muchos: los comprobantes con algún instrumento
+#: vinculado en la conciliación.
+_SQL_LIBRO = """SELECT DISTINCT mfl.{col} AS id FROM c_movimientos_de_fondos mfl
+                  JOIN c_debitos_creditos_bancarios dcl ON dcl.c_movimientos_de_fondosId = mfl.id
+                  JOIN conciliacion_comprobantes ccl ON ccl.id_debito_credito = dcl.id
+                 WHERE mfl.{col} IN ({marcas})"""
