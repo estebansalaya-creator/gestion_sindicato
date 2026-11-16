@@ -1722,7 +1722,9 @@ colores, `.btn-accion` definido dos veces): acá eso no se repite.
 - **Resumen de una carga o ficha** (`.con-resumen` > contenido + `aside.card.resumen`): un bloque
   debajo del otro, el resumen a lo ancho con las cifras en fila y los botones a la derecha. Al
   costado le sacaba ancho a las grillas.
-- **Estados con texto**: `ui.estado(texto, tipo)`, `ui.activo(activo, fecha_baja)`, `ui.si_no(v)`.
+- **Estados con texto**: `ui.estado(texto, tipo)`, `ui.activo(activo, fecha_baja)`, `ui.si_no(v)`. Tipos: ok,
+  danger, warn, info, neutro, proceso; para un circuito con más estados, `turquesa`, `violeta` y `naranja` (la mesa
+  de entradas: cada estado con su color, `comprobantes_datos.ESTADOS_TIPO`).
   Una fila dada de baja lleva `.fila-baja`.
 - **Consultar ARCA** en una ficha: `ui.arca_consulta()` (botón y recuadro `#arca-resultado`) y, en
   base.html, `arcaPedir` / `arcaCompletar` / `arcaMostrar`: lo vacío se completa, lo distinto se lista con

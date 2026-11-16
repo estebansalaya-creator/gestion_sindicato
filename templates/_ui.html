@@ -244,7 +244,8 @@
 
 
 {# ── Estados ────────────────────────────────────────────────────────────────
-   tipo: ok | danger | warn | info | neutro | proceso. #}
+   tipo: ok | danger | warn | info | neutro | proceso, y para un circuito con más
+   estados: turquesa | violeta | naranja. #}
 {% macro estado(texto, tipo='neutro') -%}
 <span class="estado estado-{{ tipo }}">{{ texto }}</span>
 {%- endmacro %}

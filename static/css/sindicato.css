@@ -58,6 +58,11 @@
   --warn-bg:      #fff8e6;  --warn-borde:   #f3d48a;
   --info:         #1a7ac2;  --info-texto:   #14669f;
   --info-bg:      #eaf4fc;  --info-borde:   #b9d8f0;
+  /* Tonos de más, para un circuito con más pasos que los cinco de arriba
+     (la mesa de entradas): cada estado con su color. Mismo contraste. */
+  --turquesa-texto: #0f6b66; --turquesa-bg: #e6f6f4; --turquesa-borde: #9fd6d0;
+  --violeta-texto:  #5b3fa8; --violeta-bg:  #f2eefc; --violeta-borde:  #cbbdf0;
+  --naranja-texto:  #b93d0a; --naranja-bg:  #fff1e8; --naranja-borde:  #f8b98c;
 
   /* Archivos: el rojo de PDF y el verde de Excel, iguales en el botón de
      barra y en el de la fila, para que se reconozcan como la misma acción. */
@@ -734,6 +739,11 @@ fieldset.solo-lectura .solo-edicion { display: none; }
 .estado-warn    { background: var(--warn-bg);   border-color: var(--warn-borde);   color: var(--warn-texto); }
 .estado-info    { background: var(--info-bg);   border-color: var(--info-borde);   color: var(--info-texto); }
 .estado-neutro  { background: var(--surface-2); border-color: var(--border);       color: var(--text-muted); }
+/* Tonos de más: cuando un circuito tiene más estados que los de arriba y
+   cada uno lleva su color (mesa de entradas: aprobado, liquidado, rechazado). */
+.estado-turquesa { background: var(--turquesa-bg); border-color: var(--turquesa-borde); color: var(--turquesa-texto); }
+.estado-violeta  { background: var(--violeta-bg);  border-color: var(--violeta-borde);  color: var(--violeta-texto); }
+.estado-naranja  { background: var(--naranja-bg);  border-color: var(--naranja-borde);  color: var(--naranja-texto); }
 /* En proceso: el punto late. */
 .estado-proceso { background: var(--info-bg);   border-color: var(--info-borde);   color: var(--info-texto); }
 .estado-proceso::before { animation: latido 1s ease-in-out infinite; }

@@ -55,8 +55,12 @@ ESTADOS = [
     ("anulado",     "Anulado"),
 ]
 ESTADOS_LABEL = dict(ESTADOS)
-ESTADOS_TIPO = {"ingresado": "info", "en_revision": "warn", "aprobado": "ok",
-                "rechazado": "danger", "liquidado": "ok", "pagado": "ok", "reintegro": "ok",
+#: El color de cada estado (ui.estado). Uno distinto por estado de la mesa
+#: (pedido del 15/11/2026), en el orden del circuito: azul, ámbar, turquesa,
+#: violeta, verde; rechazado naranja, anulado rojo, archivado gris. El reintegro
+#: no pasa por la mesa.
+ESTADOS_TIPO = {"ingresado": "info", "en_revision": "warn", "aprobado": "turquesa",
+                "rechazado": "naranja", "liquidado": "violeta", "pagado": "ok", "reintegro": "ok",
                 "archivado": "neutro", "anulado": "danger"}
 #: Lo que todavía está en la mesa: lo que la bandeja muestra por defecto.
 ESTADOS_ABIERTOS = ("ingresado", "en_revision", "aprobado", "rechazado")

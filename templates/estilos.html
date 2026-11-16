@@ -257,11 +257,12 @@
     <div class="fila">
       {{ ui.estado('Activo', 'ok') }} {{ ui.estado('Baja', 'danger') }} {{ ui.estado('Pendiente', 'warn') }}
       {{ ui.estado('Informado', 'info') }} {{ ui.estado('Procesando', 'proceso') }} {{ ui.estado('Sin datos', 'neutro') }}
+      {{ ui.estado('Aprobado', 'turquesa') }} {{ ui.estado('Liquidado', 'violeta') }} {{ ui.estado('Rechazado', 'naranja') }}
       {{ ui.activo(0) }}
       <span>{{ ui.si_no(True) }} {{ ui.si_no(False) }}</span>
       <span class="chip">Titular</span>
     </div>
-    {{ ej("{{ ui.estado('Pendiente', 'warn') }}     ok | danger | warn | info | proceso | neutro\n{{ ui.activo(f.activo, f.fecha_baja) }}\n{{ ui.si_no(f.tiene_mail) }}\n<span class=\"chip\">Titular</span>") }}
+    {{ ej("{{ ui.estado('Pendiente', 'warn') }}     ok | danger | warn | info | proceso | neutro\n    turquesa | violeta | naranja: tonos de más, para un circuito con más estados (la mesa de entradas)\n{{ ui.activo(f.activo, f.fecha_baja) }}\n{{ ui.si_no(f.tiene_mail) }}\n<span class=\"chip\">Titular</span>") }}
     <div class="fila separado">
       <span class="saldo-acreedor mono">-1.250,00</span> <span class="saldo-deudor mono">300,00</span>
       <span class="saldo-cero">—</span> <span class="importe-danger mono">1.250,00</span>
