@@ -87,7 +87,8 @@ gestion_sindicato/
   numeracion.py           números AAMM-######## y certificados CRT-AAAA-NNNNNN (c_numeradores)
   movimientos_fondos.py   libro de fondos (c_movimientos_de_fondos), copia de gestion_adm
   anulaciones.py          reglas para anular: período cerrado, conciliado, ya transferido (y en lote, para la grilla)
-  recibos_emitidos.py     Tesorería › Recibos Emitidos: consulta de los recibos de cuota sindical y fiscalización
+  recibos_emitidos.py     Tesorería › Recibos Emitidos: consulta de los recibos de cuota sindical, fiscalización y afiliados
+  recibos_afiliado.py     el recibo al afiliado por la cuota social YMCA (talonario X 0003)
   pago_anulacion.py       anular un pago y anular una orden (deshace lo que grabó cada uno)
   plan_cuentas.py         reglas del plan (el código manda): las usan la pantalla y los importadores
   lector_comprobante.py   el parser del PDF de gestion_adm + Mis Comprobantes si no alcanza
@@ -470,6 +471,11 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   de `afiliados_tablas.py`: el código de las tablas SSS lo pone quien carga y no se cambia después;
   lo que se usa no se borra (se desactiva si la tabla tiene `activo`); el parentesco 0 y el DU no se
   borran.
+- **Cuota social YMCA** (solapa de la ficha, pedido del 15/11/2026; `recibos_afiliado.del_afiliado` y
+  `transferencias_sin_recibo`): los recibos al afiliado por la cuota social (con ver y PDF) y, arriba, sus
+  transferencias del extracto sin recibo (las que AEDA registró en su orden del mes, marcadas). El nombre de la solapa
+  es el concepto de Datos del Sindicato; `?solapa=cuota_social`. Lo de antes de noviembre de 2026 no tiene recibo por
+  afiliado: AEDA lo registró junto.
 - **Aportes OSEDA** (solapa de la ficha, pedido del 15/11/2026; `afiliado_aportes.py`, `_aportes_oseda.html`): la
   solapa Aportes del Análisis de afiliado de gestion_adm (`afiliado_analisis._aportes` + `padron._fila_diferencia`),
   **solo para quien tiene o tuvo DDJJ de OSEDA**: si nadie del grupo familiar figura en `f_ddjj_procesada`, no hay
@@ -744,9 +750,25 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
 - **El empleador** (`resolver_empleador`): el mismo CUIT del banco si está en Empleadores; si no, un CUIT
   relacionado (`fisca_cuit_relacionado`: el estudio, el dueño, otra empresa del grupo; las 15 de AEDA
   `afi_empresas_rel` vinieron con el script). **Nada más** (pedido del 15/11/2026): un afiliado no se relaciona con
-  su empleador; su transferencia es un pago por otro concepto. Un CUIL del padrón que no es pagador relacionado
-  queda como «Otro ingreso» (como «Afiliado», con su nombre), sin empleador ni períodos, después de emparejar con
-  lo de AEDA. Un pagador relacionado con varios empleadores: se elige al emitir. Al emitir con otro empleador se puede «Recordar» la
+  su empleador; su transferencia es un pago por otro concepto. Un pagador relacionado con varios empleadores: se
+  elige al emitir.
+- **El recibo al afiliado** (`recibos_afiliado.py`, `sql/recibos_afiliados_20261115.sql`; pedido y decisiones del
+  15/11/2026). Las transferencias de importe fijo de los afiliados son la **cuota social YMCA** ($ 25.000 por mes de
+  abril a agosto de 2026, $ 30.000 desde septiembre; el doble, dos meses). Relevado en AEDA: no van a `fis_cobros`
+  (cuota sindical, concepto 146) sino a órdenes de ingreso `adm_ordIngre` con el concepto **148 YMCA**, una por
+  cuenta y por mes («CUOTA SOCIAL … SEGÚN DETALLE ADJUNTO»); la de la Recaudadora de octubre ($ 1.105.000) es
+  exactamente la suma de esas transferencias. Vinieron con el motivo de ingreso YMCA. Acá un CUIL del padrón que no
+  es pagador relacionado lleva un **recibo al afiliado**: orden de ingreso de clase `afiliado` con
+  `cuil_afiliado`, talonario propio **X 0003** (Recibos Afiliados), un renglón por **mes desde el de la
+  acreditación** con el motivo de Datos del Sindicato (YMCA) y la descripción «<concepto> AAAA-MM · NOMBRE (CUIL …)»
+  (de ahí sale el concepto del recibo, `concepto_de`), sin CUIT de empleador (no toca la cuenta corriente). N cuotas
+  justas (`recibo_afiliado_cuota`) pagan N meses y salen **en lote**; las demás, de a uno (un renglón por todo,
+  editable). Libro de fondos y conciliación en el acto, como el de cuota sindical. Lo que **AEDA ya registró** (su
+  orden YMCA del mismo mes y cuenta con fecha igual o posterior, `cubierta`) figura «Ya tiene recibo» y no se emite.
+  De a uno se puede elegir emitirlo como cuota sindical de un empleador (`?para=empleador`). Sin el script, la
+  transferencia queda «Otro ingreso». **Ojo**: mientras AEDA siga cargando su orden YMCA del mes, si acá se emiten
+  recibos de ese mes y después el importador trae la orden agrupada, el ingreso queda dos veces: hay que decidir
+  desde qué mes se deja de importar YMCA de AEDA. Al emitir con otro empleador se puede «Recordar» la
   relación; también se cargan y se dan de baja abajo en la pantalla.
 - **El recibo** = orden de ingreso clase `cuota_sindical`, origen `extracto`, fecha de la acreditación, a la cuenta
   del extracto; un renglón por período (motivo CUOTA SINDICAL) con `ingreso_ordenes_detalle.cuit` (columna nueva,
@@ -1003,6 +1025,9 @@ RNOS y código de OS. Pantalla: Administración del Sistema → Datos del Sindic
   de gestion_adm (`retenciones.py`) se trae cambiando el nombre de la tabla.
 - **Talonarios de los recibos** (`talonario_recibo_cuota`, `talonario_recibo_fisca`), en el bloque «Cuota sindical»:
   distintos, habilitados y de la clasificación de recibos.
+- **Recibos a afiliados** (`sql/recibos_afiliados_20261115.sql`): `talonario_recibo_afiliado` (X 0003, propio),
+  `recibo_afiliado_motivo` (YMCA), `recibo_afiliado_concepto` («Cuota social YMCA», lo que dice el recibo) y
+  `recibo_afiliado_cuota` (30.000: N cuotas justas pagan N meses y van en lote).
 - **Pago de la cuota sindical y consultas** (`sql/institucion_cuota_pago_20261115.sql`): `cuota_cuenta_fondos` (FK a
   `c_cuentas_de_fondos`: se elige una cuenta bancaria habilitada de Tesorería; banco, número, CBU y alias se
   corrigen allá; la ya elegida vale aunque se deshabilite), `cuota_pago_indicaciones` (hasta 500, respeta los
@@ -1459,6 +1484,8 @@ entre Cuentas, Depósitos, Extracciones), 65 (Subdiario), 74 (Anulaciones).
   Antes eran de 3 a 6 consultas por renglón (900 renglones en 90 días, miles de viajes del IIS a Railway: tardaba
   minutos; 15/11/2026). Al anular se vuelve a validar el comprobante con `motivos_para_no_anular`. Probado contra
   las reglas de a uno, renglón por renglón, con una base MariaDB armada con cada caso.
+- **Recibos Emitidos** incluye los recibos a afiliados (clase `afiliado`, «Empleador o afiliado» con su nombre, se
+  buscan por CUIL; aplicado = importe, no tienen cuotas que aplicar).
 - **Recibos Emitidos** (`recibos_emitidos.py`, menú 76, `sql/menu_recibos_emitidos_20261115.sql`; pedido del
   15/11/2026, como en gestion_adm): las órdenes de ingreso con número de talonario —cuota sindical y fiscalización,
   las del sistema y las de AEDA (X 0091/X 0092)—, paginadas en el servidor, con su empleador (el CUIT de los

@@ -104,6 +104,10 @@ SECCIONES = [
      ("Contactos", "Teléfonos y correos de la persona."),
      ("Movimientos", "La auditoría: cada cambio, campo por campo, con el valor anterior, el nuevo, "
       "quién y cuándo."),
+     ("Cuota social YMCA", "Los recibos que se le hicieron por la cuota social que transfiere (el nombre "
+      "de la solapa es el concepto de Datos del Sindicato), con el PDF, y arriba sus transferencias del "
+      "extracto que todavía no tienen recibo. Lo de antes de noviembre de 2026 AEDA lo registró junto, por "
+      "mes, sin recibo por afiliado."),
    ]},
    {"tipo": "criterio", "html":
     "Los aportes son del titular: la ficha de un familiar muestra los del titular, y quien aporta a su "

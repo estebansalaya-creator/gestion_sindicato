@@ -24,10 +24,17 @@ EL EMPLEADOR (`resolver_empleador`)
   entonces se elige al emitir.
 - Nada más (pedido del 15/11/2026). Un afiliado NO se relaciona con su
   empleador: su transferencia es un pago por otro concepto, no la cuota
-  sindical de la empresa. Si el CUIT del banco es un CUIL del padrón y no es un
-  pagador relacionado, la acreditación queda como «Otro ingreso» («Afiliado»,
-  con su nombre), sin empleador ni períodos sugeridos. Si ese CUIL paga por una
-  empresa, se carga como CUIT relacionado y entonces sí se reconoce.
+  sindical de la empresa. Si ese CUIL paga por una empresa, se carga como CUIT
+  relacionado y entonces sí se reconoce.
+
+EL AFILIADO (recibos_afiliado.py, pedido del 15/11/2026)
+Si el CUIT del banco es un CUIL del padrón (y no un pagador relacionado), es la
+cuota social YMCA: lleva un RECIBO AL AFILIADO (talonario X 0003, el motivo y el
+concepto de Datos del Sindicato), un renglón por mes desde el de la
+acreditación. Una transferencia de N cuotas justas se emite en lote; las demás,
+de a uno (se puede emitir como cuota sindical de un empleador si no era la
+cuota social). Lo que AEDA ya registró en su orden YMCA del mes se ve «Ya tiene
+recibo». Sin sql/recibos_afiliados_20261115.sql, queda «Otro ingreso».
 
 TALONARIO (recibos_talonario.py, pedido del 14/11/2026)
 Cada recibo lleva su número del talonario de cuota sindical (X 0001, el que diga
@@ -86,6 +93,7 @@ import conciliacion
 import fisca_aplicaciones as fa
 import fisca_recibo_acta as FRA
 import movimientos_fondos as mf
+import recibos_afiliado as RA
 import recibos_talonario as RT
 from db import get_connection, puede, usuario_actual, validasesion
 from empleadores import cuit_valido
@@ -111,7 +119,7 @@ MAX_LOTE = 500
 COMO = {
     "mismo":       ("Mismo CUIT", "ok"),
     "relacionado": ("CUIT relacionado", "info"),
-    "afiliado":    ("Afiliado", "neutro"),
+    "afiliado":    ("Afiliado", "info"),
     "varios":      ("Varios posibles", "warn"),
     "sin":         ("Sin identificar", "danger"),
 }
@@ -138,7 +146,7 @@ class ErrorRecibo(ValueError):
 
 
 #: Lo que se muestra tal cual al emitir (validaciones de acá, del talonario y del cobro del acta).
-ERRORES = (ErrorRecibo, RT.ErrorTalonario, FRA.ErrorCobro)
+ERRORES = (ErrorRecibo, RT.ErrorTalonario, FRA.ErrorCobro, RA.ErrorReciboAfiliado)
 
 
 # =============================================================================
@@ -593,12 +601,24 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
 
     # Lo emitido desde un renglón gana sobre «conciliado»: el recibo concilia en el acto.
     emparejar(filas, emitidos_de(cur, [f["id"] for f in filas]), libro_ingresos(cur, id_cuenta, desde, hasta))
-    # La transferencia de un afiliado es por otro concepto (después de emparejar:
-    # si AEDA ya le hizo recibo, se sigue viendo como «Ya tiene recibo»).
-    for f in filas:
-        if f["estado"] == "pendiente" and f["emp"]["como"] == "afiliado":
+    # La transferencia de un afiliado es la cuota social (después de emparejar:
+    # si ya tiene recibo, se sigue viendo así). Lo que AEDA registró en su orden
+    # agrupada del mes (YMCA), «Ya tiene recibo»; sin el script, «Otro ingreso».
+    cfg = RA.config(cur)
+    afis = [f for f in filas if f["estado"] == "pendiente" and f["emp"]["como"] == "afiliado"]
+    aeda = RA.ordenes_aeda(cur, id_cuenta, cfg["motivo"], desde, hasta) if cfg and afis else []
+    for f in afis:
+        o = RA.cubierta(f["fecham"], aeda)
+        if not cfg:
             f["estado"] = "otro"
-            f["regla"] = "Transferencia de un afiliado: es un pago por otro concepto, no la cuota de una empresa."
+            f["regla"] = (f"Transferencia de un afiliado: es la cuota social, no la de una empresa. Para emitirle "
+                          f"el recibo falta correr {RA.SQL_ESQUEMA}.")
+        elif o:
+            f["estado"] = "ya_tiene"
+            f["recibo"] = {"id_orden": o["id_orden"], "nro_orden": o["nro_orden"], "nro_recibo": None,
+                           "clase": "varios", "fecha": o["fecha"], "importe": o["importe_total"]}
+            f["regla"] = (f"AEDA la registró en su orden {cfg['motivo_txt'] or ''} {o['nro_orden']} "
+                          f"del {o['fecha']:%d/%m/%Y}, junto con las demás del mes.")
 
     sal = saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
     # Un empleador con un acuerdo de pago: su pago puede ser una cuota del acuerdo. Se emite de a uno.
@@ -617,6 +637,12 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
                         saldos[p] -= imp
         f["con_acuerdo"] = f["emp"]["cuit"] in acuerdo
         f["en_lote"] = f["estado"] == "pendiente" and f["emp"]["como"] in COMO_SEGURO and not f["con_acuerdo"]
+        # El recibo al afiliado: los meses desde el de la acreditación; en lote, solo N cuotas justas.
+        if cfg and f["estado"] in EMITIBLES and f["emp"]["como"] == "afiliado":
+            f["sugerido"] = RA.periodos(f["importe"], f["fecham"], cfg["cuota"])
+            f["en_lote"] = (f["estado"] == "pendiente" and bool(cfg.get("talonario"))
+                            and bool(RA.meses_justos(f["importe"], cfg["cuota"])))
+            f["al_afiliado"] = True
     return filas, excedido
 
 
@@ -853,6 +879,13 @@ def emitir_uno(id_extracto):
             emp_todas, rel = empresas(cur), relaciones(cur)
             pagador = digitos(e["cuit"])
             sugerido = resolver_empleador(pagador, emp_todas, rel, afiliados_de(cur, {pagador} - set(emp_todas)))
+            # El recibo al afiliado (la cuota social), salvo que se elija un empleador.
+            cfg = RA.config(cur)
+            modo_afiliado = bool(cfg) and sugerido["como"] == "afiliado" and request.values.get("para") != "empleador" \
+                and not request.values.get("cuit")
+            afi = RA.afiliado(cur, pagador) if modo_afiliado else None
+            cubierta = (RA.cubierta(e["fecham"], RA.ordenes_aeda(cur, e["c_cuentas_de_fondos_id"], cfg["motivo"],
+                                                                  e["fecham"], e["fecham"])) if modo_afiliado else None)
             elegido = digitos(request.values.get("cuit")) or sugerido["cuit"] or ""
             razon = emp_todas.get(elegido)
             if elegido and not razon:
@@ -875,10 +908,38 @@ def emitir_uno(id_extracto):
 
     renglones = [(p, imp) for p, imp in distribuir(e["credito"], e["fecham"],
                                                      {p: v["saldo"] for p, v in saldos.items()})] if razon else []
+    if modo_afiliado:
+        renglones = RA.periodos(e["credito"], e["fecham"], cfg["cuota"])
     recordar = pagador != elegido and len(pagador) == 11 and elegido not in rel.get(pagador, ())
     obs = ""
     imput = dict(FRA.sugerir(est["cuotas"], e["credito"])) if est else {}
     accion = request.form.get("accion") if request.method == "POST" else None
+
+    if accion == "emitir_afiliado" and modo_afiliado:
+        obs = " ".join((request.form.get("observaciones") or "").split())[:250]
+        renglones, errores = RA.leer_renglones(request.form)
+        if cubierta:
+            errores.append(f"AEDA ya registró esta acreditación en su orden {cubierta['nro_orden']}.")
+        if not errores:
+            conn = get_connection()
+            try:
+                conn.begin()
+                with conn.cursor() as cur:
+                    r = RA.emitir(cur, _extracto_bloqueado(cur, id_extracto), pagador, renglones, _uid(), cfg,
+                                  obs or None, fecha_valida=_fecha_valida)
+                conn.commit()
+            except ERRORES as ex:
+                conn.rollback()
+                errores.append(str(ex))
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
+            if not errores:
+                flash(f"Recibo {r['nro']} emitido a {r['razon']} por {pesos(r['total'])} ({cfg['concepto']})."
+                      + (f" Quedó conciliado en la conciliación {periodo_txt(r['conciliado'])}." if r["conciliado"] else ""))
+                return redirect(url_for("fisca_rec.recibo", id_orden=r["id_orden"]))
 
     if accion in ("emitir", "emitir_fisca"):
         recordar = bool(request.form.get("recordar"))
@@ -935,6 +996,8 @@ def emitir_uno(id_extracto):
                            hoy=datetime.date.today().strftime("%Y-%m"),
                            acuerdos=acuerdos, acuerdo=acuerdo, est=est, imput=imput, capital=capital, interes=interes,
                            estados_cuota=ESTADOS_CUOTA,
+                           modo_afiliado=modo_afiliado, afi=afi, cfg=cfg, cubierta=cubierta,
+                           mes_max=RA.periodo_txt(RA.sumar_meses(e["fecham"].strftime("%Y%m"), RA.MAX_MESES - 1)),
                            volver=url_for("fisca_rec.lista", cuenta=e["c_cuentas_de_fondos_id"],
                                           desde=request.values.get("desde") or None,
                                           hasta=request.values.get("hasta") or None))
@@ -980,6 +1043,7 @@ def emitir_lote():
             # Desde el comienzo del rango de la pantalla, para que lo sugerido sea lo mismo que se vio.
             desde = min(r["d"], _fecha(request.form.get("desde")) or r["d"])
             filas, _ = acreditaciones(cur, id_cuenta, desde, r["h"])
+            cfg = RA.config(cur)
     elegidas = [f for f in filas if f["id"] in ids]
     uid = _uid()
     hechos, total, saltados, fallados = 0, Decimal("0"), 0, []
@@ -991,7 +1055,11 @@ def emitir_lote():
         try:
             conn.begin()
             with conn.cursor() as cur:
-                emitir(cur, f["id"], f["emp"]["cuit"], f["sugerido"], uid)
+                if f.get("al_afiliado"):
+                    RA.emitir(cur, _extracto_bloqueado(cur, f["id"]), digitos(f["cuit"]), f["sugerido"], uid, cfg,
+                              fecha_valida=_fecha_valida)
+                else:
+                    emitir(cur, f["id"], f["emp"]["cuit"], f["sugerido"], uid)
             conn.commit()
             hechos += 1
             total += f["importe"]
@@ -1007,7 +1075,8 @@ def emitir_lote():
     if hechos:
         flash(f"{hechos} recibo(s) emitidos por {pesos(total)}.")
     if saltados:
-        flash(f"!{saltados} no se emitieron: ya tienen recibo o el empleador no es seguro. Se emiten de a uno.")
+        flash(f"!{saltados} no se emitieron: ya tienen recibo, el empleador no es seguro o el pago del afiliado no es "
+              "un número justo de cuotas. Se emiten de a uno.")
     for t in fallados[:10]:
         flash("!" + t)
     if len(fallados) > 10:
@@ -1037,6 +1106,11 @@ def leer_recibo(cur, id_orden) -> dict | None:
     cuit = next((d["cuit"] for d in o["detalle"] if d["cuit"]), None)
     o["cuit"] = cuit
     o["empresa"] = None
+    o["afiliado"], o["concepto"] = None, None
+    if o["clase"] == "afiliado":
+        o["afiliado"] = RA.afiliado(cur, o.get("cuil_afiliado")) or {"cuil": o.get("cuil_afiliado"), "apellido_nombres": None}
+        o["cuit"] = cuit = None
+        o["concepto"] = RA.concepto_de(o["detalle"])
     if cuit:
         cur.execute("SELECT id, razon_social FROM p_empresas WHERE CUIT = %s", (int(cuit),))
         o["empresa"] = cur.fetchone()
@@ -1083,15 +1157,16 @@ def recibo(id_orden):
                            puede_emision=puede(URL), volver_emitidos=_volver_emitidos(),
                            puede_anular=puede("/tesoreria/anulaciones"),
                            puede_acuerdo=puede("/fiscalizacion/acuerdos"),
-                           puede_empleador=puede(url_for("empleadores.abm_empleadores")))
+                           puede_empleador=puede(url_for("empleadores.abm_empleadores")),
+                           puede_afiliado=puede(url_for("afiliados.abm_afiliados")))
 
 
 def recibo_pdf(o: dict):
     """El recibo en PDF, con el membrete de Datos del Sindicato (pagos_pdf)."""
     import pagos_pdf as P
-    from reportlab.lib.units import cm
-    from reportlab.platypus import Spacer, Table, TableStyle
     fisca = o["clase"] == "fiscalizacion"
+    if o["clase"] == "afiliado":
+        return _recibo_afiliado_pdf(o)
     doc = P._Doc("Recibo de fiscalización" if fisca else "Recibo", o["numero"],
                  "ANULADO" if o["estado"] == "anulado" else None)
     razon = escape((o["empresa"] or {}).get("razon_social") or "—")
@@ -1124,13 +1199,22 @@ def recibo_pdf(o: dict):
         doc.tabla("PERÍODOS", ["Período", "Concepto", "Importe"],
                   [[periodo_txt(d["periodo"]), "Cuota sindical", P._pesos(d["importe"])] for d in o["detalle"]],
                   [3.0, 10.0, 3.0], derecha=(2,), total=("Total", P._pesos(o["importe_total"])))
+    _pie_pdf(doc, o, o["cuit"])
+    return P.respuesta(doc.pdf(f"Recibo {o['numero']}"), f"Recibo {o['numero']}.pdf")
+
+
+def _pie_pdf(doc, o, cuit_receptor) -> None:
+    """La forma de pago y la firma, iguales en todos los recibos."""
+    import pagos_pdf as P
+    from reportlab.lib.units import cm
+    from reportlab.platypus import Spacer, Table, TableStyle
     e = o["extracto"] or {}
     if e:
         pago = [("Medio", "Acreditación bancaria"),
                 ("Cuenta", P._txt(o.get("cuenta")) + (f" N° {P._txt(o['numero_de_cuenta'])}" if o.get("numero_de_cuenta") else "")),
                 ("Acreditada el", P._fecha(e.get("fecham"))), ("Referencia", P._txt(e.get("ref_nro"))),
                 ("Concepto del banco", P._txt(e.get("concepto"))),
-                ("Pagó", P._cuit(e.get("cuit")) if digitos(e.get("cuit")) and digitos(e.get("cuit")) != o["cuit"] else "")]
+                ("Pagó", P._cuit(e.get("cuit")) if digitos(e.get("cuit")) and digitos(e.get("cuit")) != cuit_receptor else "")]
     else:
         pago = [("Medio", "Efectivo" if o.get("tipo_de_cuenta") == "C" else "Depósito o transferencia bancaria"),
                 ("Cuenta", P._txt(o.get("cuenta")) + (f" N° {P._txt(o['numero_de_cuenta'])}" if o.get("numero_de_cuenta") else "")),
@@ -1141,6 +1225,27 @@ def recibo_pdf(o: dict):
               hAlign="RIGHT")
     f.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, doc.MUTED)]))
     doc.story.append(f)
+
+
+def _recibo_afiliado_pdf(o: dict):
+    """El recibo al afiliado: la cuota social de los meses que paga."""
+    import pagos_pdf as P
+    a = o["afiliado"] or {}
+    nombre = escape(a.get("apellido_nombres") or "—")
+    cuil = a.get("cuil") or o.get("cuil_afiliado")
+    concepto = escape(o["concepto"] or "cuota social")
+    doc = P._Doc("Recibo", o["numero"], "ANULADO" if o["estado"] == "anulado" else None)
+    meses = ", ".join(periodo_txt(d["periodo"]) for d in o["detalle"] if d["periodo"])
+    doc.story.append(doc.P(
+        f"Recibimos de <b>{nombre}</b> (CUIL {P._cuit(cuil)}) la suma de <b>PESOS {escape(o['en_letras'])}</b> "
+        f"(<b>{P._pesos(o['importe_total'])}</b>) en concepto de {concepto[:1].lower() + concepto[1:]}"
+        f"{' de ' + meses if meses else ''}.", fontSize=10, leading=15, spaceAfter=10))
+    doc.datos("RECIBO", [("Número", escape(o["numero"])), ("Fecha", P._fecha(o["fecha"])), ("Afiliado", nombre),
+                         ("CUIL", P._cuit(cuil)), ("Importe", P._pesos(o["importe_total"]))])
+    doc.tabla("MESES", ["Mes", "Concepto", "Importe"],
+              [[periodo_txt(d["periodo"]), concepto, P._pesos(d["importe"])] for d in o["detalle"]],
+              [3.0, 10.0, 3.0], derecha=(2,), total=("Total", P._pesos(o["importe_total"])))
+    _pie_pdf(doc, o, digitos(cuil))
     return P.respuesta(doc.pdf(f"Recibo {o['numero']}"), f"Recibo {o['numero']}.pdf")
 
 

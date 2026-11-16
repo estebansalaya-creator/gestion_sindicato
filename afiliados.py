@@ -54,6 +54,7 @@ import contactos as _contactos
 import contable_oseda
 import documentacion as _doc
 import paginar
+import recibos_afiliado as _ra
 from exportar import xlsx
 from db import get_connection, puede, validasesion
 from empleadores import cuit_valido     # CUIL y CUIT comparten el dígito verificador
@@ -1292,6 +1293,7 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
             editando = bool(afiliado and afiliado.get("id_afiliado"))
             grupo, contactos_af, movimientos, empleador = [], [], [], None
             relaciones, documentos, tipos_doc_adj, doc_faltantes = [], [], [], []
+            cfg_social, recibos_social, transf_social = None, [], []
             areas = _contactos.areas(cur)
             ref = afiliado or {}
             if ref.get("cuil_titular"):
@@ -1315,6 +1317,12 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
                      LIMIT 300
                 """, (afiliado["id_afiliado"],))
                 movimientos = cur.fetchall()
+                # Solapa «Cuota social»: los recibos al afiliado (la cuota social YMCA que
+                # transfiere) y sus transferencias del extracto sin recibo (recibos_afiliado.py).
+                cfg_social = _ra.config(cur)
+                if cfg_social:
+                    recibos_social = _ra.del_afiliado(cur, afiliado.get("cuil"))
+                    transf_social = _ra.transferencias_sin_recibo(cur, afiliado.get("cuil"), cfg_social)
 
             # Una página del listado, con los filtros de la URL (ver «Listado»).
             filtros = _filtros_listado(request.args)
@@ -1332,6 +1340,8 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
         contactos=contactos_af, areas_contacto=areas, movimientos=movimientos,
         relaciones=relaciones, documentos=documentos, tipos_doc_adj=tipos_doc_adj,
         doc_faltantes=doc_faltantes, doc_extensiones=sorted(_doc.EXTENSIONES), doc_max_mb=_doc.MAX_MB,
+        cfg_social=cfg_social, recibos_social=recibos_social, transf_social=transf_social,
+        puede_emitir_recibo=puede("/fiscalizacion/recibos"), puede_ver_recibo=puede("/fiscalizacion/recibos") or puede("/tesoreria/recibos"),
         errores=errores, hoy=date.today(),
         motivo_baja=cat["etiquetas"]["id_motivo_baja"].get(str((afiliado or {}).get("id_motivo_baja"))),
         **cat,

@@ -41,7 +41,7 @@
    también desde la consulta. #}
 {% set inicial = 'datos' if (afiliado or errores or (not consulta and request.args.get('nuevo'))) else 'listado' %}
 {# ?solapa=… vuelve a la solapa desde la que se guardó (empleadores, documentación). #}
-{% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'aportes', 'documentacion', 'contactos', 'movimientos') %}
+{% if editando and request.args.get('solapa') in ('grupo', 'empleadores', 'aportes', 'documentacion', 'contactos', 'movimientos', 'cuota_social') %}
   {% set inicial = request.args.get('solapa') %}
 {% endif %}
 {# «Aportes OSEDA» no está en la lista: solo la tiene quien tiene o tuvo DDJJ de
@@ -57,6 +57,10 @@
                                           ('documentacion', 'Documentación', documentos|length),
                                           ('contactos', 'Contactos', contactos|length),
                                           ('movimientos', 'Movimientos', movimientos|length)] %}
+  {# Los recibos al afiliado por la cuota social YMCA (recibos_afiliado.py). #}
+  {% if cfg_social %}
+    {% set lista_solapas = lista_solapas + [('cuota_social', cfg_social.concepto, recibos_social|length)] %}
+  {% endif %}
 {% endif %}
 {{ ui.solapas(lista_solapas, inicial) }}
 
@@ -672,6 +676,74 @@
     {{ ui.paginacion() }}
   </div>
 </div>
+
+<!-- ── Cuota social (YMCA) ────────────────────────────────────────────────── -->
+{# Los recibos al afiliado por la cuota social que transfiere (recibos_afiliado.py)
+   y sus transferencias del extracto que todavía no tienen recibo. Se emiten en
+   Fiscalización → Emisión de Recibos. Lo de antes de noviembre de 2026 AEDA lo
+   registró junto, por mes: no tiene recibo por afiliado. #}
+{% if editando and cfg_social %}
+<div class="abm-panel {{ 'oculto' if inicial != 'cuota_social' }}" data-panel="cuota_social">
+  {% if transf_social %}
+  <div class="card">
+    {{ ui.card_head('Transferencias sin recibo', nota='Las que hizo desde su CUIL y todavía no tienen recibo.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" data-sin-orden>
+        <thead><tr><th class="col-acciones">Acciones</th><th>Fecha</th><th>Cuenta</th><th>Referencia</th>
+          <th class="th-right">Importe</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for t in transf_social %}
+          <tr>
+            <td><div class="acciones">
+              {% if not t.aeda and puede_emitir_recibo %}{{ ui.accion('agregar', href=url_for('fisca_rec.emitir_uno', id_extracto=t.id, desde=t.fecham.isoformat(), hasta=t.fecham.isoformat()), titulo='Emitir el recibo') }}{% endif %}
+            </div></td>
+            <td>{{ t.fecham.strftime('%d/%m/%Y') }}</td>
+            <td>{{ t.cuenta }}</td>
+            <td class="td-mono td-muted">{{ t.ref_nro or '—' }}</td>
+            <td class="td-right td-fuerte">{{ t.credito | miles }}</td>
+            <td>{% if t.aeda %}{{ ui.estado('Registrada por AEDA', 'info') }}<div class="chico td-muted">Orden {{ t.aeda.nro_orden }}, con las del mes</div>
+                {% else %}{{ ui.estado('Sin recibo', 'warn') }}{% if not t.justas %}<div class="chico td-muted">No es un número justo de cuotas: se revisa al emitir</div>{% endif %}{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+  <div class="card">
+    {{ ui.card_head('Recibos de ' ~ (cfg_social.concepto | lower), nota=(recibos_social | selectattr('estado', 'ne', 'anulado') | list | length) ~ ' recibo(s) vigente(s) · $ ' ~ ((recibos_social | selectattr('estado', 'ne', 'anulado') | sum(attribute='importe_total')) | miles)) }}
+    {{ ui.barra_filtros('Buscar por número, mes, cuenta…') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-cuota-social" data-exportar="Recibos de cuota social {{ a.get('cuil') }}">
+        <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Fecha</th><th>Recibo</th><th>Meses</th>
+          <th>Cuenta</th><th class="th-right">Importe</th><th>Estado</th></tr></thead>
+        <tbody>
+          {% for r in recibos_social %}
+          <tr class="{{ 'fila-baja' if r.estado == 'anulado' }}">
+            <td><div class="acciones">
+              {% if puede_ver_recibo %}
+              {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=r.id), titulo='Ver el recibo') }}
+              {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=r.id), titulo='Recibo en PDF', blank=True) }}
+              {% endif %}
+            </div></td>
+            <td data-valor="{{ r.fecha.isoformat() }}">{{ r.fecha.strftime('%d/%m/%Y') }}</td>
+            <td class="td-mono">{{ r.numero or r.nro_orden }}</td>
+            <td class="td-mono">{{ r.meses | join(', ') or '—' }}</td>
+            <td>{{ r.cuenta or '—' }}</td>
+            <td class="td-right td-fuerte" data-num="{{ r.importe_total }}">{{ r.importe_total | miles }}</td>
+            <td>{% if r.estado == 'anulado' %}{{ ui.estado('Anulado', 'danger') }}{% if r.motivo_anulacion %}<div class="chico td-motivo">{{ r.motivo_anulacion }}</div>{% endif %}
+                {% else %}{{ ui.estado('Vigente', 'ok') }}{% endif %}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="7" class="no-data">Todavía no tiene recibos de {{ cfg_social.concepto | lower }}. Lo que pagó antes de noviembre de 2026 AEDA lo registró junto con el resto del mes, sin recibo por afiliado.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+{% endif %}
 
 <!-- ── Baja ───────────────────────────────────────────────────────────────── -->
 {% if not consulta %}

@@ -5,7 +5,8 @@ Pedido del 15/11/2026: «en tesorería agregar recibos emitidos», como en
 gestion_adm (recibos_emitidos.py: la consulta de lo cobrado, al lado de la
 emisión). Acá son los recibos del sindicato: las órdenes de ingreso con número
 de talonario (recibos_talonario.py), de cuota sindical y de fiscalización, los
-emitidos en el sistema y los que vinieron de AEDA (talonarios X 0091 y X 0092).
+emitidos en el sistema y los que vinieron de AEDA (talonarios X 0091 y X 0092), y
+los recibos a afiliados por la cuota social YMCA (X 0003, recibos_afiliado.py).
 
 Se emiten en Fiscalización de Cuotas › Emisión de Recibos (fisca_recibos.py) y
 se anulan en Tesorería › Anulaciones. Esta pantalla mira para atrás: buscar un
@@ -21,7 +22,11 @@ acepta a quien tiene esta pantalla aunque no tenga la de emisión.
 APLICADO: lo que el recibo ya canceló de deuda. Uno de cuota sindical, lo
 aplicado a las cuotas liquidadas (`fisca_aplicacion`, por sus renglones); uno
 de fiscalización, lo imputado a las cuotas de su acuerdo de pago
-(`fisca_acuerdo_imputacion`). Lo que falta queda a favor del empleador.
+(`fisca_acuerdo_imputacion`). Lo que falta queda a favor del empleador. Uno al
+afiliado no se aplica a nada: cuenta como aplicado del todo.
+
+Sin sql/recibos_afiliados_20261115.sql no hay `cuil_afiliado`: la consulta usa
+NULL en su lugar (`_sql_from`).
 """
 
 from __future__ import annotations
@@ -39,7 +44,7 @@ from exportar import xlsx
 rec_emi_bp = Blueprint("rec_emi", __name__, url_prefix="/tesoreria")
 
 URL = "/tesoreria/recibos"
-CLASES = {"cuota_sindical": "Cuota sindical", "fiscalizacion": "Fiscalización"}
+CLASES = {"cuota_sindical": "Cuota sindical", "fiscalizacion": "Fiscalización", "afiliado": "Afiliado (cuota social)"}
 ESTADOS = {"vigente": "Vigentes", "anulado": "Anulados", "todos": "Todos"}
 APLICACION = {"sin_aplicar": "Sin aplicar", "con_saldo": "Con saldo sin aplicar", "aplicado": "Aplicados del todo"}
 
@@ -49,6 +54,7 @@ APLICACION = {"sin_aplicar": "Sin aplicar", "con_saldo": "Con saldo sin aplicar"
 SQL_FROM = """
       FROM ingreso_ordenes o
       JOIN c_talonario t ON t.id = o.id_talonario
+      LEFT JOIN p_afiliados af ON af.cuil = {cuil_afiliado} AND af.cuil IS NOT NULL
       LEFT JOIN (SELECT id_orden, MIN(cuit) AS cuit, MIN(periodo) AS p_desde, MAX(periodo) AS p_hasta,
                         COUNT(DISTINCT periodo) AS n_per
                    FROM ingreso_ordenes_detalle GROUP BY id_orden) d ON d.id_orden = o.id
@@ -61,8 +67,19 @@ SQL_FROM = """
       LEFT JOIN (SELECT id_orden, SUM(importe) AS aplicado
                    FROM fisca_acuerdo_imputacion GROUP BY id_orden) ai ON ai.id_orden = o.id
 """
-SQL_APLICADO = "(CASE WHEN o.clase = 'fiscalizacion' THEN COALESCE(ai.aplicado, 0) ELSE COALESCE(ap.aplicado, 0) END)"
-SQL_RAZON = "COALESCE(e.razon_social, ac.razon_social)"
+SQL_APLICADO = ("(CASE WHEN o.clase = 'fiscalizacion' THEN COALESCE(ai.aplicado, 0) "
+                "WHEN o.clase = 'afiliado' THEN o.importe_total ELSE COALESCE(ap.aplicado, 0) END)")
+SQL_RAZON = "COALESCE(e.razon_social, ac.razon_social, af.apellido_nombres)"
+_TIENE_CUIL: dict = {}
+
+
+def _sql_from(cur) -> str:
+    """SQL_FROM con el CUIL del afiliado, o NULL si falta el script."""
+    if not _TIENE_CUIL.get("v"):         # una vez que está, no se vuelve a preguntar
+        cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE()
+                         AND table_name = 'ingreso_ordenes' AND column_name = 'cuil_afiliado'""")
+        _TIENE_CUIL["v"] = bool(cur.fetchone()["n"])
+    return SQL_FROM.replace("{cuil_afiliado}", "o.cuil_afiliado" if _TIENE_CUIL["v"] else "NULL")
 
 # Columna de la grilla → ORDER BY. ?orden= se busca acá, nunca va al SQL.
 ORDEN = {
@@ -156,7 +173,7 @@ def where(f: dict) -> tuple[str, list]:
         partes = [f"{SQL_RAZON} LIKE %s", "e.nombre_fantasia LIKE %s", "o.nro_orden LIKE %s"]
         params += [like, like, like]
         if len(cuit) >= 4:
-            partes.append("d.cuit LIKE %s"); params.append(f"%{cuit}%")
+            partes.append("(d.cuit LIKE %s OR af.cuil LIKE %s)"); params += [f"%{cuit}%", f"%{cuit}%"]
         cond.append("(" + " OR ".join(partes) + ")")
     return "WHERE " + " AND ".join(cond), params
 
@@ -164,11 +181,12 @@ def where(f: dict) -> tuple[str, list]:
 def consultar(cur, f: dict, paginado: bool = True) -> tuple[list, dict]:
     """(recibos, totales) con los filtros de `f`. Sin `paginado`, todos (la planilla)."""
     w, params = where(f)
+    desde_sql = _sql_from(cur)
     cur.execute(f"""
         SELECT COUNT(*) AS n, COALESCE(SUM(o.importe_total), 0) AS importe,
                COALESCE(SUM({SQL_APLICADO}), 0) AS aplicado,
                COALESCE(SUM(o.importe_total - {SQL_APLICADO} > 0.005), 0) AS con_saldo
-        {SQL_FROM} {w}""", params)
+        {desde_sql} {w}""", params)
     tot = cur.fetchone()
     tot["sin_aplicar"] = (tot["importe"] or 0) - (tot["aplicado"] or 0)
 
@@ -182,10 +200,10 @@ def consultar(cur, f: dict, paginado: bool = True) -> tuple[list, dict]:
         SELECT o.id, o.fecha, o.clase, o.estado, o.importe_total, o.nro_orden, o.origen, o.observaciones,
                o.fecha_anulacion, o.motivo_anulacion,
                CONCAT(t.letra, ' ', LPAD(t.punto_de_venta, 4, '0'), '-', LPAD(o.nro_recibo, 8, '0')) AS numero,
-               t.nombre AS talonario, d.cuit, d.p_desde, d.p_hasta, d.n_per,
+               t.nombre AS talonario, COALESCE(d.cuit, af.cuil) AS cuit, d.p_desde, d.p_hasta, d.n_per,
                {SQL_RAZON} AS razon_social, e.id AS id_empresa, cf.nombre AS cuenta,
                {SQL_APLICADO} AS aplicado, ac.nro_acta
-        {SQL_FROM} {w}
+        {desde_sql} {w}
         ORDER BY {col} {sentido}, o.id {sentido}
         {limite}""", params)
     return cur.fetchall(), tot

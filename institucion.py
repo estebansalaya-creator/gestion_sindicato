@@ -172,8 +172,11 @@ def _catalogos(actual: int | None = None) -> dict:
             import recibos_talonario as RT
             talonarios = RT.talonarios(cur) if RT.hay_esquema(cur) else []
             cuentas = cuentas_cuota(cur, actual)
+            cur.execute("SELECT id, descripcion FROM c_motivos_de_ingreso WHERE activo = 1 ORDER BY descripcion")
+            motivos = cur.fetchall()
     return {"condiciones_iva": condiciones, "tasas_iva": tasas, "provincias": provincias,
-            "regimenes_iibb": REGIMENES_IIBB, "talonarios_recibo": talonarios, "cuentas_cuota": cuentas}
+            "regimenes_iibb": REGIMENES_IIBB, "talonarios_recibo": talonarios, "cuentas_cuota": cuentas,
+            "motivos_ingreso": motivos}
 
 
 def _leer_form(form, actual_cuenta: int | None = None) -> tuple[dict, list[str]]:
@@ -260,7 +263,48 @@ def _leer_form(form, actual_cuenta: int | None = None) -> tuple[dict, list[str]]
     # Pago de la cuota y consultas (sql/institucion_cuota_pago_20261115.sql).
     if "cuota_cuenta_fondos" in form:
         errores += _leer_pago_cuota(form, v, actual_cuenta)
+    # Recibos a afiliados: la cuota social YMCA (sql/recibos_afiliados_20261115.sql, recibos_afiliado.py).
+    if "talonario_recibo_afiliado" in form:
+        errores += _leer_recibos_afiliado(form, v)
     return v, errores
+
+
+def _leer_recibos_afiliado(form, v: dict) -> list[str]:
+    """Talonario, motivo, concepto y cuota por mes de los recibos a afiliados."""
+    import recibos_talonario as RT
+    errores = []
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            talonarios = {t["id"]: t for t in RT.talonarios(cur)}
+            cur.execute("SELECT id FROM c_motivos_de_ingreso WHERE activo = 1")
+            motivos = {f["id"] for f in cur.fetchall()}
+    texto = (form.get("talonario_recibo_afiliado") or "").strip()
+    v["talonario_recibo_afiliado"] = int(texto) if texto.isdigit() else None
+    t = talonarios.get(v["talonario_recibo_afiliado"])
+    if v["talonario_recibo_afiliado"] is None:
+        errores.append("Elegí el talonario de los recibos a afiliados.")
+    elif not t:
+        errores.append("El talonario de los recibos a afiliados no es un talonario de recibos.")
+    elif not t["habilitado"]:
+        errores.append("El talonario de los recibos a afiliados está deshabilitado.")
+    elif v["talonario_recibo_afiliado"] in (v.get("talonario_recibo_cuota"), v.get("talonario_recibo_fisca")):
+        errores.append("Los recibos a afiliados van en un talonario propio, no en el de cuota sindical ni en el de fiscalización.")
+    texto = (form.get("recibo_afiliado_motivo") or "").strip()
+    v["recibo_afiliado_motivo"] = int(texto) if texto.isdigit() else None
+    if v["recibo_afiliado_motivo"] not in motivos:
+        errores.append("Elegí el motivo de ingreso de los recibos a afiliados.")
+    concepto = re.sub(r"\s+", " ", form.get("recibo_afiliado_concepto") or "").strip()
+    if len(concepto) > 100:
+        errores.append("El concepto de los recibos a afiliados va hasta 100 caracteres.")
+    v["recibo_afiliado_concepto"] = concepto or None
+    from pagos_datos import leer_importe
+    texto = (form.get("recibo_afiliado_cuota") or "").strip()
+    valor = leer_importe(texto) if texto else None
+    cuota = Decimal(str(valor)) if valor is not None else None
+    if texto and (cuota is None or cuota <= 0):
+        errores.append("La cuota por mes de los recibos a afiliados tiene que ser un importe mayor que cero.")
+    v["recibo_afiliado_cuota"] = cuota
+    return errores
 
 
 def _leer_pago_cuota(form, v: dict, actual: int | None) -> list[str]:

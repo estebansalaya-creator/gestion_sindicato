@@ -217,9 +217,12 @@ SECCIONES = [
      ("Mismo CUIT", "Quien transfirió es el empleador."),
      ("CUIT relacionado", "Pagó otro CUIT que se sabe que paga por ese empleador (el estudio contable, "
       "otra empresa del grupo). Se cargan abajo, en «CUIT que pagan por un empleador»."),
-     ("Afiliado", "Transfirió una persona del padrón: es un pago por <b>otro concepto</b>, no la cuota "
-      "de una empresa. Queda como «Otro ingreso», sin empleador. Si esa persona paga por una empresa, se "
-      "carga como CUIT relacionado."),
+     ("Afiliado", "Transfirió una persona del padrón: es la <b>cuota social YMCA</b>, no la cuota de una "
+      "empresa. Lleva un <b>recibo al afiliado</b> (talonario X 0003), un renglón por mes desde el de la "
+      "acreditación: si es justo N cuotas paga N meses y se puede emitir en lote; si no, de a uno. Lo que AEDA "
+      "ya registró en su orden YMCA del mes figura «Ya tiene recibo». Si esa persona paga por una empresa, "
+      "se carga como CUIT relacionado; y al emitir de a uno se puede emitir como cuota sindical de un "
+      "empleador."),
      ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir."),
    ]},
    {"tipo": "campos", "items": [

@@ -9,6 +9,9 @@
   acreditación, o el período cuyo saldo es exactamente el importe.
   Si el empleador tiene un acuerdo de pago (?acuerdo=), se puede emitir como
   recibo de fiscalización: al acta, a las cuotas del acuerdo (fisca_recibo_acta.py).
+  Si pagó un afiliado (`modo_afiliado`), el recibo es al afiliado por la cuota
+  social (recibos_afiliado.py): los meses desde el de la acreditación. Con
+  ?para=empleador se emite como cuota sindical de un empleador.
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -17,7 +20,7 @@
 {% block content %}
 <div class="page-header">
   <div>
-    <h1>Emitir recibo de {{ 'fiscalización' if acuerdo else 'cuota sindical' }}</h1>
+    <h1>{% if modo_afiliado %}Emitir recibo al afiliado{% else %}Emitir recibo de {{ 'fiscalización' if acuerdo else 'cuota sindical' }}{% endif %}</h1>
     <p>La acreditación del {{ e.fecham.strftime('%d/%m/%Y') }} en {{ e.cuenta }} por $ {{ e.credito | miles }}.</p>
   </div>
   <div class="page-header-acciones">{{ ui.boton('Volver', 'secondary', href=volver, icono_='volver') }}</div>
@@ -45,6 +48,70 @@
   </div>
 </div>
 
+{% if modo_afiliado %}
+{% if cubierta %}{{ ui.aviso('AEDA ya registró esta acreditación en su orden ' ~ cubierta.nro_orden ~ ' del ' ~ cubierta.fecha.strftime('%d/%m/%Y') ~ ', junto con las demás del mes: no se le emite otro recibo.', 'danger') }}{% endif %}
+<div class="card">
+  {{ ui.card_head('Afiliado', nota=cfg.concepto ~ ': el recibo es a nombre del afiliado que transfirió.') }}
+  <div class="card-body">
+    <div class="datos">
+      {{ dato('Apellido y nombres', afi.apellido_nombres if afi else None) }}
+      {{ dato('CUIL', pagador, mono=True) }}
+      {{ dato('En el padrón', ('Activo' if afi.activo else 'De baja') if afi else 'No está') }}
+      {{ dato('Cuota por mes', ('$ ' ~ (cfg.cuota | miles)) if cfg.cuota else 'Sin definir en Datos del Sindicato') }}
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('No es la cuota social: emitir como cuota sindical de un empleador', 'secondary', chico=True,
+                  href=url_for('fisca_rec.emitir_uno', id_extracto=e.id, para='empleador', desde=request.values.get('desde'), hasta=request.values.get('hasta'))) }}
+    </div>
+  </div>
+</div>
+
+<form method="post" data-proceso="Emitiendo el recibo…">
+  <input type="hidden" name="accion" value="emitir_afiliado">
+  <input type="hidden" name="desde" value="{{ request.values.get('desde', '') }}">
+  <input type="hidden" name="hasta" value="{{ request.values.get('hasta', '') }}">
+  <div class="card">
+    {{ ui.card_head('Meses que paga', nota='Desde el de la acreditación. Tienen que sumar el importe de la acreditación.') }}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-renglones" data-sin-orden>
+        <thead><tr><th class="col-acciones" data-no-sort></th><th>Mes</th><th class="th-right">Importe</th></tr></thead>
+        <tbody id="renglones">
+          {% for p, imp in renglones %}
+          <tr>
+            <td><div class="acciones">{{ ui.accion('borrar', onclick='quitarRenglon(this)') }}</div></td>
+            <td><input type="month" name="r_periodo" value="{{ (p | periodo) if p else '' }}" max="{{ mes_max }}" required></td>
+            <td class="td-right"><input type="text" inputmode="decimal" class="importe" name="r_importe"
+                       value="{{ imp | miles }}" oninput="recalcular()" required></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card-body">
+      {{ ui.boton('Agregar mes', 'secondary', chico=True, icono_='agregar', onclick='agregarRenglon()') }}
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Emitir') }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:12"><label for="obs">Observaciones</label>
+          <input type="text" id="obs" name="observaciones" maxlength="250" value="{{ obs }}"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Acreditación</div><div class="res-card-val mono">$ {{ e.credito | miles }}</div></div>
+      <div><div class="res-card-lbl">Meses</div><div class="res-card-val mono" id="res-suma">$ 0,00</div></div>
+      <div><div class="res-card-lbl">Diferencia</div><div class="res-card-val mono" id="res-dif">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir el recibo al afiliado', 'primary', submit=True, icono_='dinero', id='btn-emitir') }}
+  </div>
+</form>
+{% else %}
 <div class="card">
   {{ ui.card_head('Empleador', nota=('Reconocido: ' ~ como[sugerido.como][0]) if sugerido.cuit else como[sugerido.como][0]) }}
   <form method="get" class="card-body">
@@ -231,10 +298,12 @@
 </form>
 {% endif %}
 
+{% endif %}{# modo_afiliado #}
+
 <template id="tpl-renglon">
   <tr>
     <td><div class="acciones">{{ ui.accion('borrar', onclick='quitarRenglon(this)') }}</div></td>
-    <td><input type="month" name="r_periodo" max="{{ hoy }}" required></td>
+    <td><input type="month" name="r_periodo" max="{{ mes_max if modo_afiliado else hoy }}" required></td>
     <td class="td-right"><input type="text" inputmode="decimal" class="importe" name="r_importe" oninput="recalcular()" required></td>
   </tr>
 </template>
@@ -254,7 +323,7 @@ function recalcular() {
   var d = document.getElementById('res-dif');
   d.textContent = pesos(dif);
   d.classList.toggle('danger', Math.abs(dif) >= 0.01);
-  document.getElementById('btn-emitir').disabled = Math.abs(dif) >= 0.01 {{ '|| true' if conciliado }};
+  document.getElementById('btn-emitir').disabled = Math.abs(dif) >= 0.01 {{ '|| true' if conciliado or cubierta }};
 }
 function agregarRenglon() {
   var tb = document.getElementById('renglones');

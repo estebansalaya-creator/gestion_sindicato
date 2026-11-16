@@ -16,7 +16,7 @@
 <div class="page-header">
   <div>
     <h1>Recibos emitidos</h1>
-    <p>Los recibos de cuota sindical y de fiscalización: los emitidos en el sistema y los que vinieron de AEDA.</p>
+    <p>Los recibos de cuota sindical y de fiscalización —los emitidos en el sistema y los que vinieron de AEDA— y los recibos a afiliados por la cuota social.</p>
   </div>
   <div class="page-header-acciones">
     {% if puede_emision %}{{ ui.boton('Emisión de recibos', 'secondary', href=url_for('fisca_rec.lista'), icono_='agregar') }}{% endif %}
@@ -45,7 +45,7 @@
     <input type="hidden" name="dir" value="{{ args_export.dir or '' }}">
     <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
       <input type="search" name="q" value="{{ f.q }}" class="filter-input"
-             placeholder="Empleador, CUIT u orden de ingreso…"></label>
+             placeholder="Empleador, afiliado, CUIT/CUIL u orden de ingreso…"></label>
     {% call ui.filtro('Nº de recibo exacto') %}<input type="text" name="nro" value="{{ f.nro }}" class="filtro-srv mono"
            placeholder="0091-00000123" size="14">{% endcall %}
     {% call ui.filtro('Desde') %}<input type="date" name="desde" value="{{ f.desde }}" class="filtro-srv">{% endcall %}
@@ -100,7 +100,7 @@
           {{ th('fecha', 'Fecha', 'th-center') }}
           {{ th('recibo', 'Recibo') }}
           <th data-no-sort>Clase</th>
-          {{ th('empleador', 'Empleador') }}
+          {{ th('empleador', 'Empleador o afiliado') }}
           <th data-no-sort>Períodos</th>
           <th data-no-sort>Cuenta</th>
           {{ th('importe', 'Importe', 'th-right') }}

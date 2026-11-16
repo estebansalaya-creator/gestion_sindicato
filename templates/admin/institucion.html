@@ -259,6 +259,41 @@
   {{ ui.aviso('Falta correr sql/institucion_cuota_pago_20261115.sql para configurar la cuenta donde se paga la cuota y el correo para consultas.', 'warning') }}
   {% endif %}
 
+  {% if 'recibo_afiliado_cuota' in d %}
+  {#- Recibos a afiliados (recibos_afiliado.py): la cuota social YMCA que los
+      afiliados transfieren. Se emiten en Emisión de Recibos. #}
+  <div class="bloque" id="recibos-afiliados">
+    <div class="bloque-titulo">Recibos a afiliados (cuota social)</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;">
+        <label for="talonario_recibo_afiliado">Talonario <span class="req">*</span></label>
+        <select name="talonario_recibo_afiliado" id="talonario_recibo_afiliado" required>
+          <option value="">Elegí…</option>
+          {% for t in talonarios_recibo %}<option value="{{ t.id }}" {{ 'selected' if t.id == d.get('talonario_recibo_afiliado') }}>{{ t.texto }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="campo" style="--span:3;">
+        <label for="recibo_afiliado_motivo">Motivo de ingreso <span class="req">*</span></label>
+        <select name="recibo_afiliado_motivo" id="recibo_afiliado_motivo" required>
+          <option value="">Elegí…</option>
+          {% for m in motivos_ingreso %}<option value="{{ m.id }}" {{ 'selected' if m.id == d.get('recibo_afiliado_motivo') }}>{{ m.descripcion }}</option>{% endfor %}
+        </select>
+      </div>
+      {{ texto('recibo_afiliado_concepto', 'Concepto del recibo', 3, 100, placeholder='Cuota social YMCA') }}
+      <div class="campo" style="--span:2;">
+        <label for="recibo_afiliado_cuota">Cuota por mes</label>
+        <input type="text" inputmode="decimal" class="importe" name="recibo_afiliado_cuota" id="recibo_afiliado_cuota"
+               value="{{ ('{:,.2f}'.format(d.get('recibo_afiliado_cuota')|float)).replace(',', 'X').replace('.', ',').replace('X', '.') if d.get('recibo_afiliado_cuota') is not none else '' }}">
+      </div>
+    </div>
+    <p class="campo-ayuda">Las transferencias de los afiliados (la cuota social YMCA) llevan un recibo al afiliado, en
+       Fiscalización → Emisión de Recibos. Una que es justo N cuotas paga N meses desde el de la acreditación y se puede
+       emitir en lote; las demás, de a uno. El concepto es lo que dice el recibo.</p>
+  </div>
+  {% elif d %}
+  {{ ui.aviso('Falta correr sql/recibos_afiliados_20261115.sql para emitir recibos a afiliados por la cuota social.', 'warning') }}
+  {% endif %}
+
   <div class="bloque">
     <div class="bloque-titulo">Domicilio y contacto</div>
     <div class="campos">

@@ -7,6 +7,7 @@
   (desde una acreditación del extracto) o «fiscalizacion» (a un acta, a las
   cuotas de su acuerdo de pago: fisca_recibo_acta.py), con su número de
   talonario (recibos_talonario.py). El PDF es el que se le manda al empleador.
+  O «afiliado»: al afiliado que transfirió, por la cuota social (recibos_afiliado.py).
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -16,11 +17,16 @@
 {% set e = o.extracto or {} %}
 {% set fisca = o.clase == 'fiscalizacion' %}
 {% set x = o.acuerdo or {} %}
+{% set afi = o.afiliado %}
 <div class="page-header">
   <div>
-    <h1>Recibo {{ 'de fiscalización ' if fisca }}<span class="mono">{{ o.numero }}</span></h1>
+    <h1>Recibo {{ 'de fiscalización ' if fisca }}{{ 'al afiliado ' if afi }}<span class="mono">{{ o.numero }}</span></h1>
+    {% if afi %}
+    <p>{{ o.concepto or 'Cuota social' }} de {{ afi.apellido_nombres or afi.cuil or '—' }}, {{ 'acreditada' if e else 'cobrada' }} en {{ o.cuenta or '—' }}.</p>
+    {% else %}
     <p>{% if fisca %}Acta {{ x.nro_acta or '—' }}, acuerdo {{ x.nro_acuerdo or '—' }}{% else %}Cuota sindical{% endif %}
       de {{ (o.empresa or {}).razon_social or o.cuit or '—' }}, {{ 'acreditada' if e else 'cobrada' }} en {{ o.cuenta or '—' }}.</p>
+    {% endif %}
   </div>
   <div class="page-header-acciones">
     {% if fisca and x and puede_acuerdo %}
@@ -46,18 +52,32 @@
 <div class="card">
   {{ ui.card_head('Recibo') }}
   <div class="card-body">
+    {% if afi %}
+    {% set conc = o.concepto or 'cuota social' %}
+    <p>Recibimos de <b>{{ afi.apellido_nombres or '—' }}</b> (CUIL {{ afi.cuil or '—' }}) la suma de
+      <b>pesos {{ o.en_letras | lower }}</b> ($ {{ o.importe_total | miles }}) en concepto de {{ conc[:1] | lower }}{{ conc[1:] }}.</p>
+    {% else %}
     <p>Recibimos de <b>{{ (o.empresa or {}).razon_social or '—' }}</b> (CUIT {{ o.cuit or '—' }}) la suma de
       <b>pesos {{ o.en_letras | lower }}</b> ($ {{ o.importe_total | miles }})
       {% if fisca %}en concepto de pago del acuerdo de pago {{ x.nro_acuerdo or '—' }} del acta {{ x.nro_acta or '—' }}{% else %}en concepto de cuota sindical{% endif %}.</p>
+    {% endif %}
     <div class="datos">
       {{ dato('Número', o.numero, mono=True) }}
       {% if o.nro_recibo %}{{ dato('Orden de ingreso', o.nro_orden, mono=True) }}{% endif %}
       {{ dato('Fecha', o.fecha.strftime('%d/%m/%Y')) }}
       {{ dato('Importe', '$ ' ~ (o.importe_total | miles), mono=True) }}
+      {% if afi %}
+      {{ dato('Afiliado', afi.apellido_nombres) }}
+      {{ dato('CUIL', afi.cuil, mono=True) }}
+      {% else %}
       {{ dato('Empleador', (o.empresa or {}).razon_social) }}
       {{ dato('CUIT', o.cuit, mono=True) }}
+      {% endif %}
       {{ dato('Emitió', (o.usuario_creacion or '—') ~ ' · ' ~ o.creado.strftime('%d/%m/%Y %H:%M')) }}
     </div>
+    {% if afi and afi.id_afiliado and puede_afiliado %}
+    <div class="form-acciones">{{ ui.boton('Ficha del afiliado', 'secondary', chico=True, href=url_for('afiliados.abm_afiliados', edit=afi.id_afiliado, solapa='cuota_social')) }}</div>
+    {% endif %}
     {% if o.empresa and puede_empleador %}
     <div class="form-acciones">{{ ui.boton('Ficha del empleador', 'secondary', chico=True, icono_='empresa', href=url_for('empleadores.abm_empleadores', edit=o.empresa.id)) }}</div>
     {% endif %}
@@ -86,7 +106,7 @@
 {% endif %}
 
 <div class="card">
-  {{ ui.card_head('Imputación' if fisca else 'Períodos',
+  {{ ui.card_head('Imputación' if fisca else ('Meses' if afi else 'Períodos'),
                   nota=('Capital a la cuota sindical de los períodos del acta: $ ' ~ (o.capital | miles) ~ ' · intereses: $ ' ~ (o.interes | miles)) if fisca else '') }}
   <div class="data-table-wrap">
     <table class="data-table" data-exportar="Recibo {{ o.numero }}">

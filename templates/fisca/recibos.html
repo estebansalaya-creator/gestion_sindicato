@@ -7,7 +7,8 @@
   acreditaciones del extracto de una cuenta, cada una con su empleador (por el
   CUIT del banco o un CUIT relacionado), si ya tiene recibo y en qué períodos
   iría. Se emite de a uno (el ícono) o los tildados de una vez; abajo, los CUIT
-  que pagan por un empleador.
+  que pagan por un empleador. La transferencia de un afiliado lleva un recibo al
+  afiliado por la cuota social (recibos_afiliado.py).
 #}
 
 {% macro tarjeta(icono, tipo, rotulo, valor, sub='') -%}
@@ -22,7 +23,7 @@
 <div class="page-header">
   <div>
     <h1>Emisión de recibos de cuota sindical</h1>
-    <p>De cada acreditación del extracto sale el recibo del empleador que pagó. El empleador se reconoce por el CUIT que informa el banco o por un CUIT relacionado.</p>
+    <p>De cada acreditación del extracto sale el recibo del empleador que pagó. El empleador se reconoce por el CUIT que informa el banco o por un CUIT relacionado; la transferencia de un afiliado lleva su recibo de cuota social.</p>
   </div>
   <div class="page-header-acciones">
     {% if puede_extractos %}{{ ui.boton('Extractos bancarios', 'secondary', href=url_for('extractos.index', cuenta=id_cuenta), icono_='subir') }}{% endif %}
@@ -52,7 +53,7 @@
   {{ tarjeta('dinero', '', 'Acreditaciones', res.cant, '$ ' ~ (res.total | miles)) }}
   {{ tarjeta('ok', 'ok', 'Con recibo', res.emitido[0] + res.ya_tiene[0],
              res.emitido[0] ~ ' emitidos acá · ' ~ res.ya_tiene[0] ~ ' ya registrados (AEDA)') }}
-  {{ tarjeta('empresa', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · empleador seguro') }}
+  {{ tarjeta('empresa', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · empleador seguro o cuota social justa') }}
   {{ tarjeta('alerta', 'warn', 'Para emitir de a uno', res.a_mano[0] + res.posible[0],
              res.a_mano[0] ~ ' sin empleador seguro · ' ~ res.posible[0] ~ ' a revisar') }}
 </div>
@@ -96,7 +97,7 @@
               {% elif f.estado == 'emitido' %}
               {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
               {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=f.recibo.id_orden), titulo='Recibo en PDF', blank=True) }}
-              {% elif f.recibo and f.recibo.clase in ('cuota_sindical', 'fiscalizacion') %}
+              {% elif f.recibo and f.recibo.clase in ('cuota_sindical', 'fiscalizacion', 'afiliado') %}
               {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
               {% elif f.recibo and puede_ingreso %}
               {{ ui.accion('ver', href=url_for('tes_mov.ingreso', id_orden=f.recibo.id_orden), titulo='Ver la orden de ingreso') }}
@@ -110,7 +111,8 @@
               {% if f.emp.cuit %}<span class="td-fuerte">{{ f.emp.razon or '—' }}</span>
                 {% if f.emp.como != 'mismo' %}<div class="td-mono chico td-muted">{{ f.emp.cuit }}</div>{% endif %}
               {% elif f.emp.opciones %}<span class="td-muted">{{ f.emp.opciones | map(attribute='razon') | join(' / ') }}</span>
-              {% elif f.emp.nombre %}<span class="td-muted">{{ f.emp.nombre }}</span>
+              {% elif f.emp.nombre %}<span class="{{ 'td-fuerte' if f.al_afiliado else 'td-muted' }}">{{ f.emp.nombre }}</span>
+                {% if f.al_afiliado %}<div class="chico td-muted">Recibo al afiliado · cuota social</div>{% endif %}
               {% endif %}
               {% if f.emp.como != 'mismo' %}<div>{{ ui.estado(como[f.emp.como][0], como[f.emp.como][1]) }}</div>{% endif %}
             </td>

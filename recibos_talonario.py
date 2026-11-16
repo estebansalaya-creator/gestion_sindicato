@@ -12,6 +12,8 @@ la orden de ingreso (AAMM-########) queda como dato de tesorería.
     Recibos Fiscalización           X 0002   se emite desde acá: a un acta, a las cuotas de su acuerdo
     Recibos Cuota Sindical (AEDA)   X 0091   los cobros de AEDA, con su número (fis_cobros.cobro_id)
     Recibos Fiscalización (AEDA)    X 0092   deshabilitados: no se emite desde ellos
+    Recibos Afiliados               X 0003   al afiliado, por la cuota social YMCA (recibos_afiliado.py,
+                                             sql/recibos_afiliados_20261115.sql); sin talonario de AEDA
 
 Con qué talonario se emite cada clase lo dicen `s_institucion.talonario_recibo_*`
 (se cambia en Datos del Sindicato); los de AEDA, `s_configuracion`
@@ -26,10 +28,11 @@ número no se pierde.
 
 from __future__ import annotations
 
-CLASES = ("cuota_sindical", "fiscalizacion")
-NOMBRE_CLASE = {"cuota_sindical": "cuota sindical", "fiscalizacion": "fiscalización"}
+CLASES = ("cuota_sindical", "fiscalizacion", "afiliado")
+NOMBRE_CLASE = {"cuota_sindical": "cuota sindical", "fiscalizacion": "fiscalización", "afiliado": "afiliados"}
 SQL_ESQUEMA = "sql/fisca_recibos_talonarios_20261114.sql"
-COL_INSTITUCION = {"cuota_sindical": "talonario_recibo_cuota", "fiscalizacion": "talonario_recibo_fisca"}
+COL_INSTITUCION = {"cuota_sindical": "talonario_recibo_cuota", "fiscalizacion": "talonario_recibo_fisca",
+                   "afiliado": "talonario_recibo_afiliado"}
 PARAM_AEDA = {"cuota_sindical": "talonario_recibos_aeda_cuota", "fiscalizacion": "talonario_recibos_aeda_fisca"}
 
 _ESQUEMA_OK = False
@@ -85,6 +88,8 @@ def id_de_emision(cur, clase: str) -> int | None:
 
 
 def id_de_aeda(cur, clase: str) -> int | None:
+    if clase not in PARAM_AEDA:          # los recibos a afiliados no vienen de AEDA
+        return None
     cur.execute("SELECT valor FROM s_configuracion WHERE modulo = 'fiscalizacion' AND parametro = %s",
                 (PARAM_AEDA[clase],))
     v = ((cur.fetchone() or {}).get("valor") or "").strip()

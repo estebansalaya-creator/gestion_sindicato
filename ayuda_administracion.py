@@ -145,6 +145,8 @@ SECCIONES = [
       "SUSS), con sus alícuotas por defecto. Solo esos se calculan al pagar."),
      ("Cuota sindical", "La alícuota (2,50 %), los talonarios de recibos de cuota y de fiscalización, "
       "el lugar de pago y el plazo de intimación de las actas."),
+     ("Recibos a afiliados", "El talonario (X 0003), el motivo de ingreso (YMCA), el concepto que dice el "
+      "recibo y la cuota por mes de los recibos a afiliados por la cuota social que transfieren."),
      ("Pago de la cuota sindical y consultas", "La cuenta donde las empresas pagan la cuota —una de "
       "Tesorería → Cuentas de Fondos: el banco, el número, el CBU y el alias se corrigen allá—, las "
       "indicaciones para el pago y el correo y el teléfono para consultas (vacíos, los generales). Las "
