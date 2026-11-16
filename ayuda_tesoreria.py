@@ -154,18 +154,21 @@ SECCIONES = [
  "titulo": "Extractos Bancarios",
  "url": "/tesoreria/extractos",
  "endpoints": ["extractos.index"],
- "resumen": "Importar los movimientos del banco: Nación e ICBC.",
+ "resumen": "Importar los movimientos del banco: Nación, ICBC o el extracto de Interbanking.",
  "bloques": [
    {"tipo": "pasos", "items": [
      "Elegí la cuenta y <b>Importar extracto</b>.",
      "Subí uno o varios archivos (o una carpeta): Banco Nación (CSV o el reporte de Banca Empresas) e "
-     "ICBC (cuenta corriente o reporte de recaudaciones).",
+     "ICBC (cuenta corriente o reporte de recaudaciones). También el <b>Extracto de Cuenta de "
+     "Interbanking</b> en Excel (.xlsx), de cualquier banco: se reconoce solo.",
      "El resultado dice cuántos renglones entraron y cuántos ya estaban.",
    ]},
    {"tipo": "criterio", "html":
     "Un renglón repetido (mismo número de operación, fecha e importe) no entra dos veces: se puede "
     "importar el mismo período otra vez sin miedo. El archivo se controla contra la cuenta elegida "
-    "(los últimos dígitos del número o del CBU): si es de otra cuenta, no entra nada."},
+    "(los últimos dígitos del número o del CBU): si es de otra cuenta, no entra nada. El de "
+    "Interbanking trae el mismo número de operación que el archivo del banco: un día bajado por las "
+    "dos vías no se duplica."},
    {"tipo": "aviso", "html":
     "Un renglón que ya está en una conciliación no se borra. Las acreditaciones importadas son las que "
     "usa Emisión de Recibos para la cuota sindical."},

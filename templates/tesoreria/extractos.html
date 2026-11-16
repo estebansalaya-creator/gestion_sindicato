@@ -5,8 +5,9 @@
 {#
   Extractos bancarios (extractos.index): lo que el banco informó de una cuenta.
   Cuenta y fechas van al servidor (GET); la grilla busca, ordena y exporta lo
-  que trajo. Importar es un diálogo: BNA (clásico o Banca Empresas) e ICBC
-  (cuenta corriente o recaudaciones), uno o varios archivos o una carpeta.
+  que trajo. Importar es un diálogo: BNA (clásico o Banca Empresas), ICBC
+  (cuenta corriente o recaudaciones) y el Excel de Interbanking, uno o varios
+  archivos o una carpeta.
 #}
 
 {% macro tarjeta(icono, tipo, rotulo, valor, sub='', monto=True) -%}
@@ -130,7 +131,7 @@
             <option value="">Detectarlo solo</option>
             {% for cod, txt in bancos.items() %}<option value="{{ cod }}">{{ txt }}</option>{% endfor %}
           </select>
-          <small class="campo-ayuda">BNA: CSV separado por punto y coma (clásico o BEE_Reporte de Banca Empresas). ICBC: extracto de cuenta corriente o reporte de recaudaciones (la fecha va al principio del nombre: «05.11.26 …»).</small>
+          <small class="campo-ayuda">BNA: CSV separado por punto y coma (clásico o BEE_Reporte de Banca Empresas). ICBC: extracto de cuenta corriente o reporte de recaudaciones (la fecha va al principio del nombre: «05.11.26 …»). Interbanking: el «Extracto de Cuenta» en Excel (.xlsx), de cualquier banco.</small>
         </div>
         <div class="campo" style="--span:12;">
           <span class="campo-label">Origen</span>
@@ -139,7 +140,7 @@
             <label class="campo-check"><input type="radio" name="modo" value="carpeta" onchange="cambiarOrigen(this.value)"> Una carpeta entera</label>
           </div>
           {# Dos inputs: webkitdirectory no se puede sacar por JS una vez puesto. Solo el visible lleva name. #}
-          <input type="file" id="inp-archivo" name="archivo" multiple accept=".csv,.txt" onchange="contarSel(this)">
+          <input type="file" id="inp-archivo" name="archivo" multiple accept=".csv,.txt,.xlsx" onchange="contarSel(this)">
           <input type="file" id="inp-carpeta" class="oculto" webkitdirectory directory multiple onchange="contarSel(this)">
           <small class="campo-ayuda ok" id="resumen-sel"></small>
         </div>
@@ -186,9 +187,9 @@ function cambiarOrigen(modo) {
 }
 function contarSel(inp) {
   var todos = Array.from(inp.files || []);
-  var sirven = todos.filter(function (f) { return /\.(csv|txt)$/i.test(f.name); }).length;
+  var sirven = todos.filter(function (f) { return /\.(csv|txt|xlsx)$/i.test(f.name); }).length;
   document.getElementById('resumen-sel').textContent = todos.length
-    ? sirven + ' archivo(s) para importar' + (todos.length > sirven ? ' · ' + (todos.length - sirven) + ' se ignoran (no son .csv ni .txt)' : '')
+    ? sirven + ' archivo(s) para importar' + (todos.length > sirven ? ' · ' + (todos.length - sirven) + ' se ignoran (no son .csv, .txt ni .xlsx)' : '')
     : '';
 }
 document.addEventListener('DOMContentLoaded', function () {

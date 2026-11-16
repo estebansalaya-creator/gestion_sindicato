@@ -10,6 +10,8 @@ automático de la obra social). Los bancos del sindicato son los mismos: Nación
         o de Banca Empresas (BEE_Reporte_*.csv: Cuenta;CUIT Cuenta;Fecha;Monto;…)
   ICBC  extracto de cuenta corriente (Fecha contable;…;Debito en $;Credito en $;Saldo en $)
         o reporte de recaudaciones (sin fecha en las filas: va en el nombre del archivo)
+  IBK   el «Extracto de Cuenta» que se baja de Interbanking en Excel (.xlsx), de cualquier
+        banco: como lo carga AEDA (pedido del 15/11/2026). Ver «Interbanking» más abajo.
 
 QUE CAMBIA RESPECTO DE GESTION_ADM
 - El número de cuenta del archivo se compara también contra el CBU de la cuenta
@@ -400,6 +402,8 @@ def detectar_banco(nombre_archivo: str, contenido: str) -> str | None:
         return "BNA"
     if "ICBC" in nombre or "RECAUDACIONES" in nombre:
         return "ICBC"
+    if es_interbanking(contenido):
+        return "IBK"
     # Por contenido
     contenido_norm = contenido.lstrip("\ufeff")[:500]
     if "Fecha Mvto" in contenido_norm and "Referencia" in contenido_norm:
@@ -425,12 +429,177 @@ def parsear(banco: str, contenido: str, nombre_archivo: str = "") -> list[dict]:
     """
     if banco == "BNA":
         return parsear_bna(contenido)
+    if banco == "IBK":
+        return parsear_interbanking(contenido)
     if banco == "ICBC":
         cabecera = (contenido or "").lstrip("﻿")[:400].upper()
         if "IMPORTE MOVTO" in cabecera and "DATOS COMPLEMENTARIOS" in cabecera:
             return parsear_icbc_recaudaciones(contenido, nombre_archivo)
         return parsear_icbc(contenido, nombre_archivo)
     raise ValueError(f"Banco no soportado: {banco}")
+
+
+# ── Interbanking ──────────────────────────────────────────────────────────────
+#
+# El «Extracto de Cuenta» de Interbanking, en Excel (reporte_-_<fecha>.xlsx):
+#
+#   Extracto de Cuenta
+#   Tipo y Nro. de Cuenta | CC $ 00.020.491/18      ← la cuenta: se valida contra la elegida
+#   Fecha desde / Fecha hasta | dd/mm/aaaa
+#   Saldo Inicial al dd/mm/aaaa | 2003656.69
+#   Concepto/Cod.Op. | Fecha | Comprobante | Sucursal | Importe | Descripción |
+#       Cod.Op.Bco. | CUIT | Denominación | Saldo          ← encabezado
+#   (una fila con el saldo inicial y nada más)
+#   CAJ.AUTOM | 11/11/2026 | 434632 | 7777 | 30000.0 | TRANSF.INT.DIST.TITULAR | 6231 | 20342154191 | CARELLO/MARTIN E | ''
+#   …
+#   … | Saldo Final: | 8198985.34
+#
+# El importe viene con signo (negativo = débito). El Comprobante es el mismo
+# número de operación que trae el CSV del banco y que tiene lo que se importó
+# de AEDA (adm_bna24): un movimiento ya cargado por otro formato se reconoce
+# igual. El CUIT es el de la contraparte, en su columna (no hay que sacarlo del
+# texto); en los gastos e impuestos del banco viene el CUIT propio, que no es
+# contraparte y se saca de todo el archivo: es el del renglón del impuesto
+# a los débitos y créditos (Ley 25.413), que el banco siempre cobra al
+# titular. Lo mismo hace importar_aeda_extractos. El concepto es la Descripción,
+# el mismo texto que el CSV, para que las reglas de la conciliación sigan
+# andando. El archivo no trae saldo por renglón: con el saldo inicial y los
+# movimientos se arma el saldo de cierre de cada día, en su último renglón, y
+# tiene que dar el «Saldo Final» del archivo (si no da, solo el último renglón
+# lleva el saldo final y se avisa).
+#
+# Como importar_extracto trabaja con texto, el .xlsx se pasa primero a texto
+# separado por «;» (`interbanking_a_texto`) y el resto es igual que un CSV.
+
+_IBK_ENCABEZADO = ("concepto/cod.op.", "cod.op.bco.")
+
+
+def _celda_texto(v) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, date):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, float):
+        return repr(round(v, 2))
+    return str(v).replace(";", ",").replace("\n", " ").strip()
+
+
+def interbanking_a_texto(raw: bytes) -> str | None:
+    """El .xlsx de Interbanking como texto «;». None si no es ese reporte."""
+    import io
+    try:
+        import warnings
+
+        import openpyxl
+        warnings.filterwarnings("ignore", message="Workbook contains no default style", module="openpyxl")
+        wb = openpyxl.load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+    except Exception:                                    # noqa: BLE001 — no es un Excel que se pueda leer
+        return None
+    ws = wb.worksheets[0]
+    # El archivo declara una dimensión de A1:A1 (lo genera la web, no Excel);
+    # sin esto, en modo read_only se lee una sola celda.
+    if hasattr(ws, "reset_dimensions"):
+        ws.reset_dimensions()
+    lineas = [";".join(_celda_texto(c) for c in fila) for fila in ws.iter_rows(values_only=True)]
+    wb.close()
+    texto = "\n".join(lineas)
+    return texto if es_interbanking(texto) else None
+
+
+def es_interbanking(contenido: str) -> bool:
+    cab = (contenido or "")[:3000].lower()
+    return "extracto de cuenta" in cab and all(m in cab for m in _IBK_ENCABEZADO)
+
+
+def _monto_ibk(s: str) -> Decimal | None:
+    """El importe del Excel, con punto decimal («62111.8»); por las dudas, también «62.111,80»."""
+    s = (s or "").strip()
+    if not s:
+        return None
+    if "," in s:
+        return _parse_monto_ar(s)
+    try:
+        return Decimal(s).quantize(Decimal("0.01"))
+    except InvalidOperation:
+        return None
+
+
+class ErrorInterbanking(ValueError):
+    """El reporte no se puede leer: se informa tal cual."""
+
+
+def parsear_interbanking(contenido: str) -> list[dict]:
+    """Los movimientos del extracto de Interbanking (ya pasado a texto)."""
+    lineas = [l.split(";") for l in (contenido or "").splitlines()]
+    inicio = next((i for i, f in enumerate(lineas)
+                   if all(any(m == (c or "").strip().lower() for c in f) for m in _IBK_ENCABEZADO)), None)
+    if inicio is None:
+        raise ErrorInterbanking("no se encontró el encabezado del extracto (Concepto/Cod.Op. … Cod.Op.Bco.)")
+    cab = [(c or "").strip().lower() for c in lineas[inicio]]
+
+    def col(nombre: str) -> int:
+        return next(i for i, c in enumerate(cab) if c.startswith(nombre))
+    c_fecha, c_comp, c_imp, c_desc, c_cuit = col("fecha"), col("comprobante"), col("importe"), col("descrip"), col("cuit")
+
+    saldo_inicial = saldo_final = None
+    for f in lineas[:inicio]:
+        if f and (f[0] or "").lower().startswith("saldo inicial") and len(f) > 1:
+            saldo_inicial = _monto_ibk(f[1])
+    resultados = []
+    for f in lineas[inicio + 1:]:
+        if any("saldo final" in (c or "").lower() for c in f):
+            valores = [c for c in f if c.strip() and "saldo final" not in c.lower()]
+            saldo_final = _monto_ibk(valores[-1]) if valores else None
+            continue
+        if len(f) <= max(c_fecha, c_imp, c_desc, c_cuit):
+            continue
+        fecha = _parse_fecha_ar(f[c_fecha])
+        importe = _monto_ibk(f[c_imp])
+        if fecha is None or importe is None or importe == 0:
+            continue                    # la fila del saldo inicial, o una vacía
+        cuit = "".join(ch for ch in f[c_cuit] if ch.isdigit())
+        resultados.append({
+            "fecham":   fecha,
+            "fechav":   fecha,
+            "ref_nro":  (f[c_comp] or "").strip().lstrip("0") or "0",
+            "debito":   float(-importe) if importe < 0 else None,
+            "credito":  float(importe) if importe > 0 else None,
+            "saldo":    None,
+            "concepto": (f[c_desc] or "").strip()[:100],
+            "cuit":     cuit if len(cuit) == 11 else None,
+            # El banco no lo dice el archivo: lo pone importar_extracto según la cuenta.
+            "origen":   None,
+        })
+    propios = {m["cuit"] for m in resultados if m["cuit"] and "25413" in m["concepto"].replace(".", "")}
+    for m in resultados:
+        if m["cuit"] in propios:
+            m["cuit"] = None
+    _saldos_ibk(resultados, saldo_inicial, saldo_final)
+    return resultados
+
+
+def _saldos_ibk(movs: list[dict], inicial: Decimal | None, final: Decimal | None) -> None:
+    """El saldo de cierre de cada día, en su último renglón del archivo. Si no
+    cierra con el saldo final, solo el último renglón lleva el saldo final."""
+    if not movs:
+        return
+    if inicial is not None:
+        corrido, ultimo_del_dia = Decimal(inicial), {}
+        for i, m in enumerate(movs):
+            ultimo_del_dia[m["fecham"]] = i
+        for dia in sorted(ultimo_del_dia):
+            corrido += sum((Decimal(str(m["credito"] or 0)) - Decimal(str(m["debito"] or 0))
+                            for m in movs if m["fecham"] == dia), Decimal("0"))
+            movs[ultimo_del_dia[dia]]["saldo"] = float(corrido)
+        if final is None or abs(corrido - final) < Decimal("0.01"):
+            return
+        log.warning("Interbanking: los movimientos dan %s y el saldo final es %s", corrido, final)
+        for m in movs:
+            m["saldo"] = None
+    if final is not None:
+        movs[max(range(len(movs)), key=lambda i: (movs[i]["fecham"], i))]["saldo"] = float(final)
 
 
 # ── Persistencia ──────────────────────────────────────────────────────────────
@@ -545,6 +714,15 @@ def cuentas_del_archivo(banco: str, contenido: str,
                 _agregar(l.split(";")[0])
         return vistos
 
+    if banco == "IBK":
+        # «Tipo y Nro. de Cuenta;CC $ 00.020.491/18», arriba del encabezado.
+        for l in lineas[:20]:
+            partes = l.split(";")
+            if partes and partes[0].strip().lower().startswith("tipo y nro. de cuenta") and len(partes) > 1:
+                _agregar(partes[1])
+                return vistos
+        return vistos
+
     if banco == "BNA":
         # Sólo Banca Empresas trae la cuenta, en la columna 0 de cada fila.
         for i, l in enumerate(lineas):
@@ -641,6 +819,16 @@ def importar_extracto(conn, id_cuenta: int, banco: str, contenido: str,
                                        nombre_archivo)
 
     movimientos = parsear(banco, contenido, nombre_archivo)
+    # Interbanking no dice de qué banco es: el de la cuenta (011 Nación, 015 ICBC).
+    if any(m.get("origen") is None for m in movimientos):
+        with conn.cursor() as cur:
+            cur.execute("""SELECT b.codigo FROM c_cuentas_de_fondos f
+                             LEFT JOIN c_codigo_de_banco b ON b.id = f.c_codigo_de_bancoId WHERE f.id = %s""",
+                        (id_cuenta,))
+            codigo = ((cur.fetchone() or {}).get("codigo") or "").strip()
+        origen = {"011": "BNA", "015": "ICBC"}.get(codigo, "MANUAL")
+        for m in movimientos:
+            m["origen"] = m.get("origen") or origen
 
     resumen = {
         "insertados":               0,

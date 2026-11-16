@@ -73,7 +73,7 @@ gestion_sindicato/
   tesoreria.py            tablas de tesorería: cuentas de fondos y chequeras, bancos BCRA, conceptos, motivos
   tesoreria_movimientos.py  subdiario, movimientos entre cuentas, depósitos, extracciones, órdenes de ingreso, anulaciones
   tesoreria_panel.py      Panel de Control de Tesorería: lo pendiente y los saldos de las cuentas
-  extractos.py            Extractos Bancarios: importar (BNA, ICBC), ver, borrar un renglón suelto
+  extractos.py            Extractos Bancarios: importar (BNA, ICBC, Interbanking .xlsx), ver, borrar un renglón suelto
   extractos_bancarios.py  los parsers de los extractos y el control de cuenta (de gestion_adm)
   conciliacion.py         Conciliación Bancaria (extracto contra libro) y Clasificación de conceptos
   transferencias.py       transferencias masivas: elegir pagos, generar el archivo, lotes generados
@@ -1568,6 +1568,14 @@ conciliaciones). Una foto de hoy, bloques uno debajo del otro:
   cuenta**: los últimos 5 dígitos del número que trae el archivo, contra el número del maestro o la parte de la
   cuenta del CBU; si no coincide, no entra nada. El BNA clásico no trae cuenta: pasa con aviso. Un renglón que
   entró en una conciliación no se borra.
+- **Interbanking** (15/11/2026, como lo carga AEDA): el «Extracto de Cuenta» en Excel (`reporte_-_<fecha>.xlsx`,
+  banco `IBK`). `interbanking_a_texto` lo pasa a texto «;» (la hoja declara dimensión A1:A1: `reset_dimensions`)
+  y `parsear_interbanking` lo lee: Comprobante → `ref_nro` (el mismo número que el CSV del banco y que
+  `adm_bna24` de AEDA, así no se duplica), Importe con signo, Descripción → concepto, CUIT de su columna salvo
+  el propio (el del renglón Ley 25.413). No trae saldo por renglón: con el saldo inicial y los movimientos se
+  pone el cierre de cada día en su último renglón, y tiene que dar el «Saldo Final» (si no, solo el último
+  renglón lo lleva). El `origen` sale del banco de la cuenta (011 BNA, 015 ICBC, si no MANUAL). Se detecta por
+  la extensión; elegido a mano otro formato, el .xlsx no entra.
 - **Los dos lados**: extracto (`c_extractos_bancarios`) contra libro (`c_debitos_creditos_bancarios`, un renglón
   por cheque, transferencia o depósito, con la óptica del banco). No es el renglón de `c_movimientos_de_fondos`:
   un pago de seis cheques se debita en seis días y cada cheque se concilia solo.

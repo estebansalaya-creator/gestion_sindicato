@@ -35,8 +35,8 @@ import os
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from db import get_connection, puede, validasesion
-from extractos_bancarios import (CuentaEquivocada, _fecha_del_nombre, detectar_banco, get_cuentas,
-                                 importar_extracto)
+from extractos_bancarios import (CuentaEquivocada, ErrorInterbanking, _fecha_del_nombre, detectar_banco,
+                                 get_cuentas, importar_extracto, interbanking_a_texto)
 
 log = logging.getLogger(__name__)
 
@@ -44,7 +44,9 @@ extractos_bp = Blueprint("extractos", __name__, url_prefix="/tesoreria/extractos
 
 URL = "/tesoreria/extractos"
 
-BANCOS = {"BNA": "Banco Nación", "ICBC": "ICBC"}
+BANCOS = {"BNA": "Banco Nación", "ICBC": "ICBC", "IBK": "Interbanking (Excel)"}
+#: Lo que se importa: los CSV de los bancos y el Excel de Interbanking.
+EXTENSIONES = ("csv", "txt", "xlsx")
 
 #: Renglones que trae la grilla como máximo. Un mes de la recaudadora son
 #: unos cientos; con más, se avisa y se pide acotar las fechas.
@@ -165,11 +167,11 @@ def importar():
         flash("!Elegí uno o más archivos, o una carpeta.")
         return volver
 
-    # De una carpeta vienen también PDFs, Excels y subcarpetas.
-    candidatos = [f for f in archivos if f.filename.lower().rsplit(".", 1)[-1] in ("csv", "txt")]
+    # De una carpeta vienen también PDFs, otros Excels y subcarpetas.
+    candidatos = [f for f in archivos if f.filename.lower().rsplit(".", 1)[-1] in EXTENSIONES]
     ignorados = len(archivos) - len(candidatos)
     if not candidatos:
-        flash(f"!No hay archivos .csv ni .txt para importar ({ignorados} ignorados).")
+        flash(f"!No hay archivos .csv, .txt ni .xlsx para importar ({ignorados} ignorados).")
         return volver
 
     # En orden cronológico según la fecha del nombre: los duplicados los
@@ -186,11 +188,21 @@ def importar():
         for archivo in candidatos:
             nombre = os.path.basename(archivo.filename)
             raw = archivo.read()
-            try:
-                contenido = raw.decode("utf-8-sig")
-            except UnicodeDecodeError:
-                contenido = raw.decode("latin-1")
-            banco = banco_sel or detectar_banco(nombre, contenido)
+            if nombre.lower().endswith(".xlsx"):
+                # El único Excel que se lee es el extracto de Interbanking.
+                contenido = interbanking_a_texto(raw)
+                if contenido is None:
+                    problemas.append((nombre, "no es un extracto de cuenta de Interbanking"))
+                    continue
+                if banco_sel and banco_sel != "IBK":
+                    problemas.append((nombre, "es un extracto de Interbanking: elegí ese formato o «Detectarlo solo»"))
+                    continue
+            else:
+                try:
+                    contenido = raw.decode("utf-8-sig")
+                except UnicodeDecodeError:
+                    contenido = raw.decode("latin-1")
+            banco = banco_sel or ("IBK" if nombre.lower().endswith(".xlsx") else detectar_banco(nombre, contenido))
             if not banco:
                 problemas.append((nombre, "no se reconoce el banco: elegilo en «Banco / formato»"))
                 continue
@@ -199,7 +211,7 @@ def importar():
                 continue
             try:
                 res = importar_extracto(conn, id_cuenta, banco, contenido, nombre)
-            except CuentaEquivocada as e:
+            except (CuentaEquivocada, ErrorInterbanking) as e:
                 problemas.append((nombre, str(e)))
                 continue
             except Exception as e:                           # noqa: BLE001 — se informa por archivo
@@ -236,7 +248,7 @@ def importar():
                 partes.append(f"créditos {_pesos(total['credito'])}, débitos {_pesos(total['debito'])}")
             flash(("!" if total["errores"] else "") + " · ".join(partes) + ".")
     if ignorados:
-        flash(f"!Se ignoraron {ignorados} archivos que no son .csv ni .txt.")
+        flash(f"!Se ignoraron {ignorados} archivos que no son .csv, .txt ni .xlsx.")
     for nombre, motivo in problemas[:10]:
         flash(f"!{nombre}: {motivo}")
     if len(problemas) > 10:
