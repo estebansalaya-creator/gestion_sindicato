@@ -22,9 +22,12 @@ EL EMPLEADOR (`resolver_empleador`)
   —o al emitir, con «Recordar»— y las de AEDA (afi_empresas_rel) vinieron con
   sql/fisca_recibos_20261112.sql. Un pagador puede pagar por varios empleadores:
   entonces se elige al emitir.
-- Un afiliado con relación laboral vigente con un solo empleador: queda como
-  sugerencia y no se emite en lote. Muchas transferencias de CUIL son la cuota
-  de la persona, no la de su empleador.
+- Nada más (pedido del 15/11/2026). Un afiliado NO se relaciona con su
+  empleador: su transferencia es un pago por otro concepto, no la cuota
+  sindical de la empresa. Si el CUIT del banco es un CUIL del padrón y no es un
+  pagador relacionado, la acreditación queda como «Otro ingreso» («Afiliado»,
+  con su nombre), sin empleador ni períodos sugeridos. Si ese CUIL paga por una
+  empresa, se carga como CUIT relacionado y entonces sí se reconoce.
 
 TALONARIO (recibos_talonario.py, pedido del 14/11/2026)
 Cada recibo lleva su número del talonario de cuota sindical (X 0001, el que diga
@@ -108,7 +111,7 @@ MAX_LOTE = 500
 COMO = {
     "mismo":       ("Mismo CUIT", "ok"),
     "relacionado": ("CUIT relacionado", "info"),
-    "afiliado":    ("Afiliado del empleador", "warn"),
+    "afiliado":    ("Afiliado", "neutro"),
     "varios":      ("Varios posibles", "warn"),
     "sin":         ("Sin identificar", "danger"),
 }
@@ -320,23 +323,26 @@ def en_letras(importe) -> str:
 # Lógica (sin base): empleador, períodos, recibos ya registrados
 # =============================================================================
 
-def resolver_empleador(cuit_banco, empresas: dict, relaciones: dict, afiliados: dict) -> dict:
+def resolver_empleador(cuit_banco, empresas: dict, relaciones: dict, afiliados: dict | None = None) -> dict:
     """De quién es el pago. `empresas`: CUIT → razón social; `relaciones`:
-    pagador → [CUIT de empleadores]; `afiliados`: CUIL → [CUIT de empleadores
-    con relación vigente]. Devuelve cuit, razon, como y las opciones."""
+    pagador → [CUIT de empleadores]; `afiliados`: CUIL → apellido y nombres de
+    los del padrón. Devuelve cuit, razon, como, las opciones y, si pagó un
+    afiliado, su `nombre`: un afiliado no se relaciona con su empleador (ver
+    el encabezado), queda sin empleador."""
     c = digitos(cuit_banco)
     sin = {"cuit": None, "razon": None, "como": "sin", "opciones": []}
     if len(c) != 11:
         return sin
     if c in empresas:
         return {"cuit": c, "razon": empresas[c], "como": "mismo", "opciones": []}
-    for clave, fuente in (("relacionado", relaciones), ("afiliado", afiliados)):
-        cand = sorted({e for e in fuente.get(c, ()) if e in empresas})
-        if len(cand) == 1:
-            return {"cuit": cand[0], "razon": empresas[cand[0]], "como": clave, "opciones": []}
-        if cand:
-            return {"cuit": None, "razon": None, "como": "varios",
-                    "opciones": [{"cuit": e, "razon": empresas[e], "como": clave} for e in cand]}
+    cand = sorted({e for e in relaciones.get(c, ()) if e in empresas})
+    if len(cand) == 1:
+        return {"cuit": cand[0], "razon": empresas[cand[0]], "como": "relacionado", "opciones": []}
+    if cand:
+        return {"cuit": None, "razon": None, "como": "varios",
+                "opciones": [{"cuit": e, "razon": empresas[e], "como": "relacionado"} for e in cand]}
+    if afiliados and c in afiliados:
+        return {"cuit": None, "razon": None, "como": "afiliado", "opciones": [], "nombre": afiliados[c]}
     return sin
 
 
@@ -467,21 +473,15 @@ def relaciones(cur) -> dict:
 
 
 def afiliados_de(cur, cuils) -> dict:
-    """CUIL → empleadores con relación laboral vigente (la regla de la nómina)."""
+    """CUIL → apellido y nombres, de los que están en el padrón (titulares,
+    familiares, de baja): una transferencia suya no es la cuota de su empleador."""
     cuils = sorted({c for c in cuils if len(c) == 11})
     if not cuils:
         return {}
     marcas = ",".join(["%s"] * len(cuils))
-    cur.execute(f"""SELECT r.cuil, COALESCE(LPAD(e.CUIT, 11, '0'), r.cuit_empleador) AS cuit
-                      FROM p_relaciones_laborales r
-                      LEFT JOIN p_empresas e ON e.id = r.id_empleador
-                     WHERE r.estado = 'activa' AND (r.fecha_fin IS NULL OR r.fecha_fin >= CURDATE())
-                       AND r.cuil IN ({marcas})""", cuils)
-    out = defaultdict(set)
-    for f in cur.fetchall():
-        if f["cuit"]:
-            out[f["cuil"]].add(digitos(f["cuit"]))
-    return out
+    cur.execute(f"""SELECT cuil, MAX(apellido_nombres) AS nombre FROM p_afiliados
+                     WHERE cuil IN ({marcas}) GROUP BY cuil""", cuils)
+    return {f["cuil"]: (f["nombre"] or "").strip() for f in cur.fetchall()}
 
 
 def saldos_de(cur, cuits) -> dict:
@@ -593,6 +593,12 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
 
     # Lo emitido desde un renglón gana sobre «conciliado»: el recibo concilia en el acto.
     emparejar(filas, emitidos_de(cur, [f["id"] for f in filas]), libro_ingresos(cur, id_cuenta, desde, hasta))
+    # La transferencia de un afiliado es por otro concepto (después de emparejar:
+    # si AEDA ya le hizo recibo, se sigue viendo como «Ya tiene recibo»).
+    for f in filas:
+        if f["estado"] == "pendiente" and f["emp"]["como"] == "afiliado":
+            f["estado"] = "otro"
+            f["regla"] = "Transferencia de un afiliado: es un pago por otro concepto, no la cuota de una empresa."
 
     sal = saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
     # Un empleador con un acuerdo de pago: su pago puede ser una cuota del acuerdo. Se emite de a uno.

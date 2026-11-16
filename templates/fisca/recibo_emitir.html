@@ -48,6 +48,9 @@
 <div class="card">
   {{ ui.card_head('Empleador', nota=('Reconocido: ' ~ como[sugerido.como][0]) if sugerido.cuit else como[sugerido.como][0]) }}
   <form method="get" class="card-body">
+    {% if sugerido.como == 'afiliado' %}
+    {{ ui.aviso('El CUIT del banco es de un afiliado' ~ (' (' ~ sugerido.nombre ~ ')' if sugerido.nombre else '') ~ ': su transferencia es un pago por otro concepto, no la cuota sindical de una empresa. Emití el recibo solo si sabés que es el pago de un empleador; si esa persona paga siempre por una empresa, cargala como CUIT relacionado.', 'warning') }}
+    {% endif %}
     <input type="hidden" name="desde" value="{{ request.values.get('desde', '') }}">
     <input type="hidden" name="hasta" value="{{ request.values.get('hasta', '') }}">
     <div class="campos">

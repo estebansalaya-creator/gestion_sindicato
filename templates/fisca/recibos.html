@@ -110,6 +110,7 @@
               {% if f.emp.cuit %}<span class="td-fuerte">{{ f.emp.razon or '—' }}</span>
                 {% if f.emp.como != 'mismo' %}<div class="td-mono chico td-muted">{{ f.emp.cuit }}</div>{% endif %}
               {% elif f.emp.opciones %}<span class="td-muted">{{ f.emp.opciones | map(attribute='razon') | join(' / ') }}</span>
+              {% elif f.emp.nombre %}<span class="td-muted">{{ f.emp.nombre }}</span>
               {% endif %}
               {% if f.emp.como != 'mismo' %}<div>{{ ui.estado(como[f.emp.como][0], como[f.emp.como][1]) }}</div>{% endif %}
             </td>

@@ -47,7 +47,7 @@ print("El empleador")
 emp = {"30709404047": "NELIDA SA", "30696906420": "RMO SA", "30652980623": "UNO SRL", "30710216319": "DOS SA",
        "30711111118": "TRES SA"}
 rel = {"20081898201": ["30696906420"], "20123456786": ["30652980623", "30710216319"]}
-afi = {"27000000006": {"30711111118"}, "20000000001": {"30711111118", "30709404047"}}
+afi = {"27000000006": "PEREZ JUAN", "20000000001": "GOMEZ ANA", "20081898201": "RELACIONADO TAMBIEN AFILIADO"}
 r = R.resolver_empleador("30709404047", emp, rel, afi)
 ok(r["como"] == "mismo" and r["cuit"] == "30709404047", "mismo CUIT")
 r = R.resolver_empleador("20081898201", emp, rel, afi)
@@ -55,12 +55,14 @@ ok(r["como"] == "relacionado" and r["cuit"] == "30696906420", "CUIT relacionado"
 r = R.resolver_empleador("20123456786", emp, rel, afi)
 ok(r["como"] == "varios" and not r["cuit"] and len(r["opciones"]) == 2, "paga por dos empleadores: se elige")
 r = R.resolver_empleador("27000000006", emp, rel, afi)
-ok(r["como"] == "afiliado" and r["cuit"] == "30711111118", "afiliado con un empleador: sugerencia")
-r = R.resolver_empleador("20000000001", emp, rel, afi)
-ok(r["como"] == "varios", "afiliado con dos empleadores")
+ok(r["como"] == "afiliado" and r["cuit"] is None and r["nombre"] == "PEREZ JUAN",
+   "afiliado: no se relaciona con su empleador (otro concepto)")
+r = R.resolver_empleador("20081898201", emp, rel, afi)
+ok(r["como"] == "relacionado" and r["cuit"] == "30696906420", "un afiliado cargado como relacionado sí paga por la empresa")
+ok(R.resolver_empleador("27000000006", emp, rel)["como"] == "sin", "sin padrón, sin identificar")
 ok(R.resolver_empleador("", emp, rel, afi)["como"] == "sin", "sin CUIT")
 ok(R.resolver_empleador("33707651259", emp, rel, afi)["como"] == "sin", "CUIT desconocido")
-ok(R.resolver_empleador("20081898201", emp, {"20081898201": ["30999999990"]}, afi)["como"] == "sin",
+ok(R.resolver_empleador("20081898201", emp, {"20081898201": ["30999999990"]}, {})["como"] == "sin",
    "relacionado con un CUIT que no está en Empleadores")
 
 print("Los períodos")

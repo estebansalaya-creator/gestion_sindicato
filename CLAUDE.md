@@ -743,9 +743,10 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
 
 - **El empleador** (`resolver_empleador`): el mismo CUIT del banco si está en Empleadores; si no, un CUIT
   relacionado (`fisca_cuit_relacionado`: el estudio, el dueño, otra empresa del grupo; las 15 de AEDA
-  `afi_empresas_rel` vinieron con el script); si no, un afiliado con relación vigente con un solo empleador, **solo
-  como sugerencia** (las transferencias de $ 30.000 de CUIL son casi siempre la cuota de la persona). Un pagador
-  relacionado con varios empleadores: se elige al emitir. Al emitir con otro empleador se puede «Recordar» la
+  `afi_empresas_rel` vinieron con el script). **Nada más** (pedido del 15/11/2026): un afiliado no se relaciona con
+  su empleador; su transferencia es un pago por otro concepto. Un CUIL del padrón que no es pagador relacionado
+  queda como «Otro ingreso» (como «Afiliado», con su nombre), sin empleador ni períodos, después de emparejar con
+  lo de AEDA. Un pagador relacionado con varios empleadores: se elige al emitir. Al emitir con otro empleador se puede «Recordar» la
   relación; también se cargan y se dan de baja abajo en la pantalla.
 - **El recibo** = orden de ingreso clase `cuota_sindical`, origen `extracto`, fecha de la acreditación, a la cuenta
   del extracto; un renglón por período (motivo CUOTA SINDICAL) con `ingreso_ordenes_detalle.cuit` (columna nueva,

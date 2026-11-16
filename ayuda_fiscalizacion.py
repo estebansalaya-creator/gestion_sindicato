@@ -217,8 +217,9 @@ SECCIONES = [
      ("Mismo CUIT", "Quien transfirió es el empleador."),
      ("CUIT relacionado", "Pagó otro CUIT que se sabe que paga por ese empleador (el estudio contable, "
       "otra empresa del grupo). Se cargan abajo, en «CUIT que pagan por un empleador»."),
-     ("Afiliado del empleador", "Transfirió una persona que trabaja en un solo empleador: es una "
-      "<b>sugerencia</b> (suele ser la cuota de la persona); se confirma al emitir."),
+     ("Afiliado", "Transfirió una persona del padrón: es un pago por <b>otro concepto</b>, no la cuota "
+      "de una empresa. Queda como «Otro ingreso», sin empleador. Si esa persona paga por una empresa, se "
+      "carga como CUIT relacionado."),
      ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir."),
    ]},
    {"tipo": "campos", "items": [
