@@ -26,7 +26,10 @@
     {% if fisca and x and puede_acuerdo %}
     {{ ui.boton('Acuerdo de pago', 'secondary', href=url_for('fisca_acta.acuerdo', id_acta=x.id_acta, id=x.id), icono_='volver') }}
     {% endif %}
-    {% if e or not fisca %}
+    {% if volver_emitidos %}
+    {{ ui.boton('Recibos emitidos', 'secondary', href=volver_emitidos, icono_='volver') }}
+    {% endif %}
+    {% if (e or not fisca) and puede_emision %}
     {{ ui.boton('Emisión de recibos', 'secondary', href=url_for('fisca_rec.lista', cuenta=o.id_cuenta,
                 desde=e.fecham.isoformat() if e.fecham else None, hasta=e.fecham.isoformat() if e.fecham else None), icono_='volver') }}
     {% endif %}

@@ -86,7 +86,8 @@ gestion_sindicato/
   retenciones.py          motor de retenciones de gestion_adm sobre s_institucion (Ganancias RG 830, IVA, IIBB, SUSS)
   numeracion.py           números AAMM-######## y certificados CRT-AAAA-NNNNNN (c_numeradores)
   movimientos_fondos.py   libro de fondos (c_movimientos_de_fondos), copia de gestion_adm
-  anulaciones.py          reglas para anular: período cerrado, conciliado, ya transferido
+  anulaciones.py          reglas para anular: período cerrado, conciliado, ya transferido (y en lote, para la grilla)
+  recibos_emitidos.py     Tesorería › Recibos Emitidos: consulta de los recibos de cuota sindical y fiscalización
   pago_anulacion.py       anular un pago y anular una orden (deshace lo que grabó cada uno)
   plan_cuentas.py         reglas del plan (el código manda): las usan la pantalla y los importadores
   lector_comprobante.py   el parser del PDF de gestion_adm + Mis Comprobantes si no alcanza
@@ -223,6 +224,8 @@ repetiría en la URL lo que dice el dominio.
 /tesoreria/movimientos/nuevo/<transferencia|deposito|extraccion>   alta de un movimiento entre cuentas
 /tesoreria/nueva_orden_concepto   orden de ingreso       /tesoreria/ingreso/<id>  /tesoreria/movimiento/<id>  fichas
 /tesoreria/anulaciones      pagos, órdenes de ingreso y movimientos vigentes; /anular POST
+/tesoreria/recibos          recibos emitidos: ?q, ?nro (exacto), ?desde, ?hasta, ?clase, ?talonario, ?cuenta,
+                             ?aplicacion, ?estado=vigente|anulado|todos, orden y página; /exportar (Excel)
 /tesoreria/rg830            escala RG 830; ?edit=ID, ?nuevo=1, ?clonar=ID (nueva vigencia)
 /tesoreria/extractos        extracto de una cuenta: ?cuenta, ?desde, ?hasta; /importar POST; /<id>/borrar POST
 /tesoreria/conc             conciliaciones: ?cuenta, ?cerradas=1; /nueva POST; /saldo_inicial (JSON)
@@ -1450,6 +1453,18 @@ entre Cuentas, Depósitos, Extracciones), 65 (Subdiario), 74 (Anulaciones).
   depositado ya siguió su camino; los depositados vuelven a cartera y los cheques emitidos quedan anulados.
   Orden de ingreso: no si un valor suyo ya salió de la cartera; los que siguen ahí pasan a `anulado` (en
   gestion_adm quedaban en cartera y se podían depositar).
+- **La grilla de Anulaciones** dice de cada renglón si se puede anular con `anulaciones.motivos_en_lote` y
+  `tesoreria_movimientos._impedimentos_lote`: las mismas reglas con una consulta por regla para todos los renglones.
+  Antes eran de 3 a 6 consultas por renglón (900 renglones en 90 días, miles de viajes del IIS a Railway: tardaba
+  minutos; 15/11/2026). Al anular se vuelve a validar el comprobante con `motivos_para_no_anular`. Probado contra
+  las reglas de a uno, renglón por renglón, con una base MariaDB armada con cada caso.
+- **Recibos Emitidos** (`recibos_emitidos.py`, menú 76, `sql/menu_recibos_emitidos_20261115.sql`; pedido del
+  15/11/2026, como en gestion_adm): las órdenes de ingreso con número de talonario —cuota sindical y fiscalización,
+  las del sistema y las de AEDA (X 0091/X 0092)—, paginadas en el servidor, con su empleador (el CUIT de los
+  renglones; en fiscalización, el del acta), los períodos, la cuenta, lo **aplicado** (cuota: `fisca_aplicacion` de
+  sus renglones; fiscalización: `fisca_acuerdo_imputacion`) y el estado. El número exacto busca ese recibo esté
+  como esté. Abre la ficha y el PDF de `fisca_rec.recibo`, que aceptan este permiso o el de Emisión de Recibos
+  (`_guardia_ver`; `?volver=` vuelve con los filtros). No manda mails (gestion_adm sí): el sistema no envía correo.
 - **Fichas** del movimiento y de la orden: se imprimen desde el navegador (todavía no hay PDF).
 
 ## Tesorería: el libro de AEDA

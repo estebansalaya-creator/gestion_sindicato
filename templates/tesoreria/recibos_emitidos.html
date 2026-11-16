@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Recibos emitidos{% endblock %}
+
+{#
+  Tesorería › Recibos Emitidos (recibos_emitidos.py): los recibos de cuota
+  sindical y de fiscalización, los del sistema y los de AEDA. Como en
+  gestion_adm, mira lo ya cobrado; se emite en Fiscalización › Emisión de
+  Recibos y se anula en Tesorería › Anulaciones.
+
+  Paginada en el servidor (paginar.py, `data-servidor`): filtros, orden y
+  página van en la URL. Exportar a Excel baja todo lo filtrado.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Recibos emitidos</h1>
+    <p>Los recibos de cuota sindical y de fiscalización: los emitidos en el sistema y los que vinieron de AEDA.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_emision %}{{ ui.boton('Emisión de recibos', 'secondary', href=url_for('fisca_rec.lista'), icono_='agregar') }}{% endif %}
+    {% if puede_anular %}{{ ui.boton('Anulaciones', 'secondary', href=url_for('tes_mov.anulaciones_lista', tipo='ingreso')) }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{# Cuentan todo el resultado de los filtros, no la página que se ve. #}
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">Recibos</div><div class="kpi-val">{{ tot.n }}</div>
+      <div class="kpi-sub">{{ 'con los filtros aplicados' if hay_filtros else 'vigentes' }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Importe</div><div class="kpi-val monto">{{ (tot.importe or 0) | miles }}</div>
+      <div class="kpi-sub">aplicado a cuotas: {{ (tot.aplicado or 0) | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Sin aplicar</div><div class="kpi-val monto">{{ (tot.sin_aplicar or 0) | miles }}</div>
+      <div class="kpi-sub">{{ tot.con_saldo }} recibo(s) con saldo a favor del empleador</div></div></div>
+</div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('rec_emi.lista') }}" class="filter-bar" id="frm-recibos">
+    <input type="hidden" name="orden" value="{{ f.orden if f.orden != 'fecha' }}">
+    <input type="hidden" name="dir" value="{{ args_export.dir or '' }}">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+      <input type="search" name="q" value="{{ f.q }}" class="filter-input"
+             placeholder="Empleador, CUIT u orden de ingreso…"></label>
+    {% call ui.filtro('Nº de recibo exacto') %}<input type="text" name="nro" value="{{ f.nro }}" class="filtro-srv mono"
+           placeholder="0091-00000123" size="14">{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" value="{{ f.desde }}" class="filtro-srv">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" value="{{ f.hasta }}" class="filtro-srv">{% endcall %}
+    {% call ui.filtro('Clase') %}<select name="clase" class="filtro-srv">
+      <option value="">Todas</option>
+      {% for k, t in clases.items() %}<option value="{{ k }}" {{ 'selected' if f.clase == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Talonario') %}<select name="talonario" class="filtro-srv">
+      <option value="">Todos</option>
+      {% for t in talonarios %}<option value="{{ t.id }}" {{ 'selected' if f.talonario == t.id|string }}>{{ t.letra }} {{ '%04d' | format(t.punto_de_venta) }} · {{ t.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Cuenta') %}<select name="cuenta" class="filtro-srv">
+      <option value="">Todas</option>
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if f.cuenta == c.id|string }}>{{ c.nombre }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Aplicación a cuotas') %}<select name="aplicacion" class="filtro-srv">
+      <option value="">Todos</option>
+      {% for k, t in aplicacion.items() %}<option value="{{ k }}" {{ 'selected' if f.aplicacion == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro-srv">
+      {% for k, t in estados.items() %}<option value="{{ k }}" {{ 'selected' if f.estado == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('rec_emi.lista') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count">Mostrando {{ pag.desde }}–{{ pag.hasta }} de {{ pag.total }} registros</span>
+      {% if pag.total %}
+      <a href="{{ url_for('rec_emi.exportar', **args_export) }}" class="btn btn-excel btn-sm">{{ ui.icono('planilla') }}Exportar a Excel</a>
+      {% else %}
+      <button type="button" class="btn btn-excel btn-sm" disabled>{{ ui.icono('planilla') }}Exportar a Excel</button>
+      {% endif %}
+      <select name="tam" class="page-size-select filtro-srv" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}"{{ ' selected' if n == pag.tam }}>{{ n }} por pág.</option>{% endfor %}
+      </select>
+    </div>
+  </form>
+  {% if f.nro %}<div class="card-body">{{ ui.aviso('Con número de recibo se busca ese recibo, vigente o anulado: los demás filtros no cuentan.', 'info') }}</div>{% endif %}
+
+  {% macro th(clave, texto, clase='') -%}
+  <th data-col="{{ clave }}" class="{{ clase }} {{ ('sort-' ~ f.dir) if f.orden == clave }}">{{ texto }}</th>
+  {%- endmacro %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-recibos" data-servidor="frm-recibos">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          {{ th('fecha', 'Fecha', 'th-center') }}
+          {{ th('recibo', 'Recibo') }}
+          <th data-no-sort>Clase</th>
+          {{ th('empleador', 'Empleador') }}
+          <th data-no-sort>Períodos</th>
+          <th data-no-sort>Cuenta</th>
+          {{ th('importe', 'Importe', 'th-right') }}
+          <th class="th-right" data-no-sort>Aplicado</th>
+          <th data-no-sort>Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recibos %}
+        {% set saldo = (r.importe_total or 0) - (r.aplicado or 0) %}
+        <tr class="{{ 'fila-baja' if r.estado == 'anulado' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=r.id, volver=volver), titulo='Ver el recibo') }}
+            {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=r.id), titulo='Recibo en PDF', blank=True) }}
+          </div></td>
+          <td class="td-center">{{ r.fecha.strftime('%d/%m/%Y') if r.fecha else '—' }}</td>
+          <td class="td-mono nowrap">{{ r.numero }}<div class="chico muted">{{ r.nro_orden }}</div></td>
+          <td>{{ clases.get(r.clase, r.clase) }}{% if r.nro_acta %}<div class="chico muted td-mono">{{ r.nro_acta }}</div>{% endif %}</td>
+          <td>
+            <span class="td-fuerte">{{ r.razon_social or '—' }}</span>
+            {% if r.cuit %}<div class="chico muted td-mono">{{ r.cuit }}</div>{% endif %}
+          </td>
+          <td class="td-mono nowrap">{{ r.periodos or '—' }}</td>
+          <td>{{ r.cuenta or '—' }}</td>
+          <td class="td-right td-fuerte nowrap">{{ (r.importe_total or 0) | miles }}</td>
+          <td class="td-right nowrap">{{ (r.aplicado or 0) | miles }}
+            {% if r.estado != 'anulado' and saldo > 0.005 %}<div class="chico muted">sin aplicar {{ saldo | miles }}</div>{% endif %}</td>
+          <td>{% if r.estado == 'anulado' %}{{ ui.estado('Anulado', 'danger') }}
+              {% if r.motivo_anulacion %}<div class="chico td-motivo">{{ r.motivo_anulacion }}</div>{% endif %}
+              {% else %}{{ ui.estado('Vigente', 'ok') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="10" class="no-data">
+          {{ 'Ningún recibo coincide con los filtros.' if hay_filtros else 'Todavía no hay recibos.' }}
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion_srv(pag) }}
+</div>
+{% endblock %}

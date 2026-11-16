@@ -66,6 +66,26 @@ SECCIONES = [
 
 {
  "grupo": "Movimientos",
+ "id": "tes_recibos",
+ "titulo": "Recibos Emitidos",
+ "url": "/tesoreria/recibos",
+ "endpoints": ["rec_emi.lista"],
+ "resumen": "Los recibos de cuota sindical y de fiscalización ya emitidos, para buscarlos e imprimirlos.",
+ "bloques": [
+   {"tipo": "texto", "html":
+    "Todos los recibos: los emitidos en Fiscalización → Emisión de Recibos y los que vinieron de AEDA "
+    "(talonarios X 0091 y X 0092). Se buscan por empleador, CUIT u orden de ingreso, o por el "
+    "<b>número de recibo exacto</b> (por ejemplo 0091-00001234), que lo encuentra esté vigente o anulado. "
+    "El ojo abre el recibo; el botón rojo, su PDF. <b>Exportar a Excel</b> baja todo lo filtrado."},
+   {"tipo": "campos", "items": [
+     ("Aplicado", "Lo que el recibo ya canceló: de cuota sindical, lo aplicado a las cuotas liquidadas; de "
+      "fiscalización, lo imputado a las cuotas del acuerdo. Lo que falta queda a favor del empleador."),
+     ("Estado", "Vigentes por defecto; los anulados, con el motivo. Se anula en Anulaciones."),
+   ]},
+ ]},
+
+{
+ "grupo": "Movimientos",
  "id": "tes_movimientos",
  "titulo": "Movimiento entre Cuentas, Depósitos y Extracciones",
  "url": "/tesoreria/movimientos/nuevo/transferencia",

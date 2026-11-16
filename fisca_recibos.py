@@ -5,8 +5,9 @@ fisca_recibos.py — Fiscalización de Cuotas › Emisión de Recibos (menú 8).
     /fiscalizacion/recibos/emitir/<id_extracto>   GET el formulario (?cuit= elige otro empleador, ?acuerdo= lo
                                                   emite como fiscalización a ese acuerdo de pago); POST emite
     /fiscalizacion/recibos/emitir_lote            POST extracto=… los tildados, con lo que sugiere la pantalla
-    /fiscalizacion/recibos/<id_orden>             el recibo
+    /fiscalizacion/recibos/<id_orden>             el recibo (?volver= de Tesorería › Recibos Emitidos)
     /fiscalizacion/recibos/<id_orden>/pdf         el recibo en PDF
+    Los dos últimos, también para quien tiene Recibos Emitidos (recibos_emitidos.py).
     /fiscalizacion/recibos/relacion               POST alta de un CUIT que paga por un empleador
     /fiscalizacion/recibos/relacion/<id>/baja     POST
 
@@ -197,6 +198,26 @@ def _guardia():
         flash("!No tenés permiso para la emisión de recibos.")
         return redirect(url_for("menu"))
     return None
+
+
+#: Tesorería › Recibos Emitidos (recibos_emitidos.py) abre el recibo y su PDF:
+#: quien tiene esa pantalla los ve aunque no tenga la de emisión.
+URL_EMITIDOS = "/tesoreria/recibos"
+
+
+def _guardia_ver():
+    if not validasesion():
+        return redirect(url_for("login"))
+    if not (puede(URL) or puede(URL_EMITIDOS)):
+        flash("!No tenés permiso para ver recibos.")
+        return redirect(url_for("menu"))
+    return None
+
+
+def _volver_emitidos() -> str | None:
+    """?volver= de Recibos Emitidos, con sus filtros: solo una dirección de esa pantalla."""
+    v = request.args.get("volver") or ""
+    return v if v == URL_EMITIDOS or v.startswith(URL_EMITIDOS + "?") else None
 
 
 #: Lo que la pantalla necesita de la base, y el script que lo crea. En Railway
@@ -1042,7 +1063,7 @@ def _recibo_o_volver(cur, id_orden):
 
 @fisca_rec_bp.route("/recibos/<int:id_orden>")
 def recibo(id_orden):
-    salida = _guardia()
+    salida = _guardia_ver()
     if salida:
         return salida
     with get_connection() as conn:
@@ -1050,9 +1071,10 @@ def recibo(id_orden):
             o = _recibo_o_volver(cur, id_orden)
     if not o:
         flash("!No existe ese recibo.")
-        return redirect(url_for("fisca_rec.lista"))
+        return redirect(url_for("fisca_rec.lista") if puede(URL) else URL_EMITIDOS)
     return render_template("fisca/recibo.html", o=o, puede_ingreso=puede("/tesoreria/movimientos")
                            or puede("/tesoreria/nueva_orden_concepto"),
+                           puede_emision=puede(URL), volver_emitidos=_volver_emitidos(),
                            puede_anular=puede("/tesoreria/anulaciones"),
                            puede_acuerdo=puede("/fiscalizacion/acuerdos"),
                            puede_empleador=puede(url_for("empleadores.abm_empleadores")))
@@ -1118,7 +1140,7 @@ def recibo_pdf(o: dict):
 
 @fisca_rec_bp.route("/recibos/<int:id_orden>/pdf")
 def recibo_pdf_ruta(id_orden):
-    salida = _guardia()
+    salida = _guardia_ver()
     if salida:
         return salida
     with get_connection() as conn:
@@ -1126,7 +1148,7 @@ def recibo_pdf_ruta(id_orden):
             o = _recibo_o_volver(cur, id_orden)
     if not o:
         flash("!No existe ese recibo.")
-        return redirect(url_for("fisca_rec.lista"))
+        return redirect(url_for("fisca_rec.lista") if puede(URL) else URL_EMITIDOS)
     return recibo_pdf(o)
 
 

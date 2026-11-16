@@ -46,6 +46,7 @@ from mis_comprobantes import mis_comp_bp                        # noqa: E402
 from mesa import mesa_bp                                        # noqa: E402
 from tesoreria import tesoreria_bp                              # noqa: E402
 from tesoreria_movimientos import tes_mov_bp                    # noqa: E402
+from recibos_emitidos import rec_emi_bp                         # noqa: E402
 from tesoreria_panel import tes_panel_bp                         # noqa: E402
 from transferencias import transferencias_bp                    # noqa: E402
 from tesoreria_rg830 import rg830_bp                            # noqa: E402
@@ -469,6 +470,7 @@ app.register_blueprint(mis_comp_bp)
 app.register_blueprint(mesa_bp)
 app.register_blueprint(tesoreria_bp)
 app.register_blueprint(tes_mov_bp)
+app.register_blueprint(rec_emi_bp)
 app.register_blueprint(tes_panel_bp)
 app.register_blueprint(transferencias_bp)
 app.register_blueprint(rg830_bp)
