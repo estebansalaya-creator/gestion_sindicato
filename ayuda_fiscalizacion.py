@@ -120,6 +120,11 @@ SECCIONES = [
      ("% con DDJJ", "Con DDJJ sobre activos. El filtro de tramos (100 %, 50 a 99 %…) ayuda a encontrar "
       "a los que declaran poco."),
      ("Liquidados", "Los afiliados con remuneración: son los que generan cuota."),
+     ("Por escala salarial", "Un activo que no está en la DDJJ de su empleador se liquida con el sueldo "
+      "conformado de la escala del convenio de ese período (básico de su antigüedad más el almuerzo × 22 "
+      "días). La antigüedad se cuenta desde su fecha de antigüedad con ese empleador o, si no la hay, "
+      "desde el ingreso; sin ninguna fecha, como «Inicial». Si el período no tiene escala cargada, queda "
+      "en cero."),
      ("Origen", "DDJJ de OSEDA, Libro de Sueldos Digital (lo presentó la empresa) o AEDA."),
      ("Liquidado AEDA", "Lo que había liquidado el sistema anterior para ese período, para comparar."),
      ("Vencimiento", "El mismo día que vence el F.931 del empleador (ver «Vencimientos e intereses»)."),

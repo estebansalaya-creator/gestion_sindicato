@@ -32,8 +32,22 @@ cambió de empleador en algún momento que no se sabe) no cuenta.
 - Renglones: «ddjj» (declarado, con su cuota; `activo` dice si además es
   activo del empleador según el padrón) y «sin_ddjj» (activo que el empleador
   no declaró: remuneración y cuota en cero).
-- Un empleador con activos y ninguno en su DDJJ igual tiene su liquidación, en
-  cero y con la nota: es lo que muestra que no declara.
+- Un empleador con activos y ninguno en su DDJJ igual tiene su liquidación, con
+  la nota: es lo que muestra que no declara.
+
+ACTIVOS SIN DDJJ: POR LA ESCALA SALARIAL (pedido del 16/11/2026)
+Un activo del empleador que no está en su DDJJ no tiene remuneración de ninguna
+fuente: se liquida con el sueldo CONFORMADO de la escala del convenio vigente en
+el período (`fisca_escala_salarial`: básico de su antigüedad + almuerzo × 22,
+fisca_escalas.conformado), renglón «escala». La antigüedad, en años cumplidos al
+último día del período (tope 35), se cuenta desde la fecha más vieja entre las
+relaciones con ESE empleador que empezaron hasta ese día: `fecha_antiguedad` (la
+de la DDJJ o la que informó la empresa, antiguedad_ddjj.py) o, sin ella, el
+ingreso; sin ninguna fecha, «Inicial» (0), el mínimo. El renglón guarda la
+antigüedad usada. Un período sin escala cargada deja el renglón «sin_ddjj» en
+cero, como antes. No toca lo declarado en cero en la DDJJ (eso es una fuente),
+ni lo presentado por la empresa (fisca_lsd: su archivo o su carga mandan).
+`activos_con_ddjj` sigue contando solo la DDJJ.
 
 CUOTA = remuneración × alícuota, redondeada al centavo por renglón; vence el mismo
 día que el F.931 del CUIT (fisca_intereses.Calendario: arca_vencimientos o la regla
@@ -68,6 +82,7 @@ import pymysql
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 import contable_oseda
+import fisca_escalas
 import fisca_intereses as FI
 from db import get_connection, puede, usuario_actual, validasesion
 
@@ -86,13 +101,17 @@ ORIGEN_TIPO = {"ddjj": "info", "aeda": "neutro", "nomina": "ok", "lsd": "ok"}
 FUENTES = {"ddjj": "Con DDJJ", "sin_ddjj": "Sin DDJJ", "aeda": "AEDA", "nomina": "Nómina",
            "lsd": "En el archivo", "sin_lsd": "No está en el archivo",
            # La empresa por su enlace (fisca_lsd.py, fisca_novedades.py, 15/11/2026):
-           "manual": "Cargada a mano", "alta": "Alta informada"}
+           "manual": "Cargada a mano", "alta": "Alta informada",
+           # Activo sin DDJJ liquidado con el conformado de la escala (16/11/2026):
+           "escala": "Por escala salarial"}
 FUENTE_TIPO = {"ddjj": "ok", "sin_ddjj": "warn", "aeda": "neutro", "nomina": "info",
-               "lsd": "ok", "sin_lsd": "warn", "manual": "ok", "alta": "info"}
+               "lsd": "ok", "sin_lsd": "warn", "manual": "ok", "alta": "info", "escala": "naranja"}
 #: Tramos del porcentaje de activos con DDJJ (filtro de la grilla).
 TRAMOS = {"100": "100 %", "50": "50 % a 99 %", "1": "1 % a 49 %", "0": "0 %", "sin": "Sin activos"}
 MAX_PERIODOS = 48
 SQL_ESQUEMA = "sql/fisca_liquidacion_ddjj_20261112.sql"
+SQL_ESCALA = "sql/fisca_liquidacion_escala_20261116.sql"
+ANTIGUEDAD_MAX = 35
 RE_MARCA_AEDA = re.compile(r"^\[AEDA fis_deuda (\d+)\]\s*")
 
 
@@ -183,7 +202,7 @@ def leer_padron(cur, desde: datetime.date, hasta: datetime.date) -> dict:
                       AND (fecha_alta IS NULL OR fecha_alta <= %s)
                       AND (fecha_baja IS NULL OR fecha_baja >= %s)""", (hasta, desde))
     titulares = cur.fetchall()
-    cur.execute("""SELECT r.cuil, r.cuit_empleador, r.estado, r.fecha_inicio, r.fecha_fin
+    cur.execute("""SELECT r.cuil, r.cuit_empleador, r.estado, r.fecha_inicio, r.fecha_fin, r.fecha_antiguedad
                      FROM p_relaciones_laborales r
                      JOIN p_afiliados a ON a.cuil = r.cuil
                     WHERE a.cod_parentesco = 0
@@ -224,7 +243,54 @@ def activos_por_empleador(periodo: str, padron: dict, del_periodo: dict | None =
     return activos
 
 
-def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> dict:
+def leer_escalas(cur) -> list[dict]:
+    """Las escalas del convenio: [{periodo_desde, periodo_hasta, antiguedad, basico, almuerzo}]."""
+    cur.execute("""SELECT periodo_desde, periodo_hasta, antiguedad, basico, almuerzo
+                     FROM fisca_escala_salarial ORDER BY periodo_desde, antiguedad""")
+    return cur.fetchall()
+
+
+def escala_del_periodo(periodo: str, escalas: list[dict]) -> dict[int, Decimal]:
+    """{antigüedad: conformado} de la escala que rige el período; {} si no hay."""
+    filas = [e for e in escalas if str(e["periodo_desde"]) <= periodo
+             and (e["periodo_hasta"] is None or str(e["periodo_hasta"]) >= periodo)]
+    if not filas:
+        return {}
+    desde = max(str(e["periodo_desde"]) for e in filas)      # si se pisaran, la más nueva
+    return {int(e["antiguedad"]): fisca_escalas.conformado(e["basico"], e["almuerzo"])
+            for e in filas if str(e["periodo_desde"]) == desde}
+
+
+def anios_cumplidos(desde: datetime.date | None, al: datetime.date) -> int:
+    """Años cumplidos de `desde` a `al`, entre 0 y ANTIGUEDAD_MAX; sin fecha, 0."""
+    if not desde or desde > al:
+        return 0
+    n = al.year - desde.year - ((al.month, al.day) < (desde.month, desde.day))
+    return max(0, min(ANTIGUEDAD_MAX, n))
+
+
+def inicio_antiguedad(padron: dict) -> dict:
+    """{(cuil, cuit): [fechas]} — de dónde se cuenta la antigüedad con cada
+    empleador: `fecha_antiguedad` de la relación o, sin ella, el ingreso."""
+    if "_antig" not in padron:
+        ant: dict[tuple, list] = defaultdict(list)
+        for r in padron["relaciones"]:
+            f = r.get("fecha_antiguedad") or r["fecha_inicio"]
+            if f:
+                ant[(r["cuil"], _digitos(r["cuit_empleador"]))].append((r["fecha_inicio"], f))
+        padron["_antig"] = ant
+    return padron["_antig"]
+
+
+def antiguedad(cuil: str, cuit: str, periodo: str, padron: dict) -> int:
+    """La antigüedad con ese empleador al último día del período (la regla del docstring)."""
+    hasta = limites(periodo)[1]
+    fechas = [f for ini, f in inicio_antiguedad(padron).get((cuil, cuit), []) if not ini or ini <= hasta]
+    return anios_cumplidos(min(fechas) if fechas else None, hasta)
+
+
+def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal,
+          escalas: list[dict] | None = None) -> dict:
     """
     Lo que corresponde liquidar en el período, sin base de datos: la función que
     prueban las simulaciones. `ddjj` son las filas de contable_oseda (pueden
@@ -233,8 +299,12 @@ def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> di
     {cuit: {"lineas": [{cuil, id_afiliado, nombre, remuneracion, cuota, fuente,
     activo}], "activos", "con_ddjj", "afiliados", "fuera_nomina", "remuneracion",
     "importe"}}
+
+    Con `escalas` (leer_escalas), el activo sin DDJJ va con el conformado de la
+    escala del período por su antigüedad (fuente «escala», ver el docstring).
     """
     del_periodo = afiliados_del_periodo(periodo, padron)
+    conformados = escala_del_periodo(periodo, escalas or [])
     activos = activos_por_empleador(periodo, padron, del_periodo)
 
     empleadores: dict[str, dict] = {}
@@ -257,7 +327,11 @@ def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> di
     for cuit, act in activos.items():
         e = empleadores.setdefault(cuit, {"lineas": {}})
         for a in act.values():
-            _linea(e, a, "sin_ddjj", True)
+            l = _linea(e, a, "sin_ddjj", True)
+            if l["fuente"] == "sin_ddjj" and conformados:
+                l["antiguedad"] = antiguedad(a["cuil"], cuit, periodo, padron)
+                l["remuneracion"] = conformados.get(l["antiguedad"], Decimal("0"))
+                l["fuente"] = "escala" if l["remuneracion"] > 0 else "sin_ddjj"
 
     for cuit in list(empleadores):
         e = empleadores[cuit]
@@ -274,13 +348,15 @@ def armar(periodo: str, padron: dict, ddjj: list[dict], alicuota: Decimal) -> di
         e["activos"] = len(activos.get(cuit, {}))
         e["con_ddjj"] = sum(1 for l in lineas if l["activo"] and l["fuente"] == "ddjj")
         e["fuera_nomina"] = sum(1 for l in lineas if not l["activo"])
+        e["por_escala"] = sum(1 for l in lineas if l["fuente"] == "escala")
         e["afiliados"] = sum(1 for l in lineas if l["cuota"] > 0)
         e["remuneracion"] = sum((l["remuneracion"] for l in lineas), Decimal("0"))
         e["importe"] = sum((l["cuota"] for l in lineas), Decimal("0"))
     return empleadores
 
 
-def calcular(cur, periodo: str, padron: dict | None = None, ddjj: list | None = None) -> dict:
+def calcular(cur, periodo: str, padron: dict | None = None, ddjj: list | None = None,
+             escalas: list | None = None) -> dict:
     """Lo que corresponde liquidar en el período, sin grabar nada.
     Sin DDJJ (Railway caído o sin configurar) levanta ErrorLiquidacion."""
     par = parametros(cur)
@@ -291,7 +367,9 @@ def calcular(cur, periodo: str, padron: dict | None = None, ddjj: list | None = 
             ddjj = contable_oseda.ddjj_del_periodo(periodo, {t["cuil"] for t in padron["titulares"]})
         except contable_oseda.ContableNoDisponible as e:
             raise ErrorLiquidacion(f"No se pudieron leer las DDJJ de OSEDA ({e}). No se liquidó nada.") from e
-    return {"empleadores": armar(periodo, padron, ddjj, par["alicuota"]), **par}
+    if escalas is None:
+        escalas = leer_escalas(cur)
+    return {"empleadores": armar(periodo, padron, ddjj, par["alicuota"], escalas), **par}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -306,6 +384,8 @@ def _nota(e: dict, aeda: dict | None) -> str | None:
     partes = []
     if e["activos"] and not e["con_ddjj"]:
         partes.append("Ningún afiliado activo del empleador figura en su DDJJ de OSEDA.")
+    if e.get("por_escala"):
+        partes.append(f"{e['por_escala']} activo(s) sin DDJJ liquidado(s) por la escala salarial (conformado).")
     if e["fuera_nomina"]:
         partes.append(f"{e['fuera_nomina']} afiliado(s) en su DDJJ sin relación laboral con el empleador en el padrón.")
     if aeda:
@@ -389,10 +469,12 @@ def generar(cur, periodo: str, id_usuario: int | None, calculo: dict | None = No
             id_liq = cur.lastrowid
             r["nuevas"] += 1
         cur.executemany("""INSERT INTO fisca_liquidacion_detalle
-                             (id_liquidacion, cuil, id_afiliado, apellido_nombres, remuneracion, cuota, fuente, activo)
-                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                             (id_liquidacion, cuil, id_afiliado, apellido_nombres, remuneracion, cuota, fuente, activo,
+                              antiguedad)
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                         [(id_liq, l["cuil"], l["id_afiliado"], (l["nombre"] or None) and l["nombre"][:100],
-                          l["remuneracion"], l["cuota"], l["fuente"], 1 if l["activo"] else 0)
+                          l["remuneracion"], l["cuota"], l["fuente"], 1 if l["activo"] else 0,
+                          l.get("antiguedad") if l["fuente"] == "escala" else None)
                          for l in e["lineas"]])
         r["importe"] += e["importe"]
         if not e["importe"]:
@@ -425,6 +507,7 @@ def generar_rango(desde: str, hasta: str, id_usuario: int | None, simular: bool 
     try:
         with conn.cursor() as cur:
             padron = leer_padron(cur, limites(periodos[0])[0], limites(periodos[-1])[1])
+            escalas = leer_escalas(cur)
         cuiles = {t["cuil"] for t in padron["titulares"]}
         ddjj = defaultdict(list)
         try:
@@ -438,7 +521,7 @@ def generar_rango(desde: str, hasta: str, id_usuario: int | None, simular: bool 
             conn.begin()
             try:
                 with conn.cursor() as cur:
-                    calculo = calcular(cur, p, padron, ddjj.get(p, []))
+                    calculo = calcular(cur, p, padron, ddjj.get(p, []), escalas)
                     r = generar(cur, p, id_usuario, calculo)
                 r["activos"] = sum(e["activos"] for e in calculo["empleadores"].values())
                 r["con_ddjj"] = sum(e["con_ddjj"] for e in calculo["empleadores"].values())
@@ -595,7 +678,7 @@ def liquidacion_ficha(id_liq):
                              FROM fisca_liquidacion_detalle d
                              LEFT JOIN p_afiliados a ON a.id_afiliado = d.id_afiliado
                             WHERE d.id_liquidacion = %s
-                            ORDER BY d.fuente = 'sin_ddjj', nombre, d.cuil""", (id_liq,))
+                            ORDER BY d.fuente IN ('sin_ddjj', 'escala'), nombre, d.cuil""", (id_liq,))
             detalle = cur.fetchall()
     return render_template("fisca/liquidacion_ficha.html", liq=liq, detalle=detalle, origenes=ORIGENES,
                            origen_tipo=ORIGEN_TIPO, fuentes=FUENTES, fuente_tipo=FUENTE_TIPO,

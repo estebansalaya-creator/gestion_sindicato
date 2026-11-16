@@ -302,7 +302,7 @@ def periodo(cuit, periodo):
                              FROM fisca_liquidacion_detalle d
                              LEFT JOIN p_afiliados a ON a.id_afiliado = d.id_afiliado
                             WHERE d.id_liquidacion = %s
-                            ORDER BY d.fuente = 'sin_ddjj', nombre, d.cuil""", (liq["id"],))
+                            ORDER BY d.fuente IN ('sin_ddjj', 'escala'), nombre, d.cuil""", (liq["id"],))
             detalle = cur.fetchall()
             aplicadas = [a for a in fa.aplicaciones_de(cur, cuit) if a["id_liquidacion"] == liq["id"]]
             pendientes = [c for c in fa.cobros_de(cur, cuit) if c["per"] == per and c["sin_aplicar"] > Decimal("0.01")]

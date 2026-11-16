@@ -166,7 +166,7 @@
           <td>{{ d.nombre or '' }}{% if not d.id_afiliado %} {{ ui.estado('No está en el padrón', 'warn') }}{% endif %}</td>
           <td>{{ ui.estado(fuentes.get(d.fuente, d.fuente), fuente_tipo.get(d.fuente, 'neutro')) }}</td>
           <td>{% if d.fuente == 'aeda' %}<span class="muted">—</span>{% else %}{{ ui.si_no(d.activo) }}{% endif %}</td>
-          <td class="td-right" data-num="{{ d.remuneracion }}">{{ (d.remuneracion or 0) | miles }}</td>
+          <td class="td-right" data-num="{{ d.remuneracion }}">{{ (d.remuneracion or 0) | miles }}{% if d.fuente == 'escala' %}<div class="campo-ayuda">Conformado · {{ 'Inicial' if not d.antiguedad else (d.antiguedad ~ (' año' if d.antiguedad == 1 else ' años')) }}</div>{% endif %}</td>
           <td class="td-right td-fuerte" data-num="{{ d.cuota }}">{{ (d.cuota or 0) | miles }}</td>
         </tr>
         {% else %}

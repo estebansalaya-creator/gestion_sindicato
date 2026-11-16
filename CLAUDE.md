@@ -538,6 +538,14 @@ Lo que cada empleador tiene que pagar por período: `fisca_liquidacion` (una por
   `afiliados` = los liquidados (con remuneración). Detalle: fuente `ddjj` (con `activo` = 1 si además es activo del
   empleador; 0 = lo declara sin relación laboral en el padrón) y `sin_ddjj` (activo no declarado, en cero). Un
   empleador con activos y ninguno en su DDJJ tiene su liquidación en cero, con la nota.
+- **Activos sin DDJJ, por la escala** (pedido del 16/11/2026, `sql/fisca_liquidacion_escala_20261116.sql`; test:
+  `python tests/test_fisca_liquidacion_escala.py`, sin base): el renglón del activo que no está en la DDJJ se
+  liquida con el **conformado** de la escala vigente del período (básico de su antigüedad + almuerzo × 22), fuente
+  «escala», con la antigüedad usada en `fisca_liquidacion_detalle.antiguedad`. Antigüedad: años cumplidos al último
+  día del período (tope 35) desde la fecha más vieja entre las relaciones con ESE empleador que empezaron hasta ese
+  día (`fecha_antiguedad` o el ingreso); sin fecha, «Inicial». Sin escala en el período, sigue «sin_ddjj» en cero.
+  No toca lo declarado en cero en la DDJJ ni lo presentado por la empresa. `activos_con_ddjj` sigue siendo solo DDJJ.
+  El script completa lo ya liquidado con la misma regla (reliquidar da lo mismo).
 - **Ojo al leer el %**: «sin DDJJ» es no estar en la DDJJ de OSEDA; un afiliado con otra obra social no figura ahí
   aunque el empleador lo declare en su F.931. Simulado el 12/11/2026: ≈1.950 activos por mes, ≈64 % con DDJJ.
 - **Cuota** = remuneración × `s_institucion.cuota_alicuota` (2,50 %, en Datos del Sindicato), al centavo por renglón.
@@ -841,7 +849,12 @@ Salariales» en Fiscalización de Cuotas, `sql/menu_escalas_20261114.sql`, Admin
   de 28).
 - **Paritaria 2024-2026**: `sql/fisca_escalas_2025_2026_20261114.sql`, 12 escalas de 2025-01 a 2026-09 pasadas de
   las circulares (origen «manual»). Los meses sin escala propia no tuvieron aumento (confirmado el 14/11/2026).
-  **Falta 2023-10 a 2024-12.**
+
+- **2024** (`sql/fisca_escalas_2024_20261116.sql`, 16/11/2026): 2024-02, 2024-03, 2024-04 y 2024-12 de las circulares,
+  y 2024-11 **calculada** (diciembre − 8 % del básico de abril; almuerzo 6.810). Cada una rige solo su mes: los «%»
+  de las circulares desde dic-24 son sobre el básico de abril 2024, y de ahí sale que entre mayo y noviembre hubo
+  aumentos; marzo 2024 («39 %») sale de una escala con inicial 242.685,68 que rigió entre oct-23 y ene-24. **Siguen
+  faltando 2023-10 a 2024-01 y 2024-05 a 2024-10**: en esos huecos no hay escala.
 - **Conformado** = básico + almuerzo × 22 días (la «comida» del art. 9 CCT 417/05, como en las circulares).
 - **Alta**: rige desde su período hasta el mes anterior a la siguiente (o abierta); la anterior se cierra el mes
   antes si estaba abierta o la pisaba. No se repite un período ni se parte una de AEDA. Corregir o borrar solo lo
