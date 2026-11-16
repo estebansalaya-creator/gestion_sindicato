@@ -338,6 +338,8 @@
           {% if cuota.emails %}{{ ui.boton('Enviar por mail a ' ~ cuota.emails | join(', '), 'primary', href=enlace_nuevo.mailto, icono_='mail') }}
           {% else %}<span class="muted">El empleador no tiene mail en su ficha ni en sus contactos: copiá el enlace y mandalo a mano.</span>{% endif %}
         </div>
+        <p class="chico muted">El mail lleva también la dirección del instructivo en PDF, que la empresa además abre desde el
+          botón «Instructivo» del enlace. Si lo mandás a mano, adjuntá el PDF de «Ver el instructivo».</p>
       {% elif cuota.enlace %}
         <div class="datos">
           <div class="dato"><div class="dato-lbl">Estado</div><div class="dato-val">{{ ui.estado('Vigente', 'ok') }}</div></div>
@@ -362,6 +364,7 @@
           {{ ui.boton('Revocar', 'danger', submit=True, icono_='baja') }}
         </form>
         {% endif %}
+        {{ ui.boton('Ver el instructivo', 'pdf', href=url_for('fisca_lsd.instructivo_interno', id_empresa=empleador.id), icono_='pdf', blank=True) }}
       </div>
     </div>
   </div>

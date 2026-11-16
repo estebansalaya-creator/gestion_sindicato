@@ -7,7 +7,11 @@ condición de agente de retención, domicilio, autoridades y logo. Una sola
 fila en `s_institucion` (sql/institucion_20261107.sql).
 
 De acá sale el membrete de los documentos (la constancia de reintegro) y el
-nombre y el logo del encabezado de todas las pantallas. `encabezado()` se
+nombre y el logo del encabezado de todas las pantallas. Y lo que ven las
+empresas en su enlace y en su instructivo (instructivo_empresa.py): la cuenta
+donde se paga la cuota sindical —una de Tesorería → Cuentas de Fondos— y el
+correo y el teléfono para consultas (`pago_cuota`,
+sql/institucion_cuota_pago_20261115.sql). `encabezado()` se
 guarda un minuto en memoria: se consulta en cada request y cambia una vez por
 año; al guardar se descarta, así el cambio se ve en la pantalla siguiente.
 
@@ -107,6 +111,45 @@ def encabezado() -> dict:
     return _CACHE["valor"]
 
 
+def cuentas_cuota(cur, actual: int | None = None) -> list[dict]:
+    """Las cuentas bancarias habilitadas de Tesorería, para elegir dónde se paga
+    la cuota. La elegida entra aunque la hayan deshabilitado después."""
+    cur.execute("""
+        SELECT f.id, f.nombre, f.numero_de_cuenta AS numero, f.cbu, f.alias, b.nombre AS banco,
+               CAST(f.habilitada AS UNSIGNED) AS habilitada
+          FROM c_cuentas_de_fondos f
+          LEFT JOIN c_codigo_de_banco b ON b.id = f.c_codigo_de_bancoId
+         WHERE (f.tipo_de_cuenta = 'B' AND f.habilitada = 1) OR f.id = %s
+         ORDER BY f.nombre
+    """, (actual or 0,))
+    return cur.fetchall()
+
+
+def pago_cuota(d: dict | None = None) -> dict:
+    """Dónde se paga la cuota y a quién consultar, para el portal de las
+    empresas y su instructivo:
+        cuenta       {nombre, banco, numero, cbu, alias} o None si no se eligió
+        titular/cuit los del sindicato
+        indicaciones lo que tiene que hacer la empresa al pagar
+        email/telefono los de consultas o, si no hay, los generales
+        domicilio/web los del sindicato"""
+    d = obtener() if d is None else d
+    cuenta = None
+    if d.get("cuota_cuenta_fondos"):
+        try:
+            with get_connection() as conn:
+                with conn.cursor() as cur:
+                    cuenta = next((c for c in cuentas_cuota(cur, d["cuota_cuenta_fondos"])
+                                   if c["id"] == d["cuota_cuenta_fondos"]), None)
+        except pymysql.err.Error:
+            cuenta = None
+    return {"cuenta": cuenta, "titular": d.get("nombre"), "cuit": d.get("cuit"),
+            "indicaciones": d.get("cuota_pago_indicaciones"),
+            "email": d.get("cuota_consultas_email") or d.get("email"),
+            "telefono": d.get("cuota_consultas_telefono") or d.get("telefono"),
+            "domicilio": domicilio_completo(d), "web": d.get("web")}
+
+
 def domicilio_completo(d: dict) -> str:
     partes = [d.get("domicilio"), d.get("localidad"),
               (f"CP {d['cp']}" if d.get("cp") else None), d.get("provincia_txt")]
@@ -117,7 +160,7 @@ def domicilio_completo(d: dict) -> str:
 # Pantalla
 # =============================================================================
 
-def _catalogos() -> dict:
+def _catalogos(actual: int | None = None) -> dict:
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT codigo, descripcion FROM arca_responsable_tipo ORDER BY codigo")
@@ -128,12 +171,15 @@ def _catalogos() -> dict:
             provincias = cur.fetchall()
             import recibos_talonario as RT
             talonarios = RT.talonarios(cur) if RT.hay_esquema(cur) else []
+            cuentas = cuentas_cuota(cur, actual)
     return {"condiciones_iva": condiciones, "tasas_iva": tasas, "provincias": provincias,
-            "regimenes_iibb": REGIMENES_IIBB, "talonarios_recibo": talonarios}
+            "regimenes_iibb": REGIMENES_IIBB, "talonarios_recibo": talonarios, "cuentas_cuota": cuentas}
 
 
-def _leer_form(form) -> tuple[dict, list[str]]:
-    """Los valores del formulario, validados. Devuelve (valores, errores)."""
+def _leer_form(form, actual_cuenta: int | None = None) -> tuple[dict, list[str]]:
+    """Los valores del formulario, validados. Devuelve (valores, errores).
+    `actual_cuenta`: la cuenta de la cuota ya guardada, que vale aunque se haya
+    deshabilitado en Tesorería."""
     v, errores = {}, []
     for campo, (rotulo, largo) in TEXTO.items():
         texto = re.sub(r"\s+", " ", form.get(campo) or "").strip()
@@ -211,7 +257,37 @@ def _leer_form(form) -> tuple[dict, list[str]]:
                 errores.append(f"El talonario de los recibos de {rotulo} está deshabilitado.")
         if v.get("talonario_recibo_cuota") and v.get("talonario_recibo_cuota") == v.get("talonario_recibo_fisca"):
             errores.append("Los recibos de cuota sindical y los de fiscalización van en talonarios distintos.")
+    # Pago de la cuota y consultas (sql/institucion_cuota_pago_20261115.sql).
+    if "cuota_cuenta_fondos" in form:
+        errores += _leer_pago_cuota(form, v, actual_cuenta)
     return v, errores
+
+
+def _leer_pago_cuota(form, v: dict, actual: int | None) -> list[str]:
+    """La cuenta donde se paga la cuota y el contacto para consultas. Valida en `v`."""
+    errores = []
+    texto = (form.get("cuota_cuenta_fondos") or "").strip()
+    v["cuota_cuenta_fondos"] = int(texto) if texto.isdigit() else None
+    if v["cuota_cuenta_fondos"]:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                validas = {c["id"] for c in cuentas_cuota(cur, actual)}
+        if v["cuota_cuenta_fondos"] not in validas:
+            errores.append("La cuenta para pagar la cuota tiene que ser una cuenta bancaria habilitada de Tesorería.")
+    lineas = [re.sub(r"[ \t]+", " ", l).strip() for l in (form.get("cuota_pago_indicaciones") or "").splitlines()]
+    indicaciones = "\n".join(l for l in lineas if l)
+    if len(indicaciones) > 500:
+        errores.append("Las indicaciones para el pago van hasta 500 caracteres.")
+    v["cuota_pago_indicaciones"] = indicaciones or None
+    email = (form.get("cuota_consultas_email") or "").strip()
+    if email and (len(email) > 100 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email)):
+        errores.append(f"El correo para consultas «{email}» no es válido.")
+    v["cuota_consultas_email"] = email or None
+    telefono = re.sub(r"\s+", " ", form.get("cuota_consultas_telefono") or "").strip()
+    if len(telefono) > 50:
+        errores.append("El teléfono para consultas va hasta 50 caracteres.")
+    v["cuota_consultas_telefono"] = telefono or None
+    return errores
 
 
 def _guardar_logo(archivo) -> tuple[str | None, str | None]:
@@ -244,7 +320,7 @@ def datos():
     errores = []
 
     if request.method == "POST" and not falta_tabla:
-        valores, errores = _leer_form(request.form)
+        valores, errores = _leer_form(request.form, actual.get("cuota_cuenta_fondos"))
         logo = request.files.get("logo")
         if not errores:
             if request.form.get("borrar_logo"):
@@ -277,7 +353,7 @@ def datos():
 
     return render_template("admin/institucion.html", d=actual, errores=errores,
                            falta_tabla=falta_tabla, tiene_logo=bool(ruta_logo(actual)),
-                           max_mb=LOGO_MAX_MB, **_catalogos())
+                           max_mb=LOGO_MAX_MB, **_catalogos(actual.get("cuota_cuenta_fondos")))
 
 
 def _hay_tabla() -> bool:

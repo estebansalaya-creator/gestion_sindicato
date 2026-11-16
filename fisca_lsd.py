@@ -16,6 +16,14 @@ al generarlo; para volver a mandarlo se genera otro, y el anterior deja de
 andar. «Revocar» lo corta sin generar otro. Con el enlace la empresa ve solo lo
 suyo: sube archivos de su CUIT y descarga sus planillas.
 
+EL INSTRUCTIVO (pedido del 15/11/2026: «en el enlace enviar siempre el pdf del
+instructivo»). Todas las páginas del enlace tienen el botón «Instructivo»
+(/empresas/<token>/instructivo.pdf, instructivo_empresa.py) y la de la empresa
+el bloque «Pago de la cuota y consultas»: la cuenta y el correo de Datos del
+Sindicato (institucion.pago_cuota). El mail del enlace trae la dirección del
+instructivo: un mailto no adjunta archivos. Adentro, /fiscalizacion/lsd/
+instructivo.pdf (?id_empresa=) para mirarlo o adjuntarlo a mano.
+
 QUÉ HACE CON EL ARCHIVO
 1. Lo lee y lo valida: el diseño de ARCA, el CUIT del enlace, un período que ya
    empezó. Un archivo con errores no se guarda: se muestran los renglones.
@@ -179,15 +187,25 @@ def url_enlace(token: str) -> str:
     return url_for("portal.empresa", token=token, _external=True)
 
 
+def url_instructivo(enlace: str) -> str:
+    """El instructivo en PDF de la empresa: cuelga de su enlace (portal.instructivo)."""
+    return enlace.rstrip("/") + "/instructivo.pdf"
+
+
 def mailto(empresa: dict, emails: list[str], enlace: str, inst: dict | None = None) -> str:
-    """El mail para mandarle el enlace a la empresa, listo para el cliente de correo."""
+    """El mail para mandarle el enlace a la empresa, listo para el cliente de
+    correo. Un mailto no puede adjuntar archivos: el instructivo va como
+    dirección, y se abre también desde el botón «Instructivo» del enlace."""
     sigla = (inst or {}).get("sigla") or "el sindicato"
-    asunto = f"Cuota sindical: enlace para presentar el Libro de Sueldos Digital — {empresa.get('razon_social') or ''}"
+    asunto = f"Cuota sindical: enlace para presentar la cuota y la nómina — {empresa.get('razon_social') or ''}"
     cuerpo = (
-        f"Estimados:\n\nDesde este enlace pueden presentar todos los meses la liquidación de la cuota sindical "
-        f"de {sigla}, subiendo el archivo de liquidación del Libro de Sueldos Digital que su sistema de sueldos "
-        f"genera para ARCA (el .txt de «Liquidación de SyJ - DJ F931»).\n\n{enlace}\n\n"
-        "El sistema arma la planilla con los afiliados activos y la cuota a pagar, y la pueden descargar en Excel. "
+        f"Estimados:\n\nDesde este enlace pueden presentar todos los meses la cuota sindical de {sigla} —subiendo el "
+        f"archivo de liquidación del Libro de Sueldos Digital que su sistema de sueldos genera para ARCA (el .txt de "
+        f"«Liquidación de SyJ - DJ F931») o cargando las remuneraciones a mano— y mantener al día la nómina de "
+        f"afiliados, informando altas y bajas.\n\n{enlace}\n\n"
+        f"Instructivo de uso (PDF), con la cuenta donde se paga la cuota y el correo para consultas:\n"
+        f"{url_instructivo(enlace)}\n\n"
+        "El sistema arma la planilla con los afiliados y la cuota a pagar, y la pueden descargar en Excel. "
         "Si en el mes hicieron más de una liquidación (por ejemplo el SAC aparte), suban la última.\n\n"
         "Saludos.\n\n— \n" + CONFIDENCIALIDAD)
     return (f"mailto:{','.join(emails)}?subject={quote(asunto)}&body={quote(cuerpo)}")
@@ -742,6 +760,20 @@ def _token_con_formato():
         abort(404)
 
 
+@portal_bp.app_template_global("pago_cuota_portal")
+def pago_cuota_portal() -> dict:
+    """La cuenta donde se paga la cuota y el contacto (institucion.pago_cuota),
+    para el bloque «Pago de la cuota y consultas» y el pie del portal. Si no
+    se pueden leer, el portal se muestra igual, sin ellos."""
+    import institucion
+    try:
+        return institucion.pago_cuota()
+    except Exception:            # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).exception("No se pudieron leer los datos de pago de la cuota")
+        return {}
+
+
 @portal_bp.errorhandler(404)
 def _portal_404(_e):
     return render_template("portal/invalido.html", inst=_institucion()), 404
@@ -928,6 +960,25 @@ def falta_esquema_manual(cur) -> bool:
     return not (cur.fetchone() or {}).get("n")
 
 
+@portal_bp.route("/<token>/instructivo.pdf")
+def instructivo(token):
+    """El instructivo en PDF, con los datos de pago y de contacto de hoy y el
+    nombre y el CUIT de la empresa. Se abre en el navegador (no se descarga)."""
+    import instructivo_empresa
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            enlace = _enlace_o_404(cur, token)
+    buf, nombre = instructivo_empresa.pdf({"razon_social": enlace.get("razon_social"), "cuit": enlace["cuit"]})
+    return _pdf_en_linea(buf, nombre)
+
+
+def _pdf_en_linea(buf: io.BytesIO, nombre: str):
+    buf.seek(0)
+    respuesta = send_file(buf, mimetype="application/pdf", as_attachment=False, download_name=nombre)
+    respuesta.headers["Cache-Control"] = "no-store"
+    return respuesta
+
+
 @portal_bp.route("/<token>/presentacion/<int:id_pres>")
 def presentacion(token, id_pres):
     with get_connection() as conn:
@@ -1031,6 +1082,26 @@ def lista(errores: list[str] | None = None, estado_http: int = 200):
                            novedades=novedades, sin_novedades=sin_novedades, nov_estado=nov_estado,
                            estados_nov=NOV.ESTADOS, tipos_nov=NOV.TIPOS, sql_novedades=NOV.SQL_ESQUEMA,
                            puede_empleador=puede(url_for("empleadores.abm_empleadores"))), estado_http
+
+
+@fisca_lsd_bp.route("/lsd/instructivo.pdf")
+def instructivo_interno():
+    """El mismo instructivo que ve la empresa, para mirarlo o adjuntarlo a mano.
+    Con ?id_empresa= sale a nombre de ese empleador."""
+    salida = _guardia()
+    if salida:
+        return salida
+    import instructivo_empresa
+    empresa = None
+    if (request.args.get("id_empresa") or "").isdigit():
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT razon_social, CUIT FROM p_empresas WHERE id = %s", (int(request.args["id_empresa"]),))
+                f = cur.fetchone()
+        if f:
+            empresa = {"razon_social": f["razon_social"], "cuit": FL._digitos(f["CUIT"])}
+    buf, nombre = instructivo_empresa.pdf(empresa)
+    return _pdf_en_linea(buf, nombre)
 
 
 @fisca_lsd_bp.route("/lsd/subir", methods=["POST"])

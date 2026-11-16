@@ -18,6 +18,7 @@
     <p>Lo que presentan las empresas para liquidar la cuota sindical —con el archivo del Libro de Sueldos Digital o cargado a mano— y las altas y bajas que informan. El enlace de cada empresa se genera en Empleadores, solapa «Cuota sindical».</p>
   </div>
   <div class="page-header-acciones">
+    {{ ui.boton('Instructivo de las empresas', 'pdf', href=url_for('fisca_lsd.instructivo_interno'), icono_='pdf', blank=True) }}
     {% if puede(url_for('fisca_liq.liquidacion')) %}{{ ui.boton('Liquidación de cuota sindical', 'secondary', href=url_for('fisca_liq.liquidacion', periodo=periodo)) }}{% endif %}
   </div>
 </div>

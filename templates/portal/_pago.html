@@ -1,0 +1,42 @@
+{% import "_ui.html" as ui %}
+{#
+  «Pago de la cuota y consultas» del portal de la empresa: la cuenta donde se
+  paga la cuota y el contacto, de Datos del Sindicato (institucion.pago_cuota,
+  por pago_cuota_portal()), y el instructivo en PDF. Va en la página de la
+  empresa y, ya presentada la cuota, en la de la planilla. Los mismos datos
+  salen en el instructivo (instructivo_empresa.py).
+#}
+{% macro bloque(pago, token, nota) -%}
+{% set c = pago.cuenta %}
+<div class="card" id="pago">
+  {{ ui.card_head('Pago de la cuota y consultas', nota=nota) }}
+  <div class="card-body">
+    {% if not c %}
+    <p class="muted">Pidan al sindicato los datos de la cuenta para pagar la cuota.</p>
+    {% endif %}
+    <div class="datos">
+      {% if c %}
+      {% if pago.titular %}<div class="dato"><div class="dato-lbl">Titular</div><div class="dato-val">{{ pago.titular }}</div></div>{% endif %}
+      {% if pago.cuit and pago.cuit | length == 11 %}<div class="dato"><div class="dato-lbl">CUIT</div><div class="dato-val mono">{{ pago.cuit[:2] }}-{{ pago.cuit[2:10] }}-{{ pago.cuit[10:] }}</div></div>{% endif %}
+      {% if c.banco %}<div class="dato"><div class="dato-lbl">Banco</div><div class="dato-val">{{ c.banco }}</div></div>{% endif %}
+      {% if c.numero %}<div class="dato"><div class="dato-lbl">Cuenta N°</div><div class="dato-val mono">{{ c.numero }}</div></div>{% endif %}
+      {% for campo, rotulo in [('cbu', 'CBU'), ('alias', 'Alias')] if c[campo] %}
+      <div class="dato"><div class="dato-lbl">{{ rotulo }}</div>
+        <div class="dato-val mono">{{ c[campo] }}
+          {{ ui.boton('Copiar', 'ghost', chico=True, datos={'copiar': c[campo]}, onclick="navigator.clipboard.writeText(this.dataset.copiar).then(function(){ this.textContent = 'Copiado'; }.bind(this))") }}</div></div>
+      {% endfor %}
+      {% if pago.indicaciones %}<div class="dato ancho"><div class="dato-lbl">Al pagar</div><div class="dato-val indicaciones-pago">{{ pago.indicaciones }}</div></div>{% endif %}
+      {% endif %}
+      {% if pago.email or pago.telefono %}
+      <div class="dato ancho"><div class="dato-lbl">Consultas</div><div class="dato-val">
+        {% if pago.email %}<a href="mailto:{{ pago.email }}">{{ pago.email }}</a>{% endif %}
+        {%- if pago.email and pago.telefono %} · {% endif %}
+        {% if pago.telefono %}{{ pago.telefono }}{% endif %}</div></div>
+      {% endif %}
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Ver el instructivo', 'pdf', href=url_for('portal.instructivo', token=token), icono_='pdf', blank=True) }}
+    </div>
+  </div>
+</div>
+{%- endmacro %}

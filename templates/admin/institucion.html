@@ -184,6 +184,81 @@
   </div>
   {% endif %}
 
+  {% if 'cuota_cuenta_fondos' in d %}
+  {#- Lo que ven las empresas en su enlace y en su instructivo en PDF
+      (institucion.pago_cuota, instructivo_empresa.py). La cuenta es una de
+      Tesorería → Cuentas de Fondos: el banco, el número, el CBU y el alias se
+      corrigen allá; acá se elige cuál. #}
+  <div class="bloque" id="pago-cuota">
+    <div class="bloque-titulo">Pago de la cuota sindical y consultas</div>
+    <div class="campos">
+      <div class="campo" style="--span:6;">
+        <label for="cuota_cuenta_fondos">Cuenta donde se paga la cuota</label>
+        <select name="cuota_cuenta_fondos" id="cuota_cuenta_fondos">
+          <option value="">— Sin elegir: la empresa pide los datos al sindicato —</option>
+          {% for c in cuentas_cuota %}
+          <option value="{{ c.id }}" {{ 'selected' if c.id == d.get('cuota_cuenta_fondos') }}
+                  data-banco="{{ c.banco or '' }}" data-numero="{{ c.numero or '' }}"
+                  data-cbu="{{ c.cbu or '' }}" data-alias="{{ c.alias or '' }}">{{ c.nombre }}{{ ' (deshabilitada)' if not c.habilitada }}</option>
+          {% endfor %}
+        </select>
+        <small class="campo-ayuda">Una de Tesorería → Cuentas de Fondos. El titular y el CUIT son los de Identificación.</small>
+      </div>
+      {{ texto('cuota_consultas_email', 'Correo para consultas', 3, 100, tipo='email',
+               ayuda='Vacío: el email de Domicilio y contacto.') }}
+      {{ texto('cuota_consultas_telefono', 'Teléfono para consultas', 3, 50,
+               ayuda='Vacío: el teléfono de Domicilio y contacto.') }}
+      <div class="campo" style="--span:12;">
+        <div class="datos" id="pago-cuota-datos">
+          <div class="dato"><div class="dato-lbl">Banco</div><div class="dato-val" data-dato="banco">—</div></div>
+          <div class="dato"><div class="dato-lbl">Cuenta N°</div><div class="dato-val mono" data-dato="numero">—</div></div>
+          <div class="dato"><div class="dato-lbl">CBU</div><div class="dato-val mono" data-dato="cbu">—</div></div>
+          <div class="dato"><div class="dato-lbl">Alias</div><div class="dato-val mono" data-dato="alias">—</div></div>
+        </div>
+        <small class="campo-ayuda" id="pago-cuota-falta" hidden></small>
+      </div>
+      <div class="campo" style="--span:12;">
+        <label for="cuota_pago_indicaciones">Indicaciones para el pago</label>
+        <textarea name="cuota_pago_indicaciones" id="cuota_pago_indicaciones" rows="3" maxlength="500"
+                  placeholder="Ej.: En el concepto de la transferencia pongan el CUIT de la empresa y el mes. Manden el comprobante a cuotas@…">{{ d.get('cuota_pago_indicaciones') or '' }}</textarea>
+        <small class="campo-ayuda">Salen debajo de los datos de la cuenta. Hasta 500 caracteres.</small>
+      </div>
+    </div>
+    {% if not d.get('cuit') %}
+    {{ ui.aviso('Falta el CUIT del sindicato en Identificación: la empresa lo necesita para transferir y el instructivo sale sin él.', 'warning') }}
+    {% endif %}
+    <p class="campo-ayuda">Las empresas ven estos datos en su enlace, en el bloque «Pago de la cuota y consultas», y en el
+       instructivo en PDF que se abre desde ahí. El instructivo se arma cada vez que se abre: un cambio acá ya sale en el
+       próximo.</p>
+    {% if puede(url_for('fisca_lsd.lista')) %}
+    <div class="fila" style="margin-top:8px;">
+      {{ ui.boton('Ver el instructivo', 'pdf', href=url_for('fisca_lsd.instructivo_interno'), icono_='pdf', blank=True) }}
+      <span class="chico muted">Con lo último guardado.</span>
+    </div>
+    {% endif %}
+  </div>
+  <script>
+    (function () {
+      var sel = document.getElementById('cuota_cuenta_fondos');
+      var falta = document.getElementById('pago-cuota-falta');
+      function pintar() {
+        var op = sel.options[sel.selectedIndex], faltan = [];
+        document.querySelectorAll('#pago-cuota-datos [data-dato]').forEach(function (el) {
+          var v = op.value ? (op.dataset[el.dataset.dato] || '') : '';
+          el.textContent = v || '—';
+          if (op.value && !v && el.dataset.dato !== 'numero') faltan.push(el.dataset.dato === 'cbu' ? 'el CBU' : el.dataset.dato === 'alias' ? 'el alias' : 'el banco');
+        });
+        falta.hidden = !faltan.length;
+        falta.textContent = faltan.length ? 'A esta cuenta le falta ' + faltan.join(' y ') + ': se carga en Tesorería → Cuentas de Fondos.' : '';
+      }
+      sel.addEventListener('change', pintar);
+      pintar();
+    })();
+  </script>
+  {% elif d %}
+  {{ ui.aviso('Falta correr sql/institucion_cuota_pago_20261115.sql para configurar la cuenta donde se paga la cuota y el correo para consultas.', 'warning') }}
+  {% endif %}
+
   <div class="bloque">
     <div class="bloque-titulo">Domicilio y contacto</div>
     <div class="campos">

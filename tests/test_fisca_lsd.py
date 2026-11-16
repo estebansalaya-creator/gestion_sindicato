@@ -13,6 +13,7 @@ import re
 import sys
 import zipfile
 from decimal import Decimal
+from urllib.parse import quote
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
@@ -179,6 +180,8 @@ ok(len(e) == 1 and F in e[0], "un negativo es un error, con su CUIL")
 print("\nEl mail del enlace")
 m = L.mailto({"razon_social": "EMPRESA SA"}, ["a@b.com"], "https://x/empresas/t", {"sigla": "AEDA"})
 ok(m.startswith("mailto:a@b.com?subject=") and "Ley%2025.326" in m, "lleva el texto de confidencialidad")
+ok(quote("https://x/empresas/t/instructivo.pdf", safe="") in m or "https%3A//x/empresas/t/instructivo.pdf" in m,
+   "lleva la dirección del instructivo en PDF")
 
 print()
 print("Todo bien." if not fallos else f"{len(fallos)} FALLAS.")

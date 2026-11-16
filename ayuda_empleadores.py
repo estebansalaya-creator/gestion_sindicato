@@ -103,6 +103,12 @@ SECCIONES = [
      "confidencialidad.",
      "La empresa entra con ese enlace, sin usuario ni clave, sube su archivo y lo presenta.",
    ]},
+   {"tipo": "texto", "html":
+    "<b>El instructivo.</b> El mail del enlace trae también la dirección del instructivo en PDF, y la "
+    "empresa lo abre desde el botón <b>Instructivo</b> de cualquier página del enlace, junto con la "
+    "cuenta donde se paga la cuota y el correo para consultas (de Datos del Sindicato). Si el enlace "
+    "se manda a mano, <b>Ver el instructivo</b> en la solapa baja el PDF a nombre de la empresa para "
+    "adjuntarlo."},
    {"tipo": "campos", "items": [
      ("Lo que ve la empresa", "Su nómina (los afiliados que según el padrón trabajan ahí), lo que "
       "presentó y las altas y bajas que informó, con su estado."),

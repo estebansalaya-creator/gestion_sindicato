@@ -1,3 +1,4 @@
+{% import "_ui.html" as ui %}
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -19,14 +20,27 @@
   #}
   <div class="portal-page">
     <header class="portal-top">
-      <h1>{{ inst.nombre or inst.sigla or 'Sindicato' }}</h1>
-      <p>Cuota sindical · Nómina, altas y bajas, y presentación de la cuota</p>
+      <div>
+        <h1>{{ inst.nombre or inst.sigla or 'Sindicato' }}</h1>
+        <p>Cuota sindical · Nómina, altas y bajas, y presentación de la cuota</p>
+      </div>
+      {# Con el enlace válido, el instructivo en PDF desde cualquier página. #}
+      {% if token is defined and token %}
+      <div class="portal-top-accion">
+        {{ ui.boton('Instructivo', 'secondary', href=url_for('portal.instructivo', token=token), icono_='pdf', blank=True, chico=True) }}
+      </div>
+      {% endif %}
     </header>
     <main class="portal-cuerpo">
       {% block content %}{% endblock %}
     </main>
     <footer class="portal-pie">
       Este enlace es personal de la empresa. Si dejó de andar o lo necesitan para otra persona, pídanlo al sindicato.
+      {%- set pago = pago_cuota_portal() %}
+      {% if pago.email or pago.telefono %}<br>Consultas:
+        {% if pago.email %}<a href="mailto:{{ pago.email }}">{{ pago.email }}</a>{% endif %}
+        {%- if pago.email and pago.telefono %} · {% endif %}
+        {% if pago.telefono %}{{ pago.telefono }}{% endif %}{% endif %}
     </footer>
   </div>
 </body>

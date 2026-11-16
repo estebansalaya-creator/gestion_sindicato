@@ -68,6 +68,8 @@ SIN_AYUDA = {
     "static", "login", "logout", "estilos", "ayuda.indice", "ayuda.manual",
     "portal.empresa", "portal.presentacion", "portal.planilla_portal", "portal.manual",
     "institucion.logo", "contactos.abm_areas",
+    # El instructivo de las empresas, en PDF (instructivo_empresa.py).
+    "portal.instructivo", "fisca_lsd.instructivo_interno",
 }
 #: Lo mismo por forma del endpoint: lo que devuelve datos o un archivo.
 _RE_SIN_AYUDA = re.compile(

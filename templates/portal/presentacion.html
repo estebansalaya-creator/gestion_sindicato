@@ -1,6 +1,7 @@
 {% extends "portal/base.html" %}
 {% import "_ui.html" as ui %}
 {% import "fisca/_planilla_lsd.html" as planilla %}
+{% import "portal/_pago.html" as pago_ui %}
 {% set manual = pres.carga == 'manual' %}
 {% block title %}Cuota sindical {{ plan.periodo | periodo }}{% endblock %}
 
@@ -59,6 +60,10 @@
     {% endif %}
   </div>
 </div>
+
+{% if pres.estado == 'presentada' %}
+{{ pago_ui.bloque(pago_cuota_portal(), token, 'Paguen $ ' ~ ((plan.importe or 0) | miles) ~ ' hasta el ' ~ plan.vencimiento.strftime('%d/%m/%Y') ~ '.') }}
+{% endif %}
 
 <div class="card">
   {% if manual %}

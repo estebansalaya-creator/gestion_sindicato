@@ -145,6 +145,11 @@ SECCIONES = [
       "SUSS), con sus alícuotas por defecto. Solo esos se calculan al pagar."),
      ("Cuota sindical", "La alícuota (2,50 %), los talonarios de recibos de cuota y de fiscalización, "
       "el lugar de pago y el plazo de intimación de las actas."),
+     ("Pago de la cuota sindical y consultas", "La cuenta donde las empresas pagan la cuota —una de "
+      "Tesorería → Cuentas de Fondos: el banco, el número, el CBU y el alias se corrigen allá—, las "
+      "indicaciones para el pago y el correo y el teléfono para consultas (vacíos, los generales). Las "
+      "empresas los ven en su enlace y en el instructivo en PDF; <b>Ver el instructivo</b> lo muestra "
+      "como lo reciben."),
      ("Logo", "Sale en el encabezado y en los PDF (un SVG se ve en pantalla pero no en los PDF)."),
    ]},
    {"tipo": "aviso", "html":

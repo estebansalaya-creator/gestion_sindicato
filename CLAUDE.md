@@ -95,6 +95,7 @@ gestion_sindicato/
   arca_padron.py          padrón de ARCA (ws_sr_padron_a13): CUIL de un documento y datos de la persona
   arca_constancia.py      constancia de inscripción (ws_sr_constancia_inscripcion): empleadores y proveedores
   fisca_novedades.py      altas y bajas de afiliados que informa la empresa por su enlace, y su aprobación
+  instructivo_empresa.py  el instructivo en PDF del enlace de las empresas (texto en docs/instructivo_empresa.md)
   empleadores_arca.py     «Actualizar desde ARCA»: constancia y domicilio fiscal de los empleadores que aportan
   probar_arca.py          prueba desde la consola el certificado, el token de cada servicio y una consulta
   exportar.py             POST /exportar/excel — el .xlsx de cualquier grilla
@@ -129,6 +130,7 @@ gestion_sindicato/
   .env.example            plantilla versionada
   .gitignore  .gitattributes  subir_github.bat   repositorio propio (ver «Repositorio»)
   sql/                    scripts de esquema y permisos, se corren a mano
+  docs/instructivo_empresa.md  el texto del instructivo de las empresas (Markdown simple; ver instructivo_empresa.py)
   static/css/sindicato.css    LA hoja de estilos: no hay otra
   templates/
     base.html             estructura, menú, JS común (grillas, solapas, diálogos)
@@ -155,7 +157,8 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/lsd           presentaciones del LSD, ?periodo, ?estado; /subir POST; /<id> ficha; /<id>/confirmar,
                              /descartar, /anular POST; /<id>/planilla.xlsx, /<id>/archivo; /enlace/<id_empresa> POST;
                              ?nov=pendiente|aprobada|rechazada|retirada|todas (altas y bajas de las empresas);
-                             /novedad/<id>/aprobar, /rechazar POST; /novedad/<id>/ficha
+                             /novedad/<id>/aprobar, /rechazar POST; /novedad/<id>/ficha;
+                             /instructivo.pdf (?id_empresa=): el instructivo de las empresas
 /fiscalizacion/actas         actas: ?q, ?estado; /nueva?cuit= (&fecha_calculo, &periodo_desde, &periodo_hasta,
                              &con_pagos_tarde: recalcula sin guardar); /periodo (?id_acta=&periodo= o ?cuit=&periodo=
                              &fecha_calculo=&con_pagos_tarde=: el detalle de un período, HTML para el diálogo);
@@ -171,7 +174,7 @@ repetiría en la URL lo que dice el dominio.
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
                              /descartar POST, /planilla.xlsx); /manual?periodo= (GET y POST: la cuota a mano);
-                             /alta, /baja POST; /novedad/<id>/retirar POST
+                             /alta, /baja POST; /novedad/<id>/retirar POST; /instructivo.pdf (en el navegador)
 /login /logout /menu   /menu: el panel de inicio con los accesos directos (sin ninguno, al Panel de Fiscalización)
 /accesos-directos/alternar, /quitar, /ordenar   POST JSON: la chincheta del menú y las tarjetas del panel
 /empleadores         ABM, ?edit=ID, ?solapa=arca|cuota; /empleadores/arca ?cuit=&id=: la constancia de ARCA completa
@@ -660,8 +663,20 @@ el empleador completaba a mano («no era nada seguro»).
   (estado inactiva si ya pasó); la afiliación no se toca. Todo con su renglón en `p_afiliados_movimientos` y el
   empleador de la ficha sincronizado (`afiliados._sincronizar_empleador`). Probado de punta a punta contra una base
   MariaDB armada con estas tablas.
-- **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo) y avisarle a la empresa los meses
-  que no presentó.
+- **Instructivo y pago** (pedido del 15/11/2026: «en el enlace enviar siempre el pdf del instructivo»; datos en
+  `sql/institucion_cuota_pago_20261115.sql`): todas las páginas del enlace tienen el botón **Instructivo** en la
+  barra (`/empresas/<token>/instructivo.pdf`, se abre en el navegador, a nombre de la empresa), y la de la empresa
+  —y la planilla ya presentada— el bloque **«Pago de la cuota y consultas»** (`templates/portal/_pago.html`): la
+  cuenta (titular, CUIT, banco, número, CBU y alias, con «Copiar»), las indicaciones para el pago y el contacto; el
+  pie repite el contacto. Todo sale de `institucion.pago_cuota()` (global `pago_cuota_portal()` en las plantillas).
+  El PDF lo arma `instructivo_empresa.py` en cada pedido con reportlab y el membrete de `pagos_pdf._Doc`: el texto es
+  `docs/instructivo_empresa.md` (el mismo del documento «Instructivo para el empleador»), con `{sigla}`,
+  `{alicuota}`, `[[pago]]` y `[[contacto]]` completados con Datos del Sindicato; sin cuenta elegida dice que pidan
+  los datos al sindicato, nunca «pendiente». El mail del enlace (`mailto`) trae la dirección del instructivo: un
+  mailto no puede adjuntar. Adentro, `/fiscalizacion/lsd/instructivo.pdf` (botón en Presentaciones LSD, en la
+  solapa Cuota sindical del empleador con `?id_empresa=` y en Datos del Sindicato) para mirarlo o adjuntarlo a mano.
+- **Pendiente**: el envío del mail desde el sistema (hoy abre el cliente de correo, por eso el instructivo va como
+  dirección y no adjunto) y avisarle a la empresa los meses que no presentó.
 
 ## Cuenta corriente de empleadores
 
@@ -984,6 +999,11 @@ RNOS y código de OS. Pantalla: Administración del Sistema → Datos del Sindic
   de gestion_adm (`retenciones.py`) se trae cambiando el nombre de la tabla.
 - **Talonarios de los recibos** (`talonario_recibo_cuota`, `talonario_recibo_fisca`), en el bloque «Cuota sindical»:
   distintos, habilitados y de la clasificación de recibos.
+- **Pago de la cuota sindical y consultas** (`sql/institucion_cuota_pago_20261115.sql`): `cuota_cuenta_fondos` (FK a
+  `c_cuentas_de_fondos`: se elige una cuenta bancaria habilitada de Tesorería; banco, número, CBU y alias se
+  corrigen allá; la ya elegida vale aunque se deshabilite), `cuota_pago_indicaciones` (hasta 500, respeta los
+  renglones), `cuota_consultas_email` y `cuota_consultas_telefono` (vacíos: `email` y `telefono` generales). Titular
+  y CUIT son los de Identificación. Lo ven las empresas en su enlace y en el instructivo (`institucion.pago_cuota`).
 - El logo va a `SIND_ADJUNTOS/institucion/logo.<ext>`: es la carpeta en la que el pool ya escribe.
   Un SVG se ve en pantalla pero reportlab no lo dibuja en los PDF.
 

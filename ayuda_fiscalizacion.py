@@ -171,6 +171,9 @@ SECCIONES = [
      ("Carga a mano", "Sin el archivo: la empresa carga la remuneración de cada afiliado de su nómina "
       "en el período (y de las altas que informó). En la lista dice «A mano»; el control contra la DDJJ "
       "de OSEDA es el mismo."),
+     ("Instructivo de las empresas", "El PDF que la empresa abre desde el botón <b>Instructivo</b> de "
+      "su enlace: cómo presentar, la nómina, las altas y bajas, la cuenta donde se paga la cuota y el "
+      "contacto. Los datos de pago y de contacto salen de Datos del Sindicato el día que se abre."),
    ]},
    {"tipo": "texto", "html":
     "<b>Altas y bajas que informan las empresas.</b> Por su enlace, la empresa ve su nómina —los "

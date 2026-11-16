@@ -1,9 +1,12 @@
 {% extends "portal/base.html" %}
 {% import "_ui.html" as ui %}
+{% import "portal/_pago.html" as pago_ui %}
 {% block title %}{{ enlace.razon_social or enlace.cuit }}{% endblock %}
 
 {#
   Portal de la empresa (fisca_lsd.empresa), un bloque debajo del otro:
+    0. Pago de la cuota y consultas: la cuenta, el contacto y el instructivo
+       en PDF (portal/_pago.html; los datos, de Datos del Sindicato).
     1. Presentar la cuota de un mes: subir el archivo del Libro de Sueldos
        Digital, o cargar las remuneraciones a mano (fisca_lsd.manual).
     2. La nómina: los afiliados que según el padrón trabajan en la empresa, con
@@ -25,6 +28,9 @@
 
 {{ ui.mensajes(errores) }}
 {{ ui.aviso(confidencialidad, 'info') }}
+
+<!-- ── 0. Pago de la cuota y consultas ───────────────────────────────────── -->
+{{ pago_ui.bloque(pago_cuota_portal(), token, 'La cuota se paga en esta cuenta hasta el vencimiento que figura en la planilla presentada. El instructivo explica todo el enlace.') }}
 
 <!-- ── 1. Presentar la cuota ─────────────────────────────────────────────── -->
 <div class="card" id="presentar">
