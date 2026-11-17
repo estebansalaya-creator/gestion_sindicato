@@ -104,6 +104,27 @@ try:
 except C.ErrorCampania:
     ok(True, "adheridos sin convenio da error")
 
+print("Lista con los filtros del padrón")
+f = C.filtro_de({"estado": "baja", "tipo": "titular", "sexo": "F", "edad_desde": "30", "edad_hasta": "50",
+                 "atributo": "7", "q": "  perez  ", "orden": "edad", "basura": "x"})
+ok(f == {"q": "perez", "estado": "baja", "tipo": "titular", "sexo": "F", "edad_desde": 30, "edad_hasta": 50,
+         "atributo": "7"}, f"se guardan solo los filtros, validados: {f}")
+ok(C.filtro_de({"estado": "cualquiera", "sexo": "Z", "edad_desde": "999"})["estado"] == "activo"
+   and C.filtro_de({"sexo": "Z"})["sexo"] == "" and C.filtro_de({"edad_desde": "999"})["edad_desde"] is None,
+   "lo inválido vuelve a su valor de siempre")
+txt = C.describir_filtro(f, {7: "Tiene hijos"})
+ok(txt == "Bajas · solo titulares · femenino · 30 a 50 años · atributo «Tiene hijos» · «perez»", txt)
+ok(C.describir_filtro(None) == "Activos del padrón" and C.describir_filtro(C.filtro_de({"edad_hasta": "25"})) ==
+   "Activos · hasta 25 años", "sin filtros y con un solo extremo")
+cur = Cur([personas[:2], contactos, []])
+lista, cuenta = C.destinatarios(cur, "padron", None, {"estado": "activo", "tipo": "familiar", "sexo": "",
+                                                      "edad_desde": 18, "edad_hasta": None, "atributo": "", "q": "gomez"})
+sql, params = cur.q[0]
+ok("a.activo = 1" in sql and "cod_parentesco, -1) <> 0" in sql and ">= %s" in sql and "LIKE %s" in sql,
+   "la consulta es la del padrón (estado, familiar, edad, buscar)")
+ok(params[0] == 18 and "%gomez%" in params, f"con sus parámetros: {params}")
+ok(len(lista) == 2 and cuenta["personas"] == 2, "y arma la lista igual que los demás destinos")
+
 print("mailer.entregar (sin servidor)")
 
 
@@ -169,8 +190,14 @@ with A.app.test_request_context("/"):
         h = render_template("beneficios/campania.html", camp=c, cuenta={"personas": 5, "sin_correo": 1, "baja": 1,
                             "repetidas": 1}, n_dest=2, por_estado={}, con_error=[], cfg={"activo": 1},
                             estados=C.ESTADOS, destinos=C.DESTINOS, vista=C.html_del_cuerpo("Hola Juan"),
-                            institucion="AEDA", corriendo=False, es_imagen=True)
-        ok("Enviar a 2 direcciones" in h, "ficha en borrador")
+                            institucion="AEDA", corriendo=False, es_imagen=True,
+                            filtro_txt=None)
+        ok("Enviar a 2 direcciones" in h and "Lista en Excel" in h, "ficha en borrador")
+        h = render_template("beneficios/campania.html", camp=dict(c, destino="padron"), cuenta=None, n_dest=0,
+                            por_estado={}, con_error=[], cfg={"activo": 1}, estados=C.ESTADOS, destinos=C.DESTINOS,
+                            vista="", institucion="AEDA", corriendo=False, es_imagen=True,
+                            filtro_txt="Activos · femenino")
+        ok("Padrón: Activos · femenino" in h, "la ficha dice los filtros")
         c2 = dict(c, estado="pausada", total=10, enviados=4, errores=1, nota="Se alcanzó el límite",
                   envio_desde=datetime.datetime(2026, 11, 17, 10, 0))
         h = render_template("beneficios/campania.html", camp=c2, cuenta=None, n_dest=0, por_estado={"pendiente": 5},
@@ -178,11 +205,14 @@ with A.app.test_request_context("/"):
                             cfg={"activo": 1}, estados=C.ESTADOS, destinos=C.DESTINOS, vista="", institucion="AEDA",
                             corriendo=False, es_imagen=True)
         ok("Reanudar" in h and "Se alcanzó el límite" in h, "ficha pausada")
-        h = render_template("beneficios/campanias.html", filas=[c2], estados=C.ESTADOS, destinos=C.DESTINOS, cfg={})
+        h = render_template("beneficios/campanias.html", filas=[c2, dict(c2, destino="padron", filtro_txt="Activos")],
+                            estados=C.ESTADOS, destinos=C.DESTINOS, cfg={})
         ok("Pileta" in h, "lista")
-        h = render_template("beneficios/campania_form.html", camp=c, errores=[], destinos=C.DESTINOS, convenios=[],
-                            max_mb=5)
-        ok("Flyer" in h, "formulario")
+        h = render_template("beneficios/campania_form.html", camp=dict(c, destino="padron"), errores=[],
+                            destinos=C.DESTINOS, convenios=[], max_mb=5,
+                            filtro=C.filtro_de({"sexo": "F", "atributo": "7"}), atributos=[{"id": 7, "rotulo": "Tiene hijos"}])
+        ok("Filtros del padrón" in h and 'value="F" selected' in h and 'value="7" selected' in h,
+           "formulario con los filtros del padrón")
         h = render_template("beneficios/baja.html", email="juan@mail.com", hecho=False, institucion="AEDA")
         ok("no quiero recibir más" in h, "página pública de baja")
         import correo   # noqa: E402

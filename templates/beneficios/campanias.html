@@ -48,7 +48,7 @@
           <td class="td-center" data-valor="{{ c.creada.isoformat() }}">{{ c.creada.strftime('%d/%m/%Y') }}</td>
           <td class="td-fuerte">{{ c.titulo }}</td>
           <td class="td-wrap">{{ c.asunto }}</td>
-          <td>{{ destinos[c.destino] if c.destino != 'adheridos' else 'Adheridos ' ~ (c.convenio or '') }}</td>
+          <td class="td-wrap">{{ ('Padrón: ' ~ c.filtro_txt) if c.destino == 'padron' else (destinos[c.destino] if c.destino != 'adheridos' else 'Adheridos ' ~ (c.convenio or '')) }}</td>
           <td class="td-right" data-num="{{ c.total }}">{{ c.total or '—' }}</td>
           <td class="td-right" data-num="{{ c.enviados }}">{{ c.enviados }}</td>
           <td class="td-right {{ 'importe-danger' if c.errores }}" data-num="{{ c.errores }}">{{ c.errores }}</td>

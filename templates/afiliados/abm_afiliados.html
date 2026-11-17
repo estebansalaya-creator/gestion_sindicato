@@ -119,6 +119,10 @@
         {% else %}
         <button type="button" class="btn btn-excel btn-sm" disabled>{{ ui.icono('planilla') }}Exportar a Excel</button>
         {% endif %}
+        {% if pag.total and puede('/beneficios/campanias') %}
+        <a href="{{ url_for('ben_camp.editar', destino='padron', q=f.q or None, estado=f.estado, tipo=f.tipo or None, sexo=f.sexo or None, edad_desde=f.edad_desde, edad_hasta=f.edad_hasta, atributo=f.atributo or None) }}"
+           class="btn btn-secondary btn-sm" title="Una campaña por correo a los {{ pag.total }} de este filtro">{{ ui.icono('mail') }}Campaña con estos filtros</a>
+        {% endif %}
         <select name="tam" class="page-size-select filtro-srv" aria-label="Filas por página">
           {% for n in [20, 50, 100] %}<option value="{{ n }}"{{ ' selected' if n == pag.tam }}>{{ n }} por pág.</option>{% endfor %}
         </select>

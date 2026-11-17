@@ -5,8 +5,13 @@ ben_campanias.py — Beneficios › Campañas (pedido del 17/11/2026).
 campañas que se puedan enviar por correo a los afiliados.»
 
   · Una campaña (`ben_campania`) es el flyer (imagen o PDF), el asunto, el texto
-    y a quién va: los titulares activos, titulares y familiares activos, o los
-    adheridos de un convenio (los de la nómina de este mes).
+    y a quién va: los titulares activos, titulares y familiares activos, los
+    adheridos de un convenio (los de la nómina de este mes) o una LISTA ARMADA
+    CON LOS FILTROS DEL PADRÓN (pedido del 17/11/2026; los mismos de Consulta del
+    Padrón: buscar, estado, titular o familiar, sexo, edad, atributo). Los filtros
+    se guardan en la campaña (`filtro`, JSON) y la lista se arma con ellos al
+    mandarla; desde la Consulta del Padrón, «Campaña con estos filtros» la abre
+    con los filtros que se están mirando. La ficha baja la lista en Excel.
   · Las direcciones salen de los CONTACTOS del afiliado (`s_contactos`,
     entidad «afiliado»: vinieron de AEDA): `p_afiliados` no tiene columna de
     correo. Una por afiliado (la principal o la primera), sin repetir
@@ -49,6 +54,7 @@ from pathlib import Path
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file,
                    url_for)
 
+import exportar
 import mailer
 from db import get_connection, puede, usuario_actual, validasesion
 
@@ -71,7 +77,11 @@ DESTINOS = {
     "titulares": "Titulares activos",
     "todos": "Titulares y familiares activos",
     "adheridos": "Adheridos de un convenio (nómina de este mes)",
+    "padron": "Según los filtros del padrón",
 }
+#: Los filtros del padrón que se guardan en la campaña (afiliados._filtros_listado).
+FILTROS = ("q", "estado", "tipo", "sexo", "edad_desde", "edad_hasta", "atributo")
+SQL_ESQUEMA_PADRON = "sql/beneficios_campanias_padron_20261117.sql"
 ESTADOS = {
     "borrador": ("Borrador", "neutro"),
     "enviando": ("Enviando", "proceso"),
@@ -178,10 +188,62 @@ def hay_esquema(cur) -> bool:
     return int(cur.fetchone()["n"] or 0) == 3
 
 
-def destinatarios(cur, destino: str, id_convenio: int | None = None) -> tuple[list[dict], dict]:
+def filtro_de(datos) -> dict:
+    """Los filtros del padrón (de un formulario, de la URL o del JSON guardado),
+    validados como los valida la Consulta del Padrón."""
+    import afiliados
+    f = afiliados._filtros_listado(datos or {})
+    return {k: f[k] for k in FILTROS}
+
+
+def describir_filtro(f: dict | None, atributos: dict | None = None) -> str:
+    """«Activos · solo titulares · mujeres · 30 a 50 años · …», para la ficha y la lista."""
+    if not f:
+        return "Activos del padrón"
+    partes = [{"activo": "Activos", "baja": "Bajas", "todos": "Activos y bajas"}.get(f.get("estado"), "Activos")]
+    partes += [{"titular": "solo titulares", "familiar": "solo familiares"}[f["tipo"]]] if f.get("tipo") else []
+    partes += [{"F": "femenino", "M": "masculino", "X": "sexo X", "-": "sin sexo cargado"}[f["sexo"]]] if f.get("sexo") else []
+    d, h = f.get("edad_desde"), f.get("edad_hasta")
+    if d is not None or h is not None:
+        partes.append(f"{d} a {h} años" if d is not None and h is not None
+                      else (f"{d} años o más" if d is not None else f"hasta {h} años"))
+    a = f.get("atributo") or ""
+    if a == "con":
+        partes.append("con algún atributo")
+    elif a == "sin":
+        partes.append("sin atributos")
+    elif a:
+        partes.append("atributo «" + str((atributos or {}).get(int(a), a)) + "»")
+    if f.get("q"):
+        partes.append(f"«{f['q']}»")
+    return " · ".join(partes)
+
+
+def _filtro_guardado(camp: dict) -> dict | None:
+    import json
+    v = camp.get("filtro")
+    if not v:
+        return None
+    return filtro_de(json.loads(v) if isinstance(v, (str, bytes)) else v)
+
+
+def atributos_activos(cur) -> list[dict]:
+    try:
+        cur.execute("SELECT id, rotulo FROM p_afiliado_atributo WHERE activo = 1 ORDER BY rotulo")
+        return cur.fetchall()
+    except Exception:                                        # noqa: BLE001
+        return []
+
+
+def destinatarios(cur, destino: str, id_convenio: int | None = None,
+                  filtro: dict | None = None) -> tuple[list[dict], dict]:
     """[{id_afiliado, nombre, email}] sin direcciones repetidas ni dadas de baja,
     y la cuenta: {"personas", "sin_correo", "baja", "repetidas"}."""
-    if destino == "adheridos":
+    if destino == "padron":
+        import afiliados
+        where, params = afiliados._where_listado({**filtro_de({}), **(filtro or {})})
+        cur.execute(f"SELECT a.id_afiliado, a.apellido_nombres {afiliados.SQL_LISTADO_FROM} {where}", params)
+    elif destino == "adheridos":
         if not id_convenio:
             raise ErrorCampania("Elegí el convenio.")
         mes = datetime.date.today().strftime("%Y%m")
@@ -407,8 +469,10 @@ def lista():
                             ORDER BY c.id DESC""")
             filas = cur.fetchall()
             cfg = mailer.config(conn)
+            atributos = {a["id"]: a["rotulo"] for a in atributos_activos(cur)}
     for f in filas:
         f["corriendo"] = corriendo(f["id"])
+        f["filtro_txt"] = describir_filtro(_filtro_guardado(f), atributos) if f["destino"] == "padron" else None
     return render_template("beneficios/campanias.html", filas=filas, estados=ESTADOS, destinos=DESTINOS, cfg=cfg)
 
 
@@ -418,7 +482,7 @@ def editar(id_camp=None):
     salida = _guardia()
     if salida:
         return salida
-    errores, camp = [], {}
+    errores, camp, filtro = [], {}, None
     with get_connection() as conn:
         with conn.cursor() as cur:
             if not hay_esquema(cur):
@@ -437,6 +501,10 @@ def editar(id_camp=None):
                         "cuerpo": (f.get("cuerpo") or "").strip()[:20000] or None,
                         "destino": f.get("destino") if f.get("destino") in DESTINOS else "titulares",
                         "id_convenio": f.get("id_convenio", type=int) if f.get("destino") == "adheridos" else None}
+                filtro = filtro_de({k[2:]: v for k, v in f.items() if k.startswith("f_")}) \
+                    if camp["destino"] == "padron" else None
+                if camp["destino"] == "padron" and not _hay_columna_filtro(cur):
+                    errores.append(f"Para mandar a una lista del padrón falta correr {SQL_ESQUEMA_PADRON}.")
                 if not camp["titulo"]:
                     errores.append("Poné un título para reconocerla en la lista.")
                 if not camp["asunto"]:
@@ -462,6 +530,10 @@ def editar(id_camp=None):
                             cur.execute("""INSERT INTO ben_campania (titulo, asunto, cuerpo, destino, id_convenio, id_usuario)
                                            VALUES (%s, %s, %s, %s, %s, %s)""", (*valores, _uid()))
                             id_camp = cur.lastrowid
+                        if _hay_columna_filtro(cur):
+                            import json
+                            cur.execute("UPDATE ben_campania SET filtro = %s WHERE id = %s",
+                                        (json.dumps(filtro, ensure_ascii=False) if filtro else None, id_camp))
                         if nuevo:
                             anterior = ruta_flyer(camp) if camp.get("flyer_archivo") else None
                             cur.execute("""UPDATE ben_campania SET flyer_archivo = %s, flyer_nombre = %s, flyer_tipo = %s
@@ -478,8 +550,39 @@ def editar(id_camp=None):
                     return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
                 if nuevo:
                     (_base() / nuevo[0]).unlink(missing_ok=True)
+            atributos = atributos_activos(cur)
+    if request.method == "GET":
+        if not id_camp and request.args.get("destino") in DESTINOS:
+            # «Campaña con estos filtros» de la Consulta del Padrón.
+            camp = {"destino": request.args["destino"]}
+            if camp["destino"] == "padron":
+                filtro = filtro_de(request.args)
+        else:
+            filtro = _filtro_guardado(camp) if camp else None
     return render_template("beneficios/campania_form.html", camp=camp, errores=errores, destinos=DESTINOS,
-                           convenios=convenios, max_mb=MAX_MB)
+                           convenios=convenios, max_mb=MAX_MB, filtro=filtro or filtro_de({}), atributos=atributos)
+
+
+def _hay_columna_filtro(cur) -> bool:
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE()
+                     AND table_name = 'ben_campania' AND column_name = 'filtro'""")
+    return bool(cur.fetchone()["n"])
+
+
+@ben_camp_bp.route("/campanias/contar")
+def contar():
+    """Cuántos le llegan con un destino y unos filtros (el formulario lo pregunta mientras se elige)."""
+    if not validasesion() or not puede(URL):
+        return jsonify({"error": "sin permiso"}), 403
+    destino = request.args.get("destino") if request.args.get("destino") in DESTINOS else "titulares"
+    filtro = filtro_de({k[2:]: v for k, v in request.args.items() if k.startswith("f_")}) if destino == "padron" else None
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                lista, cuenta = destinatarios(cur, destino, request.args.get("id_convenio", type=int), filtro)
+    except ErrorCampania as e:
+        return jsonify({"error": str(e)})
+    return jsonify({"direcciones": len(lista), **cuenta})
 
 
 @ben_camp_bp.route("/campanias/<int:id_camp>")
@@ -493,9 +596,10 @@ def ficha(id_camp):
             cuenta, lista_dest = None, []
             if camp["estado"] == "borrador":
                 try:
-                    lista_dest, cuenta = destinatarios(cur, camp["destino"], camp["id_convenio"])
+                    lista_dest, cuenta = destinatarios(cur, camp["destino"], camp["id_convenio"], _filtro_guardado(camp))
                 except ErrorCampania as e:
                     flash("!" + str(e))
+            atributos = {a["id"]: a["rotulo"] for a in atributos_activos(cur)}
             cur.execute("""SELECT estado, COUNT(*) AS n FROM ben_campania_envio WHERE id_campania = %s GROUP BY estado""",
                         (id_camp,))
             por_estado = {r["estado"]: r["n"] for r in cur.fetchall()}
@@ -508,7 +612,8 @@ def ficha(id_camp):
     return render_template("beneficios/campania.html", camp=camp, cuenta=cuenta, n_dest=len(lista_dest),
                            por_estado=por_estado, con_error=con_error, cfg=cfg, estados=ESTADOS, destinos=DESTINOS,
                            vista=vista, institucion=institucion, corriendo=corriendo(id_camp),
-                           es_imagen=(camp.get("flyer_tipo") or "").startswith("image/"))
+                           es_imagen=(camp.get("flyer_tipo") or "").startswith("image/"),
+                           filtro_txt=describir_filtro(_filtro_guardado(camp), atributos) if camp["destino"] == "padron" else None)
 
 
 @ben_camp_bp.route("/campanias/<int:id_camp>/flyer")
@@ -571,7 +676,7 @@ def enviar(id_camp):
                 flash("!El correo saliente no está configurado o está apagado (Administración del Sistema › Correo Saliente).")
                 return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
             try:
-                lista_dest, _ = destinatarios(cur, camp["destino"], camp["id_convenio"])
+                lista_dest, _ = destinatarios(cur, camp["destino"], camp["id_convenio"], _filtro_guardado(camp))
             except ErrorCampania as e:
                 flash("!" + str(e))
                 return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
@@ -622,6 +727,31 @@ def cambiar(id_camp, accion):
                 flash("!No se puede hacer eso en el estado en que está.")
         conn.commit()
     return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
+
+
+@ben_camp_bp.route("/campanias/<int:id_camp>/lista.xlsx")
+def lista_xlsx(id_camp):
+    """A quiénes le llega (borrador) o le llegó (ya enviada), en Excel."""
+    salida = _guardia()
+    if salida:
+        return salida
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            camp = _leer(cur, id_camp)
+            if camp["estado"] == "borrador":
+                lista, _ = destinatarios(cur, camp["destino"], camp["id_convenio"], _filtro_guardado(camp))
+                filas = [[d["nombre"], d["email"], ""] for d in lista]
+            else:
+                cur.execute("""SELECT nombre, email, estado, enviado_at FROM ben_campania_envio
+                                WHERE id_campania = %s ORDER BY nombre""", (id_camp,))
+                filas = [[r["nombre"], r["email"], {"ok": "Enviado", "error": "Error", "baja": "Pidió la baja",
+                                                     "pendiente": "Pendiente"}[r["estado"]]] for r in cur.fetchall()]
+    contenido = exportar.xlsx("Lista", [{"titulo": "Apellido y nombres"}, {"titulo": "Correo"}, {"titulo": "Estado"}],
+                              filas, encabezado=[f"Campaña: {camp['titulo']}", ""])
+    from flask import Response
+    nombre = re.sub(r"[^\w\- ]", "", camp["titulo"])[:60].strip() or f"campania_{id_camp}"
+    return Response(contenido, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="Lista {nombre}.xlsx"'})
 
 
 @ben_camp_bp.route("/campanias/<int:id_camp>/estado")

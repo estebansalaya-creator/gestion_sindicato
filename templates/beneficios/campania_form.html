@@ -34,21 +34,75 @@
         <input type="file" name="flyer" id="flyer" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf">
         <small class="campo-ayuda">{% if camp.get('flyer_nombre') %}Cargado: {{ camp.flyer_nombre }}. Elegí otro para reemplazarlo. {% endif %}Imagen (PNG, JPG, GIF, WEBP) o PDF, hasta {{ max_mb }} MB. Conviene una imagen de 600 a 1.200 px de ancho.</small></div>
       <div class="campo" style="--span:3;"><label for="destino">A quién va</label>
-        <select name="destino" id="destino" onchange="verConvenio()">
+        <select name="destino" id="destino" onchange="verConvenio(); contar()">
           {% for k, t in destinos.items() %}<option value="{{ k }}" {{ 'selected' if (camp.get('destino') or 'titulares') == k }}>{{ t }}</option>{% endfor %}
         </select></div>
       <div class="campo" style="--span:3;" id="campo-convenio"><label for="id_convenio">Convenio</label>
-        <select name="id_convenio" id="id_convenio">
+        <select name="id_convenio" id="id_convenio" onchange="contar()">
           {% for c in convenios %}<option value="{{ c.id }}" {{ 'selected' if camp.get('id_convenio') == c.id }}>{{ c.nombre }}</option>{% endfor %}
         </select></div>
     </div>
   </div>
+  {# La lista con los filtros de la Consulta del Padrón (destino «padron»). #}
+  <div class="bloque oculto" id="bloque-padron">
+    <div class="bloque-titulo">Filtros del padrón</div>
+    <div class="campos">
+      <div class="campo" style="--span:4;"><label for="f_q">Buscar</label>
+        <input type="text" name="f_q" id="f_q" maxlength="100" value="{{ filtro.q }}" placeholder="Apellido, CUIL, documento, empleador, localidad…" oninput="contar()">
+        <small class="campo-ayuda">Cada palabra tiene que estar, como en la Consulta del Padrón.</small></div>
+      <div class="campo" style="--span:2;"><label for="f_estado">Estado</label>
+        <select name="f_estado" id="f_estado" onchange="contar()">
+          {% for v, t in [('activo', 'Activos'), ('baja', 'Bajas'), ('todos', 'Activos y bajas')] %}<option value="{{ v }}" {{ 'selected' if filtro.estado == v }}>{{ t }}</option>{% endfor %}
+        </select></div>
+      <div class="campo" style="--span:2;"><label for="f_tipo">Titular o familiar</label>
+        <select name="f_tipo" id="f_tipo" onchange="contar()">
+          {% for v, t in [('', 'Titulares y familiares'), ('titular', 'Solo titulares'), ('familiar', 'Solo familiares')] %}<option value="{{ v }}" {{ 'selected' if filtro.tipo == v }}>{{ t }}</option>{% endfor %}
+        </select></div>
+      <div class="campo" style="--span:2;"><label for="f_sexo">Sexo</label>
+        <select name="f_sexo" id="f_sexo" onchange="contar()">
+          {% for v, t in [('', 'Todos'), ('F', 'Femenino'), ('M', 'Masculino'), ('X', 'X'), ('-', 'Sin dato')] %}<option value="{{ v }}" {{ 'selected' if filtro.sexo == v }}>{{ t }}</option>{% endfor %}
+        </select></div>
+      <div class="campo" style="--span:1;"><label for="f_edad_desde">Edad desde</label>
+        <input type="number" name="f_edad_desde" id="f_edad_desde" min="0" max="120" value="{{ filtro.edad_desde if filtro.edad_desde is not none }}" oninput="contar()"></div>
+      <div class="campo" style="--span:1;"><label for="f_edad_hasta">Hasta</label>
+        <input type="number" name="f_edad_hasta" id="f_edad_hasta" min="0" max="120" value="{{ filtro.edad_hasta if filtro.edad_hasta is not none }}" oninput="contar()"></div>
+      <div class="campo" style="--span:4;"><label for="f_atributo">Atributo</label>
+        <select name="f_atributo" id="f_atributo" onchange="contar()">
+          <option value="">Todos</option>
+          <option value="con" {{ 'selected' if filtro.atributo == 'con' }}>Con algún atributo</option>
+          <option value="sin" {{ 'selected' if filtro.atributo == 'sin' }}>Sin atributos</option>
+          {% for a in atributos %}<option value="{{ a.id }}" {{ 'selected' if filtro.atributo == a.id|string }}>{{ a.rotulo }}</option>{% endfor %}
+        </select></div>
+    </div>
+  </div>
+  <div class="bloque">
+    <p class="campo-ayuda" id="cuenta-destino">Calculando a cuántos les llega…</p>
+  </div>
   <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
 </form>
 <script>
+var URL_CONTAR = "{{ url_for('ben_camp.contar') }}", _tContar = null;
 function verConvenio() {
-  document.getElementById('campo-convenio').classList.toggle('oculto', document.getElementById('destino').value !== 'adheridos');
+  var d = document.getElementById('destino').value;
+  document.getElementById('campo-convenio').classList.toggle('oculto', d !== 'adheridos');
+  document.getElementById('bloque-padron').classList.toggle('oculto', d !== 'padron');
 }
-document.addEventListener('DOMContentLoaded', verConvenio);
+/* A cuántos les llega con lo elegido: lo pregunta al servidor al dejar de tipear. */
+function contar() {
+  clearTimeout(_tContar);
+  _tContar = setTimeout(function () {
+    var p = new URLSearchParams({ destino: document.getElementById('destino').value,
+                                  id_convenio: document.getElementById('id_convenio').value || '' });
+    document.querySelectorAll('#bloque-padron [name^=f_]').forEach(function (i) { if (i.value !== '') p.set(i.name, i.value); });
+    var out = document.getElementById('cuenta-destino');
+    fetch(URL_CONTAR + '?' + p.toString()).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.error) { out.textContent = d.error; return; }
+      out.textContent = 'Le llega a ' + d.direcciones + ' direcciones: ' + d.personas + ' personas, ' + d.sin_correo
+        + ' sin correo en sus contactos' + (d.baja ? ', ' + d.baja + ' pidieron no recibir más' : '')
+        + (d.repetidas ? ', ' + d.repetidas + ' con una dirección repetida' : '') + '.';
+    }).catch(function () { out.textContent = ''; });
+  }, 350);
+}
+document.addEventListener('DOMContentLoaded', function () { verConvenio(); contar(); });
 </script>
 {% endblock %}

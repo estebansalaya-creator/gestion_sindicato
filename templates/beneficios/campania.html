@@ -15,11 +15,12 @@
 <div class="page-header">
   <div>
     <h1>{{ camp.titulo }}</h1>
-    <p>{{ destinos[camp.destino] if camp.destino != 'adheridos' else 'Adheridos ' ~ (camp.convenio or '') }} · creada el {{ camp.creada.strftime('%d/%m/%Y') }}{% if camp.usuario %} por {{ camp.usuario }}{% endif %}</p>
+    <p>{{ ('Padrón: ' ~ filtro_txt) if camp.destino == 'padron' else (destinos[camp.destino] if camp.destino != 'adheridos' else 'Adheridos ' ~ (camp.convenio or '')) }} · creada el {{ camp.creada.strftime('%d/%m/%Y') }}{% if camp.usuario %} por {{ camp.usuario }}{% endif %}</p>
   </div>
   <div class="page-header-acciones">
     {{ ui.boton('Volver', 'secondary', href=url_for('ben_camp.lista'), icono_='volver') }}
     {% if camp.estado == 'borrador' %}{{ ui.boton('Editar', 'secondary', href=url_for('ben_camp.editar', id_camp=camp.id), icono_='editar') }}{% endif %}
+    {{ ui.boton('Lista en Excel', 'secondary', href=url_for('ben_camp.lista_xlsx', id_camp=camp.id), icono_='planilla') }}
     {% if camp.estado != 'borrador' and puede('/admin/correo') %}{{ ui.boton('Envíos', 'secondary', href=url_for('correo.envios', origen_tipo='campania', origen_id=camp.id), icono_='mail') }}{% endif %}
   </div>
 </div>

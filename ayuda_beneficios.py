@@ -131,14 +131,19 @@ SECCIONES = [
    {"tipo": "pasos", "items": [
      "<b>Nueva campaña</b>: un título (para la lista), el asunto, el texto y el <b>flyer</b> (imagen o PDF). "
      "En el texto, {nombre} se reemplaza por el nombre de cada afiliado.",
-     "Elegí <b>a quién va</b>: titulares activos, titulares y familiares, o los adheridos de un convenio.",
+     "Elegí <b>a quién va</b>: titulares activos, titulares y familiares, los adheridos de un convenio o "
+     "<b>según los filtros del padrón</b> (buscar, estado, titular o familiar, sexo, edad, atributo: los de la "
+     "Consulta del Padrón). Abajo dice a cuántas direcciones llega mientras elegís. Desde la Consulta del "
+     "Padrón, <b>Campaña con estos filtros</b> abre una campaña nueva con los filtros que estás mirando.",
      "En la ficha mirá <b>cómo queda</b> y a cuántas direcciones llega, y mandate una <b>prueba</b>.",
      "<b>Enviar</b>: sale de a un mail por afiliado, en segundo plano. La ficha muestra el avance; se puede "
      "cerrar, pausar y reanudar.",
    ]},
    {"tipo": "criterio", "html":
     "Las direcciones salen de los <b>contactos</b> de cada afiliado (la principal o la primera), sin repetir y "
-    "sin las que pidieron no recibir más. Al pie de cada mail va el enlace para darse de baja."},
+    "sin las que pidieron no recibir más. Al pie de cada mail va el enlace para darse de baja. La lista se arma al "
+    "enviar, con los filtros guardados en la campaña; <b>Lista en Excel</b> la baja (a quién le llega o, ya "
+    "enviada, cómo salió cada una)."},
    {"tipo": "aviso", "html":
     "Sale por el Correo Saliente del sistema y respeta su límite de 24 horas: una campaña más grande que el "
     "límite queda <b>pausada</b> con el motivo y se reanuda al día siguiente, desde donde quedó."},

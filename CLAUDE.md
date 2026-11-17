@@ -917,6 +917,13 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
   24 horas la deja **pausada** con la nota; se **reanuda** desde donde quedó (la lista está en la base: un reinicio no
   pierde nada, la ficha ofrece «Seguir enviando»). 10 errores seguidos la pausan. La ficha sigue el avance (JSON).
 - Primero «Enviar prueba» a una dirección (asunto con «[PRUEBA]», no toca la lista).
+- **Lista según los filtros del padrón** (pedido del 17/11/2026, `sql/beneficios_campanias_padron_20261117.sql`):
+  destino «padron» con los filtros de la Consulta del Padrón guardados en `ben_campania.filtro` (JSON: q, estado,
+  tipo, sexo, edad_desde, edad_hasta, atributo; `filtro_de` los valida con `afiliados._filtros_listado`). La lista
+  se arma al enviar con `afiliados._where_listado`: la misma consulta que la grilla del padrón. El formulario muestra
+  a cuántas direcciones llega mientras se elige (`/beneficios/campanias/contar`, JSON); la Consulta del Padrón tiene
+  «Campaña con estos filtros» (`/beneficios/campanias/nueva?destino=padron&…`); la ficha baja la lista en Excel
+  (`/<id>/lista.xlsx`: a quién le llega o, enviada, cómo salió cada una).
 
 ## Escalas salariales del convenio
 
