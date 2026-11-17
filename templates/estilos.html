@@ -15,7 +15,7 @@
   ('iconos', 'Íconos'), ('grilla', 'Grilla y filtros'), ('estados', 'Estados'),
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
-  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('inicio', 'Panel de inicio'), ('importacion', 'Importación'),
+  ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('correo', 'Correo'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('inicio', 'Panel de inicio'), ('importacion', 'Importación'),
   ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
@@ -524,6 +524,21 @@
       <div><div class="kpi-lbl">Por pagar</div><div class="kpi-val">7</div><div class="kpi-sub">con enlace: a.kpi-card</div></div></a>
   </div>
   {{ ej("<div class=\"kpi-row\">\n  <div class=\"kpi-card\"><div class=\"kpi-ico ok\">{{ ui.icono('ok', 20) }}</div>\n    <div><div class=\"kpi-lbl\">Titulares</div><div class=\"kpi-val\">3.068</div></div></div>\n</div>                     .kpi-ico  ok | warn | danger · <a class=\"kpi-card\" href=…> si lleva a una pantalla · .kpi-sub, la línea de abajo") }}
+</div>
+
+{# ── Correo ──────────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="correo">
+  {{ ui.card_head('Correo', nota='La vista previa de una campaña (Beneficios › Campañas) y el cuerpo de un mail enviado (Correo Saliente › Envíos).') }}
+  <div class="card-body">
+    <div class="vista-correo">
+      <p>Hola Juan:</p><p>Este verano la pileta de la YMCA tiene descuento para los afiliados.</p>
+      <p class="vista-correo-pie">AEDA · <u>No quiero recibir más estas novedades</u></p>
+    </div>
+    <pre class="texto-pre">Hola Juan:
+
+Este verano la pileta…</pre>
+  </div>
+  {{ ej('<div class="vista-correo"> {{ vista | safe }} <img class="vista-correo-flyer" src=…> <p class="vista-correo-pie">…</p> </div>   ·   <pre class="texto-pre">{{ e.cuerpo }}</pre>') }}
 </div>
 
 {# ── Buscador general ────────────────────────────────────────────────────── #}

@@ -1,0 +1,43 @@
+{% import "_ui.html" as ui %}
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="referrer" content="no-referrer">
+  <title>Novedades por correo — {{ institucion or 'Sindicato' }}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/sindicato.css') }}?v={{ v_css }}">
+</head>
+<body>
+  {#
+    Beneficios › Campañas: la página pública del enlace «no quiero recibir más»
+    (ben_camp.baja). Sin sesión ni menú: la dirección sale del enlace firmado.
+    Pregunta y registra con un botón, así un lector de correo que abre los
+    enlaces solo no da de baja a nadie.
+  #}
+  <div class="portal-page">
+    <header class="portal-top">
+      <div>
+        <h1>{{ institucion or 'Sindicato' }}</h1>
+        <p>Novedades y beneficios por correo</p>
+      </div>
+    </header>
+    <main class="portal-cuerpo">
+      <div class="card"><div class="card-body">
+        {% if not email %}
+          {{ ui.aviso('Este enlace no es válido. Si querés dejar de recibir las novedades, respondé el correo y te damos de baja.', 'danger') }}
+        {% elif hecho %}
+          {{ ui.aviso('Listo: ' ~ email ~ ' ya no va a recibir las novedades y beneficios por correo. Si fue un error, avisanos respondiendo cualquier correo nuestro.', 'ok') }}
+        {% else %}
+          <p>¿Querés dejar de recibir las novedades y beneficios del sindicato en <strong>{{ email }}</strong>?</p>
+          <form method="post" class="form-acciones">
+            {{ ui.boton('Sí, no quiero recibir más', 'danger', submit=True, icono_='baja') }}
+          </form>
+          <p class="campo-ayuda">Los avisos sobre tu afiliación (recibos, trámites) siguen llegando.</p>
+        {% endif %}
+      </div></div>
+    </main>
+  </div>
+</body>
+</html>

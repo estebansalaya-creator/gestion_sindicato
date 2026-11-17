@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Envíos de correo{% endblock %}
+
+{#
+  Correo Saliente › Envíos (correo.envios): qué se mandó, a quién y con qué
+  resultado. Solo lectura: reenviar se decide mirando el documento, no la lista.
+  Con origen_tipo y origen_id muestra los envíos de ese documento (una campaña).
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Envíos de correo</h1>
+    <p>Cada mail que salió del sistema, con el cuerpo tal como se mandó.</p>
+  </div>
+  <div class="page-header-acciones">{{ ui.boton('Correo saliente', 'secondary', href=url_for('correo.config'), icono_='volver') }}</div>
+</div>
+
+{{ ui.mensajes() }}
+{% if filtros.origen_tipo and filtros.origen_id %}
+  {{ ui.aviso('Envíos de ' ~ (filtros.origen_tipo | replace('_', ' ')) ~ ' ' ~ filtros.origen_id ~ '.', 'info') }}
+{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('correo.envios') }}" class="filter-bar" id="frm-envios">
+    <input type="hidden" name="origen_tipo" value="{{ filtros.origen_tipo }}">
+    <input type="hidden" name="origen_id" value="{{ filtros.origen_id or '' }}">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+      <input type="search" name="q" value="{{ filtros.q }}" class="filter-input" placeholder="Dirección o asunto…"></label>
+    {% call ui.filtro('Aviso') %}<select name="codigo" class="filtro-srv">
+      <option value="">Todos</option>
+      {% for c in codigos %}<option value="{{ c.codigo }}" {{ 'selected' if filtros.codigo == c.codigo }}>{{ c.nombre }}</option>{% endfor %}
+      <option value="campania" {{ 'selected' if filtros.codigo == 'campania' }}>Campañas de beneficios</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Resultado') %}<select name="estado" class="filtro-srv">
+      <option value="">Todos</option>
+      <option value="ok" {{ 'selected' if filtros.estado == 'ok' }}>Entregado</option>
+      <option value="error" {{ 'selected' if filtros.estado == 'error' }}>Con error</option>
+    </select>{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('correo.envios') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    <div class="filter-bar-fin">
+      <span class="filter-count">Mostrando {{ pag.desde }}–{{ pag.hasta }} de {{ pag.total }} envíos</span>
+    </div>
+  </form>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-envios" data-sin-orden>
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-center">Fecha</th><th>Aviso</th><th>Para</th><th>Asunto</th><th>Adjuntos</th><th>Mandó</th><th>Resultado</th>
+      </tr></thead>
+      <tbody>
+        {% for e in envios %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('ver', titulo='Ver el mensaje', onclick='verCuerpo(this)', datos={'id': e.id}) }}</div></td>
+          <td class="td-center">{{ e.enviado_at.strftime('%d/%m/%Y %H:%M') if e.enviado_at }}</td>
+          <td>{{ e.tipo_nombre or ('Campaña de beneficios' if e.codigo == 'campania' else e.codigo) }}{% if e.origen_tipo %}<div class="campo-ayuda">{{ e.origen_tipo | replace('_', ' ') }} {{ e.origen_id }}</div>{% endif %}</td>
+          <td>{{ e.para }}{% if e.copias %}<div class="campo-ayuda">cc: {{ e.copias }}</div>{% endif %}</td>
+          <td>{{ e.asunto }}<div class="campo-ayuda">de {{ e.remitente }}</div></td>
+          <td>{{ e.adjuntos or '—' }}</td>
+          <td>{{ e.usuario_nombre or '—' }}</td>
+          <td>{% if e.estado == 'ok' and not e.error %}{{ ui.estado('Entregado', 'ok') }}{% elif e.estado == 'ok' %}{{ ui.estado('Parcial', 'warn') }}{% else %}{{ ui.estado('No salió', 'danger') }}{% endif %}
+            {% if e.error %}<div class="campo-ayuda error">{{ e.error }}</div>{% endif %}</td>
+        </tr>
+        <tr id="cuerpo-{{ e.id }}" class="oculto"><td colspan="8"><pre class="texto-pre">{{ e.cuerpo or '(sin cuerpo registrado)' }}</pre></td></tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">No hay envíos con esos filtros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion_srv(pag) }}
+</div>
+<script>
+function verCuerpo(b) { document.getElementById('cuerpo-' + b.dataset.id).classList.toggle('oculto'); }
+</script>
+{% endblock %}

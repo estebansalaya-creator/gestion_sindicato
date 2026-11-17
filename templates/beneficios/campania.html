@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ camp.titulo }}{% endblock %}
+
+{#
+  Beneficios › Campañas › una campaña (ben_camp.ficha): cómo queda el correo, a
+  cuántos les llega, la prueba, el envío y su avance (se sigue solo mientras
+  manda), y las direcciones que fallaron.
+#}
+{% macro dato(lbl, val, mono=False) -%}
+<div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ camp.titulo }}</h1>
+    <p>{{ destinos[camp.destino] if camp.destino != 'adheridos' else 'Adheridos ' ~ (camp.convenio or '') }} · creada el {{ camp.creada.strftime('%d/%m/%Y') }}{% if camp.usuario %} por {{ camp.usuario }}{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('ben_camp.lista'), icono_='volver') }}
+    {% if camp.estado == 'borrador' %}{{ ui.boton('Editar', 'secondary', href=url_for('ben_camp.editar', id_camp=camp.id), icono_='editar') }}{% endif %}
+    {% if camp.estado != 'borrador' and puede('/admin/correo') %}{{ ui.boton('Envíos', 'secondary', href=url_for('correo.envios', origen_tipo='campania', origen_id=camp.id), icono_='mail') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if not cfg.get('activo') %}{{ ui.aviso('El correo saliente está apagado o sin configurar: no se puede probar ni enviar. Se configura en Administración del Sistema › Correo Saliente.', 'warning') }}{% endif %}
+{% if camp.nota and camp.estado == 'pausada' %}{{ ui.aviso('Pausada: ' ~ camp.nota, 'warning') }}{% endif %}
+
+<div class="card">
+  {% call ui.card_head('Estado', nota=estados[camp.estado][0]) %}{{ ui.estado(estados[camp.estado][0], estados[camp.estado][1]) }}{% endcall %}
+  <div class="card-body">
+    {% if camp.estado == 'borrador' %}
+      <div class="datos">
+        {{ dato('Le llega a', n_dest ~ ' direcciones') }}
+        {% if cuenta %}
+        {{ dato('Personas del grupo', cuenta.personas) }}
+        {{ dato('Sin correo en sus contactos', cuenta.sin_correo) }}
+        {{ dato('Pidieron no recibir más', cuenta.baja) }}
+        {{ dato('Dirección repetida (va una vez)', cuenta.repetidas) }}
+        {% endif %}
+      </div>
+      <form method="post" action="{{ url_for('ben_camp.enviar', id_camp=camp.id) }}" class="form-acciones"
+            onsubmit="return confirm('Se va a mandar «{{ camp.asunto | replace("'", "") }}» a {{ n_dest }} direcciones, de a una.\n\n¿Seguir?');"
+            data-proceso="Armando la lista…">
+        {{ ui.boton('Enviar a ' ~ n_dest ~ ' direcciones', 'primary', submit=True, icono_='mail') if n_dest and cfg.get('activo') }}
+      </form>
+      <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='borrar') }}" class="form-acciones"
+            onsubmit="return confirm('¿Eliminar el borrador y su flyer?');">
+        {{ ui.boton('Eliminar el borrador', 'danger', submit=True, icono_='borrar', chico=True) }}
+      </form>
+    {% else %}
+      {% set hechos = camp.enviados + camp.errores + (por_estado.get('baja') or 0) %}
+      <div class="datos">
+        {{ dato('Direcciones', camp.total) }}
+        {{ dato('Enviados', camp.enviados) }}
+        {{ dato('Con error', camp.errores) }}
+        {{ dato('Faltan', por_estado.get('pendiente') or 0) }}
+        {{ dato('Empezó', camp.envio_desde.strftime('%d/%m/%Y %H:%M') if camp.envio_desde) }}
+        {{ dato('Terminó', camp.envio_hasta.strftime('%d/%m/%Y %H:%M') if camp.envio_hasta) }}
+      </div>
+      <div class="progreso"><div class="progreso-barra" id="barra" data-pct="{{ ((hechos * 100 / camp.total) if camp.total else 0) | round(1) }}"></div></div>
+      <p class="campo-ayuda" id="avance"></p>
+      <div class="form-acciones">
+        {% if camp.estado == 'enviando' %}
+          <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='pausar') }}" class="form-en-linea">{{ ui.boton('Pausar', 'secondary', submit=True) }}</form>
+          {% if not corriendo %}<form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='reanudar') }}" class="form-en-linea">{{ ui.boton('Seguir enviando', 'primary', submit=True, icono_='mail') }}</form>{% endif %}
+        {% elif camp.estado == 'pausada' %}
+          <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='reanudar') }}" class="form-en-linea">{{ ui.boton('Reanudar', 'primary', submit=True, icono_='mail') }}</form>
+        {% endif %}
+        {% if camp.estado in ('enviando', 'pausada') %}
+          <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='cancelar') }}" class="form-en-linea"
+                onsubmit="return confirm('¿Cancelar la campaña? Lo que falta no se manda.');">{{ ui.boton('Cancelar el envío', 'danger', submit=True, icono_='baja') }}</form>
+        {% endif %}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Probar', nota='Manda el correo tal cual (con «[PRUEBA]» en el asunto) a una dirección cualquiera. No toca la lista.') }}
+  <form method="post" action="{{ url_for('ben_camp.probar', id_camp=camp.id) }}" class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:6;"><label for="destino-prueba">Mandar una prueba a</label>
+        <input type="email" name="destino" id="destino-prueba" required placeholder="tu@direccion.com"></div>
+      <div class="campo" style="--span:3;"><label>&nbsp;</label>{{ ui.boton('Enviar prueba', 'secondary', submit=True, icono_='mail') }}</div>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Cómo queda', nota='Con un nombre de ejemplo en lugar de {nombre}.') }}
+  <div class="card-body">
+    <div class="datos">{{ dato('Asunto', camp.asunto) }}{{ dato('Flyer', camp.flyer_nombre or 'Sin flyer') }}</div>
+    <div class="vista-correo">
+      {{ vista | safe }}
+      {% if camp.flyer_archivo and es_imagen %}<img src="{{ url_for('ben_camp.flyer', id_camp=camp.id) }}" alt="{{ camp.titulo }}" class="vista-correo-flyer">
+      {% elif camp.flyer_archivo %}<p>{{ ui.boton('Ver el PDF adjunto', 'secondary', href=url_for('ben_camp.flyer', id_camp=camp.id), icono_='pdf', blank=True, chico=True) }}</p>{% endif %}
+      <p class="vista-correo-pie">{{ institucion }} · <u>No quiero recibir más estas novedades</u></p>
+    </div>
+  </div>
+</div>
+
+{% if con_error %}
+<div class="card">
+  {{ ui.card_head('Direcciones que fallaron o pidieron la baja') }}
+  {% call ui.barra_filtros('Buscar…', 20) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-errores" data-exportar="Campaña {{ camp.id }} - errores">
+      <thead><tr><th data-orden="asc">Nombre</th><th>Dirección</th><th>Estado</th><th>Error</th></tr></thead>
+      <tbody>
+        {% for e in con_error %}
+        <tr><td>{{ e.nombre }}</td><td class="td-mono">{{ e.email }}</td>
+          <td>{{ ui.estado('Error', 'danger') if e.estado == 'error' else ui.estado('Pidió la baja', 'neutro') }}</td>
+          <td class="td-wrap chico">{{ e.error or '' }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-errores', { pageSize: 20 }); });</script>
+{% endif %}
+
+{% if camp.estado != 'borrador' %}
+<script>
+(function () {
+  var barra = document.getElementById('barra'), av = document.getElementById('avance');
+  barra.style.width = barra.dataset.pct + '%';
+  var URL = "{{ url_for('ben_camp.estado', id_camp=camp.id) }}", ESTADO = "{{ camp.estado }}";
+  function mirar() {
+    fetch(URL).then(function (r) { return r.json(); }).then(function (d) {
+      var hechos = d.total - d.pendientes;
+      barra.style.width = (d.total ? hechos * 100 / d.total : 0) + '%';
+      av.textContent = hechos + ' de ' + d.total + ' · ' + d.enviados + ' enviados · ' + d.errores + ' con error'
+        + (d.corriendo ? ' · enviando…' : '');
+      if (d.estado !== ESTADO) { location.reload(); return; }
+      if (d.estado === 'enviando') setTimeout(mirar, 4000);
+    }).catch(function () { setTimeout(mirar, 10000); });
+  }
+  mirar();
+})();
+</script>
+{% endif %}
+{% endblock %}

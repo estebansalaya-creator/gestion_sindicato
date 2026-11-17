@@ -57,7 +57,12 @@
       {{ dato('Apellido y nombres', afi.apellido_nombres if afi else None) }}
       {{ dato('CUIL', pagador, mono=True) }}
       {{ dato('En el padrón', ('Activo' if afi.activo else 'De baja') if afi else 'No está') }}
+      {% if beneficios is defined %}
+      {{ dato('Adheridos del grupo en la nómina', n_adheridos or 'Ninguno') }}
+      {{ dato('Cuota del grupo por mes', ('$ ' ~ (cfg.cuota | miles)) if cfg.cuota else 'Sin vigencia en Datos del Convenio') }}
+      {% else %}
       {{ dato('Cuota por mes', ('$ ' ~ (cfg.cuota | miles)) if cfg.cuota else 'Sin definir en Datos del Sindicato') }}
+      {% endif %}
     </div>
     <div class="form-acciones">
       {{ ui.boton('No es la cuota social: emitir como cuota sindical de un empleador', 'secondary', chico=True,

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Campañas{% endblock %}
+
+{#
+  Beneficios › Campañas (ben_camp.lista): los flyers que se mandan por correo a
+  los afiliados. Cada una se arma (flyer, asunto, texto, a quién), se prueba y
+  se envía en segundo plano por el correo saliente del sistema.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Campañas</h1>
+    <p>Flyers de beneficios y novedades que se mandan por correo a los afiliados, a la dirección de sus contactos.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/admin/correo') %}{{ ui.boton('Correo saliente', 'secondary', href=url_for('correo.config'), icono_='mail') }}{% endif %}
+    {{ ui.boton('Nueva campaña', href=url_for('ben_camp.editar'), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if cfg is defined and not cfg.get('activo') %}
+  {{ ui.aviso('El correo saliente está apagado o sin configurar: se pueden armar campañas, pero no mandarlas. Se configura en Administración del Sistema › Correo Saliente.', 'warning') }}
+{% endif %}
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por título o asunto…', 20) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="">Todos</option>
+      {% for k, (t, _) in estados.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-campanias" data-exportar="Campañas">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc" class="th-center">Creada</th><th>Título</th><th>Asunto</th><th>A quién</th>
+        <th class="th-right">Direcciones</th><th class="th-right">Enviados</th><th class="th-right">Con error</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for c in filas %}
+        <tr data-estado="{{ c.estado }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('ben_camp.ficha', id_camp=c.id)) }}
+            {% if c.estado == 'borrador' %}{{ ui.accion('editar', href=url_for('ben_camp.editar', id_camp=c.id)) }}{% endif %}
+          </div></td>
+          <td class="td-center" data-valor="{{ c.creada.isoformat() }}">{{ c.creada.strftime('%d/%m/%Y') }}</td>
+          <td class="td-fuerte">{{ c.titulo }}</td>
+          <td class="td-wrap">{{ c.asunto }}</td>
+          <td>{{ destinos[c.destino] if c.destino != 'adheridos' else 'Adheridos ' ~ (c.convenio or '') }}</td>
+          <td class="td-right" data-num="{{ c.total }}">{{ c.total or '—' }}</td>
+          <td class="td-right" data-num="{{ c.enviados }}">{{ c.enviados }}</td>
+          <td class="td-right {{ 'importe-danger' if c.errores }}" data-num="{{ c.errores }}">{{ c.errores }}</td>
+          <td>{{ ui.estado(estados[c.estado][0], estados[c.estado][1]) }}{% if c.pendientes and c.estado in ('enviando', 'pausada') %}<div class="campo-ayuda">faltan {{ c.pendientes }}</div>{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no hay campañas: armá la primera.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado');
+  gestion_admTable('tbl-campanias', { pageSize: 20, filtroExtra: function (tr) { return !fe.value || tr.dataset.estado === fe.value; } });
+});
+</script>
+{% endblock %}

@@ -1367,6 +1367,22 @@ details.en-linea input[type=text], details.en-linea input[type=date] { padding: 
 .acceso-quitar:hover { background: var(--danger-bg); color: var(--danger); }
 .sin-seleccion { user-select: none; }
 
+/* ── 18e. Correo: vista previa de una campaña y cuerpo de un envío ─────────
+   .vista-correo     cómo le llega el mail al afiliado (Beneficios › Campañas)
+   .texto-pre        el cuerpo de un mail tal como salió (Correo Saliente › Envíos) */
+.vista-correo {
+  max-width: 640px; padding: 18px 20px; margin-top: 12px; background: #fff;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: .9rem; color: var(--text);
+}
+.vista-correo p { margin: 0 0 12px; }
+.vista-correo-flyer { display: block; max-width: 100%; height: auto; margin: 14px 0; border-radius: var(--radius-sm); }
+.vista-correo-pie { margin: 16px 0 0 !important; padding-top: 10px; border-top: 1px solid var(--border);
+  font-size: .74rem; color: var(--text-muted); }
+.texto-pre {
+  margin: 0; padding: 10px 14px; white-space: pre-wrap; word-break: break-word; font-family: var(--mono);
+  font-size: .76rem; line-height: 1.5; color: var(--text); background: #f8fafc; border-radius: var(--radius-sm);
+}
+
 /* ── 19. Utilidades ──────────────────────────────────────────────────────
    Pocas y a propósito. Si una pantalla necesita muchas, falta un
    componente.                                                             */

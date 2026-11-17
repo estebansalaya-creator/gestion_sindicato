@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuotas de adheridos{% endblock %}
+
+{#
+  Beneficios › Convenio YMCA › Cuotas de Adheridos (ben_conv.cuotas): la cuenta
+  de cada grupo familiar. Cada mes debe la cuota × sus adheridos de ese mes; le
+  cuentan los recibos de cualquiera del grupo, a los meses que dicen. Desde el
+  mes en que se empezó a llevar por afiliado (Datos del Convenio).
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Cuotas de adheridos{% if conv %} — {{ conv.nombre }}{% endif %}</h1>
+    <p>Qué grupo familiar pagó su cuota y quién debe. La cuota de cada mes es la de la vigencia por los adheridos del grupo.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if conv and puede('/beneficios/ymca/recibos') %}{{ ui.boton('Recibos de adheridos', 'secondary', href=url_for('ben_conv.recibos'), icono_='dinero') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if conv %}
+<div class="card">
+  <form method="get" action="{{ url_for('ben_conv.cuotas') }}" class="filter-bar">
+    {% call ui.filtro('Desde') %}<input type="month" name="desde" class="filtro" value="{{ desde | periodo }}"{% if conv.cc_desde %} min="{{ conv.cc_desde | periodo }}"{% endif %}>{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="month" name="hasta" class="filtro" value="{{ hasta | periodo }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('ben_conv.cuotas') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Grupos</div><div class="kpi-val">{{ tot.grupos }}</div><div class="kpi-sub">{{ tot.con_deuda }} con deuda</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+    <div><div class="kpi-lbl">Cuotas del período</div><div class="kpi-val monto">$ {{ tot.debe | miles }}</div><div class="kpi-sub">{{ desde | periodo }} a {{ hasta | periodo }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Pagado</div><div class="kpi-val monto">$ {{ tot.pagado | miles }}</div><div class="kpi-sub">recibos a los meses del período</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if tot.saldo > 0 else 'ok' }}">{{ ui.icono('alerta', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo</div><div class="kpi-val monto">$ {{ tot.saldo | miles }}</div><div class="kpi-sub">positivo = deben</div></div></div>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por apellido o CUIL…', 50) %}
+    {% call ui.filtro('Situación') %}<select class="filtro" id="f-sit">
+      <option value="">Todos</option>
+      <option value="deuda" selected>Con deuda</option>
+      <option value="al_dia">Al día</option>
+      <option value="favor">Pagaron de más</option>
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-cuotas" data-exportar="Cuotas de adheridos {{ desde }}-{{ hasta }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="asc">Titular del grupo</th><th>CUIL titular</th><th>Adheridos</th>
+        <th class="th-right">Cuotas</th><th class="th-right">Pagado</th><th class="th-right">Saldo</th>
+        <th class="th-right">Meses adeudados</th><th class="th-center">Último pago</th>
+      </tr></thead>
+      <tbody>
+        {% for f in filas %}
+        {% set sit = 'deuda' if f.saldo > 0 else ('favor' if f.saldo < 0 else 'al_dia') %}
+        <tr data-sit="{{ sit }}" class="{{ 'fila-baja' if not f.vigentes }}">
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('ben_conv.cuota_grupo', cuil_titular=f.cuil_titular, desde=desde, hasta=hasta), titulo='Cuenta del grupo') }}</div></td>
+          <td class="td-fuerte">{{ f.titular or f.personas[0] }}</td>
+          <td class="td-mono">{{ f.cuil_titular }}</td>
+          <td class="td-wrap chico">{{ f.personas | join(', ') }}{% if not f.vigentes %} {{ ui.estado('Sin adheridos hoy', 'neutro') }}{% endif %}</td>
+          <td class="td-right" data-num="{{ f.debe }}">{{ f.debe | miles }}</td>
+          <td class="td-right" data-num="{{ f.pagado }}">{{ f.pagado | miles }}</td>
+          <td class="td-right td-fuerte {{ 'importe-danger' if f.saldo > 0 else ('importe-ok' if f.saldo < 0 else 'saldo-cero') }}" data-num="{{ f.saldo }}">{{ f.saldo | miles }}</td>
+          <td class="td-right" data-num="{{ f.adeudados }}">{{ f.adeudados or '—' }}</td>
+          <td class="td-center" data-valor="{{ f.ultimo_pago.isoformat() if f.ultimo_pago else '' }}">{{ f.ultimo_pago.strftime('%d/%m/%Y') if f.ultimo_pago else 'nunca' }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No hay adheridos en la nómina en estos meses.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fs = document.getElementById('f-sit');
+  gestion_admTable('tbl-cuotas', { pageSize: 50, filtroExtra: function (tr) { return !fs.value || tr.dataset.sit === fs.value; } });
+});
+</script>
+{% endif %}
+{% endblock %}

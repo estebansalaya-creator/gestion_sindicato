@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Control mensual del convenio{% endblock %}
+
+{#
+  Beneficios › Convenio YMCA › Control Mensual (ben_conv.control): por mes, la
+  factura del gimnasio contra la cantidad de la nómina por el precio que factura
+  (la diferencia se marca), lo cobrado a los afiliados y lo que cubre el
+  sindicato (facturado − cobrado). Lo cobrado incluye las órdenes agrupadas de
+  AEDA (antes del detalle por afiliado).
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Control mensual{% if conv %} — {{ conv.nombre }}{% endif %}</h1>
+    <p>La factura del gimnasio contra la nómina por el precio, lo cobrado a los adheridos y lo que cubre el sindicato.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if conv and puede('/beneficios/ymca/convenio') %}{{ ui.boton('Datos del convenio', 'secondary', href=url_for('ben_conv.convenio_ficha'), icono_='editar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if conv %}
+{% if not conv.id_proveedor %}{{ ui.aviso('El convenio no tiene proveedor: elegí el gimnasio en Datos del Convenio para ver sus facturas.', 'warning') }}{% endif %}
+{% if tot.sin_precio %}{{ ui.aviso('Hay meses sin el precio que factura el gimnasio: cargalo en Datos del Convenio para controlar la factura contra la nómina.', 'warning') }}{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('ben_conv.control') }}" class="filter-bar">
+    {% call ui.filtro('Desde') %}<input type="month" name="desde" class="filtro" value="{{ desde | periodo }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="month" name="hasta" class="filtro" value="{{ hasta | periodo }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('ben_conv.control') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('pdf', 20) }}</div>
+    <div><div class="kpi-lbl">Facturado por el gimnasio</div><div class="kpi-val monto">$ {{ tot.facturado | miles }}</div><div class="kpi-sub">{{ desde | periodo }} a {{ hasta | periodo }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('dinero', 20) }}</div>
+    <div><div class="kpi-lbl">Cobrado a los adheridos</div><div class="kpi-val monto">$ {{ tot.cobrado | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('empresa', 20) }}</div>
+    <div><div class="kpi-lbl">Cubre el sindicato</div><div class="kpi-val monto">$ {{ tot.a_cargo | miles }}</div><div class="kpi-sub">facturado − cobrado</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if tot.diferencias else 'ok' }}">{{ ui.icono('alerta', 20) }}</div>
+    <div><div class="kpi-lbl">Facturas que no coinciden</div><div class="kpi-val">{{ tot.diferencias }}</div><div class="kpi-sub">contra nómina × precio</div></div></div>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por mes o factura…', 20) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-control" data-exportar="Control mensual {{ conv.nombre }} {{ desde }}-{{ hasta }}">
+      <thead><tr>
+        <th class="th-center" data-orden="desc">Mes</th><th class="th-right">Adheridos</th><th class="th-right">Precio</th>
+        <th class="th-right">Esperado</th><th>Factura</th><th class="th-right">Facturado</th><th class="th-right">Diferencia</th>
+        <th class="th-right" title="Lo que factura dividido el precio">Adheridos según factura</th>
+        <th class="th-right">A cobrar</th><th class="th-right">Cobrado</th><th class="th-right">Grupos que pagaron</th><th class="th-right">Cubre el sindicato</th>
+      </tr></thead>
+      <tbody>
+        {% for f in filas %}
+        <tr>
+          <td class="td-center td-mono" data-valor="{{ f.periodo }}">{{ f.periodo | periodo }}</td>
+          <td class="td-right" data-num="{{ f.adheridos }}">{{ f.adheridos }}</td>
+          <td class="td-right" data-num="{{ f.precio or 0 }}">{{ (f.precio | miles) if f.precio is not none else '—' }}</td>
+          <td class="td-right" data-num="{{ f.esperado or 0 }}">{{ (f.esperado | miles) if f.esperado is not none else '—' }}</td>
+          <td class="td-wrap chico">
+            {% for x in f.facturas %}<div>{% if x.id_expediente %}{{ ui.expediente(x.id_expediente, x.nro_expediente) if puede_mesa else x.nro_expediente }} · {% endif %}{{ x.numero_completo }} <span class="td-muted">{{ x.fecha_emision.strftime('%d/%m') if x.fecha_emision }}</span>{% if x.importe < 0 %} {{ ui.estado('Nota de crédito', 'info') }}{% endif %}</div>
+            {% else %}<span class="td-muted">Sin factura</span>{% endfor %}
+          </td>
+          <td class="td-right td-fuerte" data-num="{{ f.facturado }}">{{ f.facturado | miles }}</td>
+          <td class="td-right {{ 'importe-danger td-fuerte' if f.diferencia and f.diferencia | abs >= 1 else 'saldo-cero' }}" data-num="{{ f.diferencia or 0 }}">{{ (f.diferencia | miles) if f.diferencia is not none else '—' }}</td>
+          <td class="td-right {{ 'importe-danger' if f.adheridos_por_factura is not none and (f.adheridos_por_factura - f.adheridos) | abs >= 0.01 }}" data-num="{{ f.adheridos_por_factura or 0 }}">{{ (f.adheridos_por_factura | miles) if f.adheridos_por_factura is not none else '—' }}</td>
+          <td class="td-right" data-num="{{ f.a_cobrar or 0 }}">{{ (f.a_cobrar | miles) if f.a_cobrar is not none else '—' }}</td>
+          <td class="td-right" data-num="{{ f.cobrado }}">{{ f.cobrado | miles }}</td>
+          <td class="td-right" data-num="{{ f.pagaron or 0 }}">{{ f.pagaron if f.pagaron is not none else '—' }}{% if f.grupos %} <span class="td-muted">de {{ f.grupos }}</span>{% endif %}</td>
+          <td class="td-right td-fuerte" data-num="{{ f.a_cargo }}">{{ f.a_cargo | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+<script>document.addEventListener('DOMContentLoaded', function () { gestion_admTable('tbl-control', { pageSize: 20 }); });</script>
+{% endif %}
+{% endblock %}

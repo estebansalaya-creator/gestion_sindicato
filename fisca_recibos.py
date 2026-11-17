@@ -216,10 +216,14 @@ def _guardia():
 URL_EMITIDOS = "/tesoreria/recibos"
 
 
+#: Beneficios › Recibos de Adheridos (ben_convenio.py) emite el recibo al afiliado y lo abre acá.
+URL_BENEFICIOS = "/beneficios/ymca/recibos"
+
+
 def _guardia_ver():
     if not validasesion():
         return redirect(url_for("login"))
-    if not (puede(URL) or puede(URL_EMITIDOS)):
+    if not (puede(URL) or puede(URL_EMITIDOS) or puede(URL_BENEFICIOS)):
         flash("!No tenés permiso para ver recibos.")
         return redirect(url_for("menu"))
     return None
@@ -811,6 +815,10 @@ def _lista():
             cuenta = next((c for c in cuentas if c["id"] == id_cuenta), None)
             desde, hasta = _rango(cur, request.args)
             filas, excedido = acreditaciones(cur, id_cuenta, desde, hasta) if cuenta else ([], False)
+            # Las transferencias de afiliados (cuota social del convenio) van aparte, por
+            # Beneficios › Recibos de Adheridos (pedido del 17/11/2026): acá solo se cuentan.
+            de_afiliados = [f for f in filas if f["emp"]["como"] == "afiliado"]
+            filas = [f for f in filas if f["emp"]["como"] != "afiliado"]
             cur.execute("""SELECT r.*, e.razon_social, u.nombre AS usuario,
                                   (SELECT p.razon_social FROM p_empresas p WHERE p.CUIT = CAST(r.cuit_pagador AS UNSIGNED))
                                     AS razon_pagador
@@ -830,6 +838,8 @@ def _lista():
     res["a_mano"] = (len(sel), sum((f["importe"] for f in sel), Decimal("0")))
     return render_template("fisca/recibos.html", cuentas=cuentas, cuenta=cuenta, id_cuenta=id_cuenta, filas=filas,
                            relaciones=rels, desde=desde, hasta=hasta, res=res, estados=ESTADOS, como=COMO,
+                           de_afiliados=(len(de_afiliados), sum((f["importe"] for f in de_afiliados), Decimal("0"))),
+                           puede_beneficios=puede(URL_BENEFICIOS),
                            emitibles=EMITIBLES, excedido=excedido, tope=TOPE, falta_esquema=False,
                            puede_extractos=puede("/tesoreria/extractos"), puede_conc=puede("/tesoreria/conc"),
                            puede_ingreso=puede("/tesoreria/nueva_orden_concepto") or puede("/tesoreria/movimientos"))
@@ -883,6 +893,11 @@ def emitir_uno(id_extracto):
             cfg = RA.config(cur)
             modo_afiliado = bool(cfg) and sugerido["como"] == "afiliado" and request.values.get("para") != "empleador" \
                 and not request.values.get("cuit")
+            if modo_afiliado:
+                # El recibo al afiliado se emite en Beneficios (con la cuota de su grupo, 17/11/2026).
+                return redirect(url_for("ben_conv.emitir_uno", id_extracto=id_extracto,
+                                        cuenta=e["c_cuentas_de_fondos_id"], desde=request.values.get("desde") or None,
+                                        hasta=request.values.get("hasta") or None))
             afi = RA.afiliado(cur, pagador) if modo_afiliado else None
             cubierta = (RA.cubierta(e["fecham"], RA.ordenes_aeda(cur, e["c_cuentas_de_fondos_id"], cfg["motivo"],
                                                                   e["fecham"], e["fecham"])) if modo_afiliado else None)
@@ -1048,7 +1063,7 @@ def emitir_lote():
     uid = _uid()
     hechos, total, saltados, fallados = 0, Decimal("0"), 0, []
     for f in elegidas:
-        if not f["en_lote"] or not f["sugerido"]:
+        if not f["en_lote"] or not f["sugerido"] or f.get("al_afiliado"):
             saltados += 1
             continue
         conn = get_connection()

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ 'Editar campaña' if camp.get('id') else 'Nueva campaña' }}{% endblock %}
+
+{#
+  Beneficios › Campañas › alta y edición (ben_camp.editar): el flyer (imagen o
+  PDF), el asunto, el texto y a quién va. Solo se edita mientras es borrador.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ 'Editar campaña' if camp.get('id') else 'Nueva campaña' }}</h1>
+    <p>El flyer va dentro del correo si es una imagen; un PDF va adjunto.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('ben_camp.ficha', id_camp=camp.id) if camp.get('id') else url_for('ben_camp.lista'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<form method="post" enctype="multipart/form-data" class="card" data-proceso="Guardando…">
+  <div class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:5;"><label for="titulo">Título <span class="req">*</span></label>
+        <input type="text" name="titulo" id="titulo" required maxlength="150" value="{{ camp.get('titulo') or '' }}" placeholder="Pileta de verano YMCA">
+        <small class="campo-ayuda">Para reconocerla en la lista; no lo ven los afiliados.</small></div>
+      <div class="campo" style="--span:7;"><label for="asunto">Asunto del correo <span class="req">*</span></label>
+        <input type="text" name="asunto" id="asunto" required maxlength="200" value="{{ camp.get('asunto') or '' }}"></div>
+      <div class="campo" style="--span:12;"><label for="cuerpo">Texto</label>
+        <textarea name="cuerpo" id="cuerpo" rows="7" maxlength="20000" placeholder="Hola {nombre}:&#10;&#10;…">{{ camp.get('cuerpo') or '' }}</textarea>
+        <small class="campo-ayuda">Va arriba del flyer. {nombre} se reemplaza por el nombre de cada afiliado. Las direcciones web quedan como enlace.</small></div>
+      <div class="campo" style="--span:6;"><label for="flyer">Flyer</label>
+        <input type="file" name="flyer" id="flyer" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf">
+        <small class="campo-ayuda">{% if camp.get('flyer_nombre') %}Cargado: {{ camp.flyer_nombre }}. Elegí otro para reemplazarlo. {% endif %}Imagen (PNG, JPG, GIF, WEBP) o PDF, hasta {{ max_mb }} MB. Conviene una imagen de 600 a 1.200 px de ancho.</small></div>
+      <div class="campo" style="--span:3;"><label for="destino">A quién va</label>
+        <select name="destino" id="destino" onchange="verConvenio()">
+          {% for k, t in destinos.items() %}<option value="{{ k }}" {{ 'selected' if (camp.get('destino') or 'titulares') == k }}>{{ t }}</option>{% endfor %}
+        </select></div>
+      <div class="campo" style="--span:3;" id="campo-convenio"><label for="id_convenio">Convenio</label>
+        <select name="id_convenio" id="id_convenio">
+          {% for c in convenios %}<option value="{{ c.id }}" {{ 'selected' if camp.get('id_convenio') == c.id }}>{{ c.nombre }}</option>{% endfor %}
+        </select></div>
+    </div>
+  </div>
+  <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+</form>
+<script>
+function verConvenio() {
+  document.getElementById('campo-convenio').classList.toggle('oculto', document.getElementById('destino').value !== 'adheridos');
+}
+document.addEventListener('DOMContentLoaded', verConvenio);
+</script>
+{% endblock %}

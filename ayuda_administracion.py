@@ -160,6 +160,35 @@ SECCIONES = [
 
 {
  "grupo": "Organización",
+ "id": "adm_correo",
+ "titulo": "Correo Saliente",
+ "url": "/admin/correo",
+ "endpoints": ["correo.config", "correo.envios"],
+ "resumen": "La cuenta con la que salen los correos del sistema, la prueba, los remitentes y lo enviado.",
+ "bloques": [
+   {"tipo": "texto", "html":
+    "Como en OSEDA: una cuenta de correo (servidor, usuario y contraseña) por la que salen todos los mails "
+    "del sistema —hoy, las campañas de Beneficios—. La contraseña se guarda cifrada y no se vuelve a mostrar."},
+   {"tipo": "pasos", "items": [
+     "Completá el <b>servidor</b> (con Gmail o Google Workspace: smtp.gmail.com, puerto 587, STARTTLS), el "
+     "<b>usuario</b> y la <b>contraseña</b> (con Google, una contraseña de aplicación).",
+     "Completá el <b>remitente</b>: el nombre y la dirección que ve quien recibe, y a quién se responde.",
+     "Tildá <b>Activar el envío de correos</b> y <b>Guardar</b>.",
+     "<b>Enviar prueba</b> a tu dirección: es lo único que confirma que la cuenta anda.",
+   ]},
+   {"tipo": "campos", "items": [
+     ("Límite cada 24 horas", "Freno de seguridad: pasado ese número de mails en las últimas 24 horas no sale "
+      "ninguno más (una campaña queda pausada y se reanuda después). Gmail corta en 2.000."),
+     ("Remitentes", "Otras direcciones desde las que puede salir un aviso; pueden tener su propia cuenta."),
+     ("Envíos", "Cada mail que salió, a quién, con qué resultado y el texto tal como se mandó."),
+   ]},
+   {"tipo": "aviso", "html":
+    "Arranca <b>apagado</b>: no sale ningún mail hasta activarlo. El dominio del remitente tiene que autorizar "
+    "la dirección (SPF y DKIM): si no, el mail sale, no da error y cae en spam."},
+ ]},
+
+{
+ "grupo": "Organización",
  "id": "adm_estilos",
  "titulo": "Guía de estilos",
  "url": "/estilos",

@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Correo saliente{% endblock %}
+
+{#
+  Administración del Sistema › Correo Saliente (correo.config). La pantalla de
+  gestion_adm (adm/correo.html) con el sistema de estilos de acá: la cuenta con
+  la que sale todo, la prueba, los remitentes, los avisos y los últimos envíos.
+  La contraseña nunca vuelve a la pantalla: se guarda cifrada (SIND_FERNET_KEY).
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Correo saliente</h1>
+    <p>La cuenta con la que salen los avisos y las campañas del sistema.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Envíos', 'secondary', href=url_for('correo.envios'), icono_='mail') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if not hay_cifrado %}
+  {{ ui.aviso('El servidor no tiene configurado el cifrado: falta la variable SIND_FERNET_KEY (en el .env y en Railway, la misma en los dos). Sin ella no se puede guardar ninguna contraseña.', 'danger') }}
+{% endif %}
+{% if cfg.password_error %}
+  {{ ui.aviso('La contraseña guardada no se puede descifrar (' ~ cfg.password_error ~ '). Suele pasar cuando cambió la SIND_FERNET_KEY: cargala de nuevo abajo.', 'danger') }}
+{% endif %}
+{% if not cfg.activo %}
+  {{ ui.aviso('El envío de correos está APAGADO: no sale ningún mail mientras siga así. Arranca apagado a propósito; se activa abajo, después de probar la cuenta.', 'warning') }}
+{% else %}
+  {{ ui.aviso('El envío está activo. Hasta ' ~ cfg.limite_diario ~ ' mails cada 24 horas.' ~ ((' Última prueba: ' ~ cfg.probado_at.strftime('%d/%m/%Y %H:%M') ~ '.') if cfg.probado_at else ' Todavía no se probó.'), 'ok') }}
+{% endif %}
+
+<form method="post" action="{{ url_for('correo.guardar') }}">
+  <div class="card">
+    {{ ui.card_head('Servidor') }}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:6;"><label for="host">Servidor SMTP <span class="req">*</span></label>
+          <input type="text" name="host" id="host" required value="{{ cfg.host or '' }}" placeholder="smtp.gmail.com"></div>
+        <div class="campo" style="--span:2;"><label for="puerto">Puerto</label>
+          <input type="number" name="puerto" id="puerto" value="{{ cfg.puerto or 587 }}"></div>
+        <div class="campo" style="--span:4;"><label for="seguridad">Seguridad</label>
+          <select name="seguridad" id="seguridad">
+            {% for val, lbl in seguridades %}<option value="{{ val }}" {{ 'selected' if cfg.seguridad == val }}>{{ lbl }}</option>{% endfor %}
+          </select></div>
+        <div class="campo" style="--span:6;"><label for="usuario">Usuario</label>
+          <input type="text" name="usuario" id="usuario" autocomplete="off" value="{{ cfg.usuario or '' }}" placeholder="cuenta@dominio"></div>
+        <div class="campo" style="--span:6;"><label for="password">Contraseña</label>
+          <input type="password" name="password" id="password" autocomplete="new-password"
+                 placeholder="{{ '•••••••• — dejala vacía para no cambiarla' if tiene_clave else 'sin cargar' }}">
+          <small class="campo-ayuda">Se guarda cifrada y no se vuelve a mostrar. Vacía = se conserva la actual. Con Gmail o Google Workspace, una contraseña de aplicación.</small></div>
+      </div>
+    </div>
+    {{ ui.card_head('Remitente', nota='Lo que ve quien recibe. El dominio tiene que autorizar esta dirección (SPF y DKIM): si no, el mail sale, no da error y cae en spam.') }}
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:4;"><label for="remitente_nombre">Nombre visible</label>
+          <input type="text" name="remitente_nombre" id="remitente_nombre" value="{{ cfg.remitente_nombre or '' }}" placeholder="AEDA"></div>
+        <div class="campo" style="--span:4;"><label for="remitente_email">Dirección</label>
+          <input type="email" name="remitente_email" id="remitente_email" value="{{ cfg.remitente_email or '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="responder_a">Responder a</label>
+          <input type="email" name="responder_a" id="responder_a" value="{{ cfg.responder_a or '' }}"></div>
+        <div class="campo" style="--span:3;"><label for="limite_diario">Límite cada 24 horas</label>
+          <input type="number" name="limite_diario" id="limite_diario" value="{{ cfg.limite_diario or 500 }}">
+          <small class="campo-ayuda">Freno de seguridad. Gmail corta en 2.000 y deja la casilla un día sin mandar.</small></div>
+        <div class="campo" style="--span:9;"><label>&nbsp;</label>
+          <label class="campo-check"><input type="checkbox" name="activo" value="1" {{ 'checked' if cfg.activo }}> <strong>Activar el envío de correos</strong></label></div>
+      </div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+  </div>
+</form>
+
+<div class="card">
+  {{ ui.card_head('Probar', nota='Guardar no valida nada: la prueba es lo único que confirma que la cuenta anda. Requiere el envío activo.') }}
+  <form method="post" action="{{ url_for('correo.probar') }}" class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:6;"><label for="destino">Mandar un mail de prueba a</label>
+        <input type="email" name="destino" id="destino" required placeholder="tu@direccion.com"></div>
+      <div class="campo" style="--span:3;"><label>&nbsp;</label>{{ ui.boton('Enviar prueba', 'secondary', submit=True, icono_='mail') }}</div>
+    </div>
+  </form>
+</div>
+
+{% set ed = editando or {} %}
+<div class="card">
+  {{ ui.card_head('Remitentes', nota='Las direcciones desde las que puede salir un aviso. Sin ninguno, todo sale desde la dirección general.') }}
+  <form method="post" action="{{ url_for('correo.remitente_guardar') }}" class="bloque">
+    <input type="hidden" name="id" value="{{ ed.get('id') or '' }}">
+    <div class="campos">
+      <div class="campo" style="--span:2;"><label for="remit-tipo">Tipo</label>
+        <select name="tipo" id="remit-tipo" onchange="remitTipo()">
+          <option value="area" {{ 'selected' if ed.get('tipo', 'area') == 'area' }}>De un área</option>
+          <option value="usuario" {{ 'selected' if ed.get('tipo') == 'usuario' }}>De una persona</option>
+        </select></div>
+      <div class="campo" style="--span:3;" id="campo-area"><label for="id_area">Área</label>
+        <select name="id_area" id="id_area">
+          <option value="">— sin área —</option>
+          {% for a in areas %}<option value="{{ a.id }}" {{ 'selected' if ed.get('id_area') == a.id }}>{{ a.nombre }}</option>{% endfor %}
+        </select></div>
+      <div class="campo oculto" style="--span:3;" id="campo-usuario"><label for="id_usuario">Persona</label>
+        <select name="id_usuario" id="id_usuario">
+          <option value="">— elegir —</option>
+          {% for u in usuarios %}<option value="{{ u.id }}" {{ 'selected' if ed.get('id_usuario') == u.id }}>{{ u.nombre }} — {{ u.email }}</option>{% endfor %}
+        </select></div>
+      <div class="campo" style="--span:3;"><label for="r-nombre">Nombre visible <span class="req">*</span></label>
+        <input type="text" name="nombre" id="r-nombre" required value="{{ ed.get('nombre') or '' }}" placeholder="AEDA — Beneficios"></div>
+      <div class="campo" style="--span:4;"><label for="r-email">Dirección <span class="req">*</span></label>
+        <input type="email" name="email" id="r-email" required value="{{ ed.get('email') or '' }}"></div>
+      <div class="campo" style="--span:4;"><label for="r-responder">Responder a</label>
+        <input type="email" name="responder_a" id="r-responder" value="{{ ed.get('responder_a') or '' }}"></div>
+      <div class="campo" style="--span:8;"><label for="r-firma">Firma</label>
+        <textarea name="firma" id="r-firma" rows="2" placeholder="Se agrega al final del cuerpo">{{ ed.get('firma') or '' }}</textarea></div>
+      <div class="campo" style="--span:4;"><label for="smtp_usuario">Cuenta propia (usuario)</label>
+        <input type="email" name="smtp_usuario" id="smtp_usuario" autocomplete="off" value="{{ ed.get('smtp_usuario') or '' }}" placeholder="vacío = sale por la cuenta general"></div>
+      <div class="campo" style="--span:4;"><label for="smtp_password">Contraseña de aplicación</label>
+        <input type="password" name="smtp_password" id="smtp_password" autocomplete="new-password"
+               placeholder="{{ '•••••••• — dejala vacía para no cambiarla' if ed.get('smtp_password_cif') else 'sin cargar' }}"></div>
+      <div class="campo" style="--span:2;"><label>&nbsp;</label>
+        <label class="campo-check"><input type="checkbox" name="activo" value="1" {{ 'checked' if not editando or ed.get('activo') }}> Activo</label></div>
+      <div class="campo" style="--span:12;"><small class="campo-ayuda">Con cuenta propia el aviso sale por esa casilla (queda en sus Enviados) y no por la general. Sin cuenta propia, Gmail solo respeta la dirección si la cuenta general la tiene agregada en «Enviar correo como».</small></div>
+    </div>
+    <div class="form-acciones">
+      {% if editando %}{{ ui.boton('Cancelar', 'secondary', href=url_for('correo.config')) }}{% endif %}
+      {{ ui.boton('Guardar' if editando else 'Agregar', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-remitentes" data-sin-orden>
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Nombre visible</th><th>Dirección</th><th>Área o persona</th><th>Responder a</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for r in remitentes %}
+        <tr class="{{ 'fila-baja' if not r.activo }}">
+          <td><div class="acciones">
+            {{ ui.accion('editar', href=url_for('correo.config', edit=r.id)) }}
+            {% if r.activo %}<form method="post" action="{{ url_for('correo.remitente_borrar', id_remit=r.id) }}" class="form-en-linea" onsubmit="return confirm('¿Desactivar este remitente? Los avisos que lo usaban vuelven a salir desde la dirección general.');">{{ ui.accion('baja', titulo='Desactivar: los avisos que lo usaban salen desde la dirección general', submit=True) }}</form>{% endif %}
+          </div></td>
+          <td class="td-fuerte">{{ r.nombre }}</td>
+          <td class="td-mono">{{ r.email }}{% if r.smtp_usuario %}<div class="campo-ayuda">cuenta propia: {{ r.smtp_usuario }}{{ '' if r.smtp_password_cif else ' — falta la contraseña' }}</div>{% endif %}</td>
+          <td>{% if r.tipo == 'area' %}{{ r.area_nombre or 'área sin asignar' }}{% else %}{{ r.usuario_nombre or 'persona' }}{% endif %}</td>
+          <td>{{ r.responder_a or '—' }}</td>
+          <td>{{ ui.estado('Activo', 'ok') if r.activo else ui.estado('Inactivo', 'neutro') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">No hay remitentes: todo sale desde la dirección general.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Avisos', nota='Cada uno se dispara desde su módulo.') }}
+  <form method="post" action="{{ url_for('correo.tipo_asignar') }}">
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-tipos" data-sin-orden>
+        <thead><tr><th>Aviso</th><th>Sale desde</th><th class="th-center">Activo</th><th class="th-center" title="Puede salir desde la dirección de quien lo manda">Personal</th></tr></thead>
+        <tbody>
+          {% for t in tipos %}
+          <tr>
+            <td>{{ t.nombre }}<div class="campo-ayuda td-mono">{{ t.codigo }} · {{ t.entidad_tipo }}</div></td>
+            <td><select name="remit_{{ t.codigo }}">
+              <option value="">— dirección general —</option>
+              {% for r in remitentes if r.activo or r.id == t.id_remitente %}<option value="{{ r.id }}" {{ 'selected' if t.id_remitente == r.id }}>{{ r.nombre }} ({{ r.email }}){{ ' — inactivo' if not r.activo }}</option>{% endfor %}
+            </select></td>
+            <td class="td-center"><input type="checkbox" name="activo_{{ t.codigo }}" value="1" {{ 'checked' if t.activo }}></td>
+            <td class="td-center"><input type="checkbox" name="usuario_{{ t.codigo }}" value="1" {{ 'checked' if t.permite_remitente_usuario }}></td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="4" class="no-data">Todavía no hay avisos definidos. Las campañas de Beneficios usan la dirección general.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if tipos %}<div class="form-acciones">{{ ui.boton('Guardar asignaciones', icono_='guardar', submit=True) }}</div>{% endif %}
+  </form>
+</div>
+
+<div class="card">
+  {% call ui.card_head('Últimos envíos') %}{{ ui.boton('Ver todos', 'secondary', href=url_for('correo.envios'), chico=True) }}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-ultimos" data-sin-orden>
+      <thead><tr><th class="th-center">Fecha</th><th>Para</th><th>Asunto</th><th>Resultado</th></tr></thead>
+      <tbody>
+        {% for e in ultimos %}
+        <tr>
+          <td class="td-center">{{ e.enviado_at.strftime('%d/%m %H:%M') if e.enviado_at }}</td>
+          <td>{{ e.para }}</td>
+          <td>{{ e.asunto }}{% if e.error %}<div class="campo-ayuda error">{{ e.error }}</div>{% endif %}</td>
+          <td>{% if e.estado == 'ok' and not e.error %}{{ ui.estado('Entregado', 'ok') }}{% elif e.estado == 'ok' %}{{ ui.estado('Parcial', 'warn') }}{% else %}{{ ui.estado('No salió', 'danger') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="4" class="no-data">Todavía no salió ningún mail.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+/* El remitente es de un área o de una persona, nunca de las dos. */
+function remitTipo() {
+  var esUsuario = document.getElementById('remit-tipo').value === 'usuario';
+  document.getElementById('campo-area').classList.toggle('oculto', esUsuario);
+  document.getElementById('campo-usuario').classList.toggle('oculto', !esUsuario);
+}
+document.addEventListener('DOMContentLoaded', remitTipo);
+</script>
+{% endblock %}

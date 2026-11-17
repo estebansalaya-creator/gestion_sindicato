@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Cuotas del grupo{% endblock %}
+
+{#
+  Beneficios › Cuotas de Adheridos › un grupo familiar (ben_conv.cuota_grupo):
+  mes por mes lo que debe (cuota × adheridos del mes) y lo pagado; los adheridos
+  del grupo y los recibos de cualquiera de sus integrantes.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ cuenta.titular or cuenta.personas[0] }}</h1>
+    <p>Grupo familiar {{ cuil_titular }} · cuotas de {{ desde | periodo }} a {{ hasta | periodo }}.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('ben_conv.cuotas', desde=desde, hasta=hasta), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+    <div><div class="kpi-lbl">Cuotas</div><div class="kpi-val monto">$ {{ cuenta.debe | miles }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Pagado</div><div class="kpi-val monto">$ {{ cuenta.pagado | miles }}</div>
+      <div class="kpi-sub">último pago: {{ cuenta.ultimo_pago.strftime('%d/%m/%Y') if cuenta.ultimo_pago else 'nunca' }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if cuenta.saldo > 0 else 'ok' }}">{{ ui.icono('alerta', 20) }}</div>
+    <div><div class="kpi-lbl">Saldo</div><div class="kpi-val monto {{ 'importe-danger' if cuenta.saldo > 0 else 'importe-ok' }}">$ {{ cuenta.saldo | miles }}</div>
+      <div class="kpi-sub">{{ cuenta.adeudados }} mes(es) adeudado(s)</div></div></div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Mes por mes') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-meses" data-exportar="Cuotas {{ cuil_titular }}" data-sin-orden>
+      <thead><tr><th class="th-center">Mes</th><th class="th-right">Adheridos</th><th class="th-right">Cuota</th><th class="th-right">Pagado</th><th class="th-right">Saldo</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for m in cuenta.meses %}
+        <tr>
+          <td class="td-center td-mono">{{ m.periodo | periodo }}</td>
+          <td class="td-right">{{ m.adheridos }}</td>
+          <td class="td-right">{{ m.debe | miles }}</td>
+          <td class="td-right">{{ m.pagado | miles }}</td>
+          <td class="td-right td-fuerte {{ 'importe-danger' if m.saldo > 0 else ('importe-ok' if m.saldo < 0 else 'saldo-cero') }}">{{ m.saldo | miles }}</td>
+          <td>{% if m.saldo <= 0 and m.debe %}{{ ui.estado('Pagada', 'ok') }}{% elif m.pagado > 0 %}{{ ui.estado('Pago parcial', 'warn') }}{% elif m.debe %}{{ ui.estado('Impaga', 'danger') }}{% else %}{{ ui.estado('Sin adheridos', 'neutro') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="6" class="no-data">Sin meses en el período.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Adheridos del grupo') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-adh" data-sin-orden>
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th>Apellido y nombres</th><th>CUIL</th><th class="th-center">Desde</th><th class="th-center">Hasta</th></tr></thead>
+      <tbody>
+        {% for a in nomina %}
+        <tr>
+          <td><div class="acciones">{% if puede('/beneficios/ymca/adheridos') %}{{ ui.accion('editar', href=url_for('ben_conv.adheridos_abm', edit=a.id)) }}{% endif %}</div></td>
+          <td class="td-fuerte">{{ a.apellido_nombres }}</td><td class="td-mono">{{ a.cuil }}</td>
+          <td class="td-center td-mono">{{ a.periodo_desde | periodo }}</td>
+          <td class="td-center td-mono">{{ (a.periodo_hasta | periodo) if a.periodo_hasta else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Recibos del grupo', nota='De cualquiera de sus integrantes, también de antes del período.') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-recibos" data-sin-orden>
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th class="th-center">Fecha</th><th>Número</th><th>A nombre de</th><th>Meses</th><th>Cuenta</th><th class="th-right">Importe</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for r in recibos %}
+        <tr class="{{ 'fila-baja' if r.estado == 'anulado' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=r.id), titulo='Ver el recibo') }}
+            {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=r.id), titulo='Recibo en PDF', blank=True) }}
+          </div></td>
+          <td class="td-center">{{ r.fecha.strftime('%d/%m/%Y') }}</td>
+          <td class="td-mono">{{ r.numero or r.nro_orden }}</td>
+          <td>{{ r.afiliado }}</td>
+          <td class="td-mono chico">{{ r.meses | join(', ') }}</td>
+          <td>{{ r.cuenta or '—' }}</td>
+          <td class="td-right td-fuerte">{{ r.importe_total | miles }}</td>
+          <td>{{ ui.estado('Anulado', 'danger') if r.estado == 'anulado' else ui.estado('Vigente', 'ok') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Sin recibos.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

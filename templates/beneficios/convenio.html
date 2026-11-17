@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Datos del convenio{% endblock %}
+
+{#
+  Beneficios › Convenio YMCA › Datos del Convenio (ben_conv.convenio_ficha): el
+  proveedor (el gimnasio, de él son las facturas que se controlan), el motivo de
+  ingreso de los recibos y, por vigencia, el precio que factura el gimnasio por
+  adherido y la cuota que paga cada adherido. Cada vigencia rige hasta la siguiente.
+#}
+{% set c = conv or {} %}
+{% set ep = editar_precio or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Datos del convenio{% if conv %} — {{ conv.nombre }}{% endif %}</h1>
+    <p>El gimnasio, el motivo de los recibos y los importes de cada vigencia.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {{ ui.card_head('Convenio') }}
+  <form method="post" action="{{ url_for('ben_conv.convenio_ficha') }}">
+    <input type="hidden" name="accion" value="datos">
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label for="nombre">Nombre <span class="req">*</span></label>
+          <input type="text" name="nombre" id="nombre" required maxlength="100" value="{{ c.get('nombre') or 'YMCA' }}"></div>
+        <div class="campo" style="--span:5;"><label for="id_proveedor">Proveedor (el gimnasio)</label>
+          <select name="id_proveedor" id="id_proveedor">
+            <option value="">— elegir —</option>
+            {% for p in proveedores %}<option value="{{ p.id }}" {{ 'selected' if c.get('id_proveedor') == p.id }}>{{ p.razon_social }} · {{ p.cuit }}</option>{% endfor %}
+          </select>
+          <small class="campo-ayuda">Sus facturas se controlan en Control Mensual.</small></div>
+        <div class="campo" style="--span:4;"><label for="id_motivo_ingreso">Motivo de los recibos</label>
+          <select name="id_motivo_ingreso" id="id_motivo_ingreso">
+            <option value="">— el de Datos del Sindicato —</option>
+            {% for m in motivos %}<option value="{{ m.id }}" {{ 'selected' if c.get('id_motivo_ingreso') == m.id }}>{{ m.descripcion }}</option>{% endfor %}
+          </select></div>
+        <div class="campo" style="--span:3;"><label for="cc_desde">Cuota de cada adherido desde</label>
+          <input type="month" name="cc_desde" id="cc_desde" value="{{ (c.get('cc_desde') | periodo) if c.get('cc_desde') else '' }}">
+          <small class="campo-ayuda">Antes AEDA cobraba agrupado, sin detalle por afiliado.</small></div>
+        <div class="campo" style="--span:9;"><label for="observaciones">Observaciones</label>
+          <input type="text" name="observaciones" id="observaciones" maxlength="500" value="{{ c.get('observaciones') or '' }}"></div>
+      </div>
+    </div>
+    <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+  </form>
+</div>
+
+{% if conv %}
+<div class="card">
+  {{ ui.card_head('Importes por vigencia', nota='Cada vigencia rige desde su mes hasta el anterior a la siguiente.') }}
+  <form method="post" action="{{ url_for('ben_conv.convenio_ficha') }}">
+    <input type="hidden" name="accion" value="precio">
+    <input type="hidden" name="id" value="{{ ep.get('id') or '' }}">
+    <div class="bloque">
+      <div class="campos">
+        <div class="campo" style="--span:2;"><label for="p-desde">Desde <span class="req">*</span></label>
+          <input type="month" name="periodo_desde" id="p-desde" required value="{{ (ep.get('periodo_desde') | periodo) if ep.get('periodo_desde') else (mes | periodo) }}"></div>
+        <div class="campo" style="--span:3;"><label for="p-precio">Precio del gimnasio por adherido</label>
+          <input type="text" name="precio_proveedor" id="p-precio" class="inp-importe" inputmode="decimal" value="{{ (ep.get('precio_proveedor') | miles) if ep.get('precio_proveedor') is not none else '' }}">
+          <small class="campo-ayuda">Lo que factura por cada adherido y por mes.</small></div>
+        <div class="campo" style="--span:3;"><label for="p-cuota">Cuota del adherido <span class="req">*</span></label>
+          <input type="text" name="cuota_afiliado" id="p-cuota" class="inp-importe" inputmode="decimal" required value="{{ (ep.get('cuota_afiliado') | miles) if ep.get('cuota_afiliado') else '' }}"></div>
+        <div class="campo" style="--span:4;"><label for="p-obs">Observaciones</label>
+          <input type="text" name="observaciones" id="p-obs" maxlength="300" value="{{ ep.get('observaciones') or '' }}"></div>
+      </div>
+    </div>
+    <div class="form-acciones">
+      {% if editar_precio %}{{ ui.boton('Cancelar', 'secondary', href=url_for('ben_conv.convenio_ficha')) }}{% endif %}
+      {{ ui.boton('Guardar vigencia' if editar_precio else 'Agregar vigencia', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-precios" data-sin-orden>
+      <thead><tr><th class="col-acciones" data-no-sort>Acciones</th><th class="th-center">Desde</th><th class="th-center">Hasta</th>
+        <th class="th-right">Precio del gimnasio</th><th class="th-right">Cuota del adherido</th><th class="th-right">Cubre el sindicato por adherido</th><th>Observaciones</th><th>Estado</th></tr></thead>
+      <tbody>
+        {% for p in precios | reverse %}
+        <tr>
+          <td><div class="acciones">
+            {{ ui.accion('editar', href=url_for('ben_conv.convenio_ficha', precio=p.id)) }}
+            <form method="post" action="{{ url_for('ben_conv.convenio_ficha') }}" class="form-en-linea" onsubmit="return confirm('¿Eliminar la vigencia? Sus meses pasan a la anterior.');">
+              <input type="hidden" name="accion" value="borrar_precio"><input type="hidden" name="id" value="{{ p.id }}">
+              {{ ui.accion('borrar', submit=True) }}
+            </form>
+          </div></td>
+          <td class="td-center td-mono">{{ p.periodo_desde | periodo }}</td>
+          <td class="td-center td-mono">{{ (p.hasta | periodo) if p.hasta else 'vigente' }}</td>
+          <td class="td-right">{{ (p.precio_proveedor | miles) if p.precio_proveedor is not none else '—' }}{% if p.precio_proveedor is none %} {{ ui.estado('Falta', 'warn') }}{% endif %}</td>
+          <td class="td-right td-fuerte">{{ p.cuota_afiliado | miles }}</td>
+          <td class="td-right">{{ ((p.precio_proveedor - p.cuota_afiliado) | miles) if p.precio_proveedor is not none else '—' }}</td>
+          <td class="td-wrap chico">{{ p.observaciones or '' }}</td>
+          <td>{{ ui.estado('Vigente', 'ok') if p.vigente else ui.estado('Anterior' if not p.hasta or p.hasta < mes else 'Futura', 'neutro') }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="8" class="no-data">Todavía no hay importes: agregá la primera vigencia.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

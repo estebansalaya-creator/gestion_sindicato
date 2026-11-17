@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Recibos de adheridos{% endblock %}
+
+{#
+  Beneficios › Convenio YMCA › Recibos de Adheridos (ben_conv.recibos): las
+  transferencias de los afiliados (la cuota del convenio), aparte de la cuota
+  sindical. Cada una lleva el recibo al afiliado (talonario de afiliados) con
+  los meses que paga: tantos como cuotas justas de su grupo familiar. En lote
+  solo las de un grupo que está en la nómina y con cuotas justas; las demás, de a una.
+#}
+{% macro tarjeta(icono, tipo, rotulo, valor, sub='') -%}
+<div class="kpi-card">
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val">{{ valor }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Recibos de adheridos{% if conv %} — {{ conv.nombre }}{% endif %}</h1>
+    <p>Las transferencias de los afiliados por la cuota del convenio. Van aparte de la cuota sindical: cada una lleva su recibo al afiliado con los meses que paga.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if conv and puede('/beneficios/ymca/adheridos') %}{{ ui.boton('Nómina', 'secondary', href=url_for('ben_conv.adheridos_abm'), icono_='grupo') }}{% endif %}
+    {% if conv and puede('/tesoreria/extractos') %}{{ ui.boton('Extractos bancarios', 'secondary', href=url_for('extractos.index', cuenta=id_cuenta), icono_='subir') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if conv %}
+{% if not cfg %}{{ ui.aviso('Falta configurar los recibos a afiliados (talonario y concepto en Datos del Sindicato).', 'danger') }}
+{% elif not cfg.talonario %}{{ ui.aviso('Falta elegir el talonario de los recibos a afiliados en Datos del Sindicato: sin él no se emite.', 'warning') }}{% endif %}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' acreditaciones en estas fechas: se muestran las primeras. Acotá el rango.', 'warning') }}{% endif %}
+
+<div class="card">
+  <form method="get" action="{{ url_for('ben_conv.recibos') }}" class="filter-bar">
+    {% call ui.filtro('Cuenta del banco') %}<select name="cuenta" class="filtro" onchange="this.form.submit()">
+      {% for c in cuentas %}<option value="{{ c.id }}" {{ 'selected' if c.id == id_cuenta }}>{{ c.nombre }}{% if c.numero_de_cuenta %} — {{ c.numero_de_cuenta }}{% endif %}{% if not c.ultimo %} (sin extracto){% endif %}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ desde.isoformat() if desde else '' }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ hasta.isoformat() if hasta else '' }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('ben_conv.recibos', cuenta=id_cuenta) }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+{% if cuenta %}
+<div class="kpi-row">
+  {{ tarjeta('dinero', '', 'Transferencias de afiliados', res.cant, '$ ' ~ (res.total | miles)) }}
+  {{ tarjeta('ok', 'ok', 'Con recibo', res.emitido[0] + res.ya_tiene[0], res.emitido[0] ~ ' emitidos acá · ' ~ res.ya_tiene[0] ~ ' registrados por AEDA') }}
+  {{ tarjeta('grupo', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · en la nómina, cuotas justas') }}
+  {{ tarjeta('alerta', 'warn', 'No están en la nómina', res.sin_nomina[0], '$ ' ~ (res.sin_nomina[1] | miles) ~ ' · se revisan de a una') }}
+</div>
+{% endif %}
+
+<form method="post" action="{{ url_for('ben_conv.emitir_lote') }}" id="form-lote"
+      data-proceso="Emitiendo los recibos…" data-proceso-detalle="Cada recibo se graba con su renglón del libro.">
+  <input type="hidden" name="cuenta" value="{{ id_cuenta or '' }}">
+  <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+  <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+  <div class="card">
+    {% call ui.barra_filtros('Buscar por afiliado, CUIL, concepto o referencia…', tam_pagina=50) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="">Todos</option>
+        {% for k, (t, _) in estados.items() %}<option value="{{ k }}" {{ 'selected' if k == 'pendiente' }}>{{ t }}</option>{% endfor %}
+      </select>{% endcall %}
+      {% call ui.filtro('Nómina') %}<select class="filtro" id="f-nomina">
+        <option value="">Todos</option><option value="1">En la nómina</option><option value="0">No están</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-recibos" data-exportar="Recibos de adheridos {{ cuenta.nombre if cuenta else '' }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>
+            <input type="checkbox" id="chk-todos" title="Tildar las filtradas que se pueden emitir en lote" onclick="marcarTodos(this)">
+          </th>
+          <th data-orden="asc">Fecha</th><th>Referencia</th><th>Concepto del banco</th><th>Afiliado</th>
+          <th class="th-right">Adheridos del grupo</th><th class="th-right">Cuota del grupo</th><th>Meses</th><th class="th-right">Importe</th><th>Estado</th>
+        </tr></thead>
+        <tbody>
+          {% for f in filas %}
+          <tr data-estado="{{ f.estado }}" data-nomina="{{ 1 if f.adheridos else 0 }}">
+            <td><div class="acciones">
+              {% if f.en_lote %}
+              <input type="checkbox" class="chk-item" name="extracto" value="{{ f.id }}" data-importe="{{ f.importe }}"
+                     aria-label="Tildar {{ f.fecham.strftime('%d/%m') }} {{ f.importe | miles }}" onchange="recalcularSel()">
+              {% endif %}
+              {% if f.estado in emitibles %}
+              {{ ui.accion('agregar', href=url_for('ben_conv.emitir_uno', id_extracto=f.id, cuenta=id_cuenta, desde=desde.isoformat(), hasta=hasta.isoformat()), titulo='Emitir el recibo') }}
+              {% elif f.recibo and f.recibo.clase in ('cuota_sindical', 'fiscalizacion', 'afiliado') %}
+              {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
+              {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=f.recibo.id_orden), titulo='Recibo en PDF', blank=True) }}
+              {% endif %}
+            </div></td>
+            <td data-valor="{{ f.fecham.isoformat() }}">{{ f.fecham.strftime('%d/%m/%Y') }}</td>
+            <td class="td-mono td-muted">{{ f.ref_nro or '—' }}</td>
+            <td class="td-wrap">{{ f.concepto or '—' }}</td>
+            <td><span class="td-fuerte">{{ f.emp.nombre or '—' }}</span><div class="td-mono chico td-muted">{{ f.cuit }}</div></td>
+            <td class="td-right" data-num="{{ f.adheridos }}">{% if f.adheridos %}{{ f.adheridos }}{% else %}{{ ui.estado('No está', 'warn') }}{% endif %}</td>
+            <td class="td-right" data-num="{{ f.cuota_grupo }}">{{ f.cuota_grupo | miles }}</td>
+            <td class="td-mono chico">
+              {% if f.estado == 'emitido' %}{% for p in (f.recibo.periodos or '').split(',') if p %}{{ p | periodo }}{{ ', ' if not loop.last }}{% endfor %}
+              {% elif f.sugerido %}{% for p, imp in f.sugerido %}<div>{{ p | periodo }}{% if f.sugerido | length > 1 %} <span class="td-muted">{{ imp | miles }}</span>{% endif %}</div>{% endfor %}
+              {% else %}—{% endif %}
+            </td>
+            <td class="td-right td-fuerte importe-ok" data-num="{{ f.importe }}">{{ f.importe | miles }}</td>
+            <td>{{ ui.estado(estados[f.estado][0], estados[f.estado][1]) }}
+              {% if f.recibo %}<div class="td-mono chico td-muted">{{ f.recibo.nro_recibo or f.recibo.nro_orden }}</div>{% endif %}
+              {% if f.regla %}<div class="chico td-muted">{{ f.regla }}</div>{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">{{ 'No hay transferencias de afiliados en estas fechas.' if cuenta else 'Elegí una cuenta.' }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if res.lote and res.lote[0] %}
+  <div class="barra-accion">
+    <div class="barra-accion-datos">
+      <div><div class="res-card-lbl">Tildadas</div><div class="res-card-val" id="res-cant">0</div></div>
+      <div><div class="res-card-lbl">Total</div><div class="res-card-val ok mono" id="res-total">$ 0,00</div></div>
+    </div>
+    {{ ui.boton('Emitir los recibos tildados', 'primary', submit=True, icono_='dinero', id='btn-emitir', onclick='return confirmarLote();') }}
+  </div>
+  {% endif %}
+</form>
+{% endif %}
+
+<script>
+function items() { return Array.from(document.querySelectorAll('.chk-item')); }
+function marcarTodos(chk) {
+  var tbl = document.getElementById('tbl-recibos');
+  var filas = tbl._grilla ? tbl._grilla.filas() : Array.from(tbl.tBodies[0].rows);
+  filas.forEach(function (tr) { var c = tr.querySelector('.chk-item'); if (c) c.checked = chk.checked; });
+  recalcularSel();
+}
+function recalcularSel() {
+  var sel = items().filter(function (i) { return i.checked; });
+  var total = sel.reduce(function (a, i) { return a + (parseFloat(i.dataset.importe) || 0); }, 0);
+  if (!document.getElementById('res-cant')) return;
+  document.getElementById('res-cant').textContent = sel.length;
+  document.getElementById('res-total').textContent = pesos(total);
+  document.getElementById('btn-emitir').disabled = sel.length === 0;
+}
+function confirmarLote() {
+  var n = items().filter(function (i) { return i.checked; }).length;
+  if (!n) { alert('Tildá al menos una acreditación.'); return false; }
+  return confirm('Se van a emitir ' + n + ' recibo' + (n === 1 ? '' : 's') + ' por ' + document.getElementById('res-total').textContent
+    + ', con los meses que se ven en la grilla.\n\n¿Seguir?');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado'), fn = document.getElementById('f-nomina');
+  if (!fe) return;
+  gestion_admTable('tbl-recibos', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value && tr.dataset.estado !== fe.value) return false;
+    if (fn.value && tr.dataset.nomina !== fn.value) return false;
+    return true;
+  }});
+  recalcularSel();
+});
+</script>
+{% endblock %}

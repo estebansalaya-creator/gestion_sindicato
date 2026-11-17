@@ -45,6 +45,12 @@ gestion_sindicato/
   fisca_intereses.py      vencimiento del F.931 por terminación de CUIT e interés resarcitorio de ARCA por tramos
   importar_arca_tablas.py vencimientos F.931, tasas y feriados de ARCA desde contable (solo lectura); --aplicar graba
   fisca_escalas.py        escalas salariales del convenio: consulta, alta, corrección (fisca_escala_salarial)
+  ben_convenio.py         Beneficios › Convenio YMCA: nómina de adheridos, recibos de sus transferencias, cuotas por
+                          grupo familiar, control de la factura del gimnasio, datos y precios del convenio
+  ben_campanias.py        Beneficios › Campañas: flyers por correo a los afiliados, envío en segundo plano, baja pública
+  mailer.py               el motor del correo saliente (copia del de gestion_adm) + entregar() para las campañas
+  correo.py               Administración › Correo Saliente: cuenta SMTP, prueba, remitentes, avisos, envíos
+  secretos.py             cifrado Fernet de las contraseñas (SIND_FERNET_KEY), copia del de gestion_adm
   lsd_lector.py           lector del archivo de liquidación del LSD de ARCA (copia del de gestion_adm)
   empleadores.py          ABM de empleadores (p_empresas)
   cc_empleadores.py       cuenta corriente de empleadores y aplicación de cobros a las cuotas (pantallas)
@@ -172,6 +178,16 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=,
                              ?acuerdo= como recibo de fiscalización);
                              /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
+/beneficios/ymca/adheridos   nómina (?edit=ID, ?cuil=&desde= alta precargada); POST accion=guardar|baja|borrar
+/beneficios/ymca/recibos     transferencias de afiliados: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto>, /emitir_lote POST
+/beneficios/ymca/cuotas      cuenta por grupo familiar: ?desde, ?hasta (AAAAMM); /<cuil_titular> la de un grupo
+/beneficios/ymca/control     factura del gimnasio contra nómina × precio, cobrado y lo que cubre el sindicato: ?desde, ?hasta
+/beneficios/ymca/convenio    datos del convenio y vigencias (?precio=ID); POST accion=datos|precio|borrar_precio
+/beneficios/campanias        campañas; /nueva, /<id>, /<id>/editar, /<id>/flyer, /<id>/probar, /<id>/enviar POST,
+                             /<id>/pausar|reanudar|cancelar|borrar POST, /<id>/estado (JSON)
+/beneficios/baja/<token>     PÚBLICA, sin sesión: «no quiero recibir más» (token firmado con SIND_SECRET_KEY)
+/admin/correo                correo saliente; /guardar, /probar, /remitentes/guardar, /remitentes/<id>/borrar,
+                             /tipos/asignar POST; /envios (?origen_tipo=&origen_id=&codigo=&estado=&q=&pagina=)
 /fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
                              /<desde>/editar GET/POST, /<desde>/eliminar POST (solo las cargadas acá)
 /empresas/<token>            PORTAL de la empresa, sin sesión; /subir POST; /presentacion/<id> (+ /confirmar,
@@ -337,6 +353,9 @@ SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AE
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)
 [SIND_CONTABLE_HOST  _PORT  _USER  _PASS  _DB]    contable en Railway, solo lectura (contable_oseda.py)
 [SIND_URL_PUBLICA]                                https://aeda.seggestion.com.ar: arma el enlace de las empresas
+                                                  y el de «no recibir más» de las campañas
+SIND_FERNET_KEY                                   cifra las contraseñas del correo saliente: la MISMA en el .env
+                                                  local y en Railway (usan la misma base)
 ```
 
 - **La base no se configura por entorno.** `DB_NAME = "sindicato"` es constante en `db.py`, para que
@@ -836,6 +855,63 @@ se emiten a un acta, como en OSEDA.
   vuelve a «vigente» si lo había cancelado el pago. Con recibos no se modifica el cronograma.
 - **Talonarios ABM**: un talonario con recibos cuenta como usado (no cambia punto de venta, letra ni desde).
 - **Pendiente**: cobrar con cheques de terceros desde el acuerdo, el envío por mail.
+
+## Correo saliente
+
+`mailer.py`, `correo.py`, `secretos.py` (pedido del 17/11/2026: «configurar correo saliente como en oseda»): la
+pantalla Correo Saliente de gestion_adm (`mail_routes.py`) con el sistema de estilos de acá, en Administración del
+Sistema (`/admin/correo`, menú 211, solo Administrador). Las tablas `mail_*` vinieron con la base;
+`sql/beneficios_correo_20261117.sql` les agrega el origen del envío (`mail_envios.origen_tipo/_id`) y la cuenta propia
+del remitente, y deja la fila de `mail_config` **apagada**: no sale nada hasta activarla y probarla.
+
+- La contraseña se guarda cifrada con Fernet (`SIND_FERNET_KEY`) y nunca vuelve a la pantalla. El IIS local y Railway
+  usan la misma base: la clave tiene que ser la misma en los dos.
+- `mailer.enviar()` es el de gestion_adm (avisos de `mail_tipos`, todavía no hay ninguno acá); `mailer.entregar()` es
+  propio: manda un mensaje ya armado (las campañas, con HTML y el flyer) con la misma configuración, el mismo freno de
+  24 horas (`limite_diario`) y el mismo registro en `mail_envios`.
+- `p_afiliados` no tiene columna de correo: el del afiliado sale de sus contactos (`s_contactos`, vinieron de AEDA).
+  Test: `python tests/test_ben_campanias.py` (incluye `entregar` sin servidor).
+
+## Beneficios: Convenio YMCA
+
+`ben_convenio.py` (`/beneficios/ymca/…`, menú 120 «Beneficios» › 121 «Convenio YMCA» › 122-126, Administrador y
+Supervisor; `sql/beneficios_correo_20261117.sql`; test: `python tests/test_ben_convenio.py`, sin base). Pedido y
+decisiones del 17/11/2026: el ingreso de los pagos de la YMCA va aparte; hay una nómina de afiliados que pagan por mes y
+una factura mensual del proveedor (el gimnasio con convenio, proveedor 23). La diferencia entre lo que factura y lo que
+pagan los afiliados la cubre el sindicato.
+
+- **Tablas**: `ben_convenio` (proveedor, motivo de los recibos, `cc_desde`), `ben_convenio_precio` (por vigencia:
+  `precio_proveedor` por adherido y `cuota_afiliado`, fija para todos; 25.000 desde 2026-04 y 30.000 desde 2026-09; el
+  precio del gimnasio **falta cargarlo**), `ben_adherido` (afiliado titular o familiar, mes desde y hasta).
+- **La nómina se carga en el sistema** (decidido). Baja = último mes que paga; eliminar solo una carga que no generó
+  cuotas. La solapa «Transfirieron y no están» (extracto de los últimos 3 meses, CUIL del padrón que no es empleador,
+  grupo sin adheridos) sirve para armarla.
+- **La cuota es del grupo familiar** (`cuil_titular`): cada mes debe cuota × adheridos del grupo; le cuentan los
+  recibos de cualquiera del grupo. La cuenta empieza en `cc_desde` (202611): antes AEDA registraba lo cobrado en una
+  orden por mes sin detalle.
+- **Recibos aparte**: Emisión de Recibos (cuota sindical) ya no muestra las transferencias de afiliados (avisa cuántas
+  y lleva a Beneficios) ni las emite en lote; su «emitir» de una de afiliado redirige a `ben_conv.emitir_uno`. El
+  recibo es el de `recibos_afiliado.py` (talonario X 0003) con el motivo del convenio; los meses sugeridos son las
+  cuotas JUSTAS del grupo; en lote solo grupos en la nómina con cuotas justas. La plantilla de emisión es
+  `fisca/recibo_emitir.html` en modo afiliado (`beneficios=True`).
+- **Control mensual**: por mes, adheridos de la nómina × precio contra lo facturado (`f_comprobantes_arca` del proveedor
+  por `periodo`, las notas de crédito restan), adheridos según la factura, lo cobrado (todo el motivo YMCA, también las
+  órdenes agrupadas de AEDA por el mes de su fecha) y lo que cubre el sindicato (facturado − cobrado).
+
+## Beneficios: Campañas
+
+`ben_campanias.py` (`/beneficios/campanias`, menú 127; pedido del 17/11/2026: «cargar flyers de campañas que se puedan
+enviar por correo a los afiliados»). `ben_campania` (flyer en `SIND_ADJUNTOS/campanias/`, imagen o PDF hasta 5 MB,
+asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares, adheridos de un convenio),
+`ben_campania_envio` (un renglón por dirección: pendiente, ok, error, baja), `ben_baja_correo` (no recibir más).
+
+- Una dirección por afiliado (la principal o la primera de sus contactos), sin repetir, sin las dadas de baja. Un mail
+  por destinatario; la imagen va dentro del HTML (cid), el PDF adjunto; al pie y en `List-Unsubscribe` el enlace
+  firmado de baja (`/beneficios/baja/<token>`, pública: pregunta y registra con un botón).
+- **Enviar** arma la lista en la base y la manda un hilo, de a uno con 1 s de pausa. Un error de cuenta o el límite de
+  24 horas la deja **pausada** con la nota; se **reanuda** desde donde quedó (la lista está en la base: un reinicio no
+  pierde nada, la ficha ofrece «Seguir enviando»). 10 errores seguidos la pausan. La ficha sigue el avance (JSON).
+- Primero «Enviar prueba» a una dirección (asunto con «[PRUEBA]», no toca la lista).
 
 ## Escalas salariales del convenio
 

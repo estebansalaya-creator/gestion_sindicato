@@ -51,6 +51,7 @@ MANUALES = (
     "ayuda_fiscalizacion",
     "ayuda_empleadores",
     "ayuda_padron",
+    "ayuda_beneficios",
     "ayuda_proveedores",
     "ayuda_tesoreria",
     "ayuda_pagos",
@@ -70,6 +71,8 @@ SIN_AYUDA = {
     "institucion.logo", "contactos.abm_areas",
     # El instructivo de las empresas, en PDF (instructivo_empresa.py).
     "portal.instructivo", "fisca_lsd.instructivo_interno",
+    # Beneficios: el flyer de una campaña, su avance (JSON) y la página pública de «no recibir más».
+    "ben_camp.flyer", "ben_camp.estado", "ben_camp.baja",
 }
 #: Lo mismo por forma del endpoint: lo que devuelve datos o un archivo.
 _RE_SIN_AYUDA = re.compile(

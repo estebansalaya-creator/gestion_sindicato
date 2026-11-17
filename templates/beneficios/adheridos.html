@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Nómina de adheridos{% endblock %}
+
+{#
+  Beneficios › Convenio YMCA › Nómina de Adheridos (ben_conv.adheridos_abm):
+  quién está adherido al convenio, desde y hasta qué mes. Titular o familiar del
+  padrón. La baja es el último mes que paga; eliminar es solo para una carga
+  equivocada que todavía no generó cuotas. Abajo, quienes transfirieron en los
+  últimos meses y no están en la nómina, para armarla.
+#}
+{% set r = registro or {} %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Nómina de adheridos{% if conv %} — {{ conv.nombre }}{% endif %}</h1>
+    <p>Los afiliados (titulares o familiares) adheridos al convenio. Cada uno paga la cuota del mes; el gimnasio factura por cada uno.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if conv and puede('/beneficios/ymca/cuotas') %}{{ ui.boton('Cuotas', 'secondary', href=url_for('ben_conv.cuotas'), icono_='dinero') }}{% endif %}
+    {% if conv and registro %}{{ ui.boton('Nuevo', href=url_for('ben_conv.adheridos_abm', cuil=''), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+{% if conv %}
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Adheridos en {{ mes | periodo }}</div><div class="kpi-val">{{ totales.vigentes }}</div>
+      <div class="kpi-sub">{{ totales.titulares }} titulares · {{ totales.familiares }} familiares</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('usuario', 20) }}</div>
+    <div><div class="kpi-lbl">Grupos familiares</div><div class="kpi-val">{{ totales.grupos }}</div>
+      <div class="kpi-sub">pagan la cuota de todos sus adheridos</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('alerta', 20) }}</div>
+    <div><div class="kpi-lbl">Transfirieron y no están</div><div class="kpi-val">{{ sin_nomina | length }}</div>
+      <div class="kpi-sub">últimos meses, abajo</div></div></div>
+</div>
+
+{% set inicial = 'datos' if abrir_ficha else 'listado' %}
+{{ ui.solapas([('listado', 'Nómina', filas|length), ('datos', 'Editar' if r.get('id') else 'Agregar', None), ('sin', 'Transfirieron y no están', sin_nomina|length)], inicial) }}
+
+<div class="abm-panel {{ 'oculto' if inicial != 'listado' }}" data-panel="listado">
+  <div class="card">
+    {% call ui.barra_filtros('Buscar por apellido, CUIL o grupo…', 50) %}
+      {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+        <option value="vigente" selected>Vigentes</option>
+        <option value="futuro">Desde un mes que no llegó</option>
+        <option value="baja">Dados de baja</option>
+        <option value="">Todos</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-adheridos" data-exportar="Nomina de adheridos {{ conv.nombre }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th data-orden="asc">Apellido y nombres</th><th>CUIL</th><th>Parentesco</th><th>Grupo (CUIL titular)</th>
+          <th class="th-center">Desde</th><th class="th-center">Hasta</th><th>Estado</th><th>Observaciones</th>
+        </tr></thead>
+        <tbody>
+          {% for a in filas %}
+          <tr class="{{ 'fila-baja' if a.estado == 'baja' }}" data-estado="{{ a.estado }}">
+            <td><div class="acciones">
+              {{ ui.accion('editar', href=url_for('ben_conv.adheridos_abm', edit=a.id)) }}
+              {% if not a.periodo_hasta %}{{ ui.accion('baja', titulo='Dar de baja: último mes que paga', onclick='abrirBaja(this)', datos={'id': a.id, 'nombre': a.apellido_nombres, 'desde': a.periodo_desde | periodo}) }}{% endif %}
+              {% if puede('/beneficios/ymca/cuotas') %}{{ ui.accion('historial', href=url_for('ben_conv.cuota_grupo', cuil_titular=a.cuil_titular), titulo='Cuotas del grupo') }}{% endif %}
+              {% if puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=a.id_afiliado), titulo='Ver en el padrón') }}{% endif %}
+            </div></td>
+            <td class="td-fuerte">{{ a.apellido_nombres }}{% if a.baja_padron %} {{ ui.estado('Baja en el padrón', 'warn') }}{% endif %}</td>
+            <td class="td-mono">{{ a.cuil or '—' }}</td>
+            <td>{{ 'Titular' if a.cuil == a.cuil_titular else (a.parentesco or 'Familiar') }}</td>
+            <td class="td-mono">{{ a.cuil_titular }}</td>
+            <td class="td-center td-mono">{{ a.periodo_desde | periodo }}</td>
+            <td class="td-center td-mono">{{ (a.periodo_hasta | periodo) if a.periodo_hasta else '—' }}</td>
+            <td>{% if a.estado == 'vigente' %}{{ ui.estado('Vigente', 'ok') }}{% elif a.estado == 'futuro' %}{{ ui.estado('Desde ' ~ (a.periodo_desde | periodo), 'info') }}{% else %}{{ ui.estado('Baja', 'neutro') }}{% endif %}</td>
+            <td class="td-wrap chico">{{ a.observaciones or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no hay adheridos: agregá el primero o mirá la solapa «Transfirieron y no están».</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {% call ui.card_head(('Editar adhesión' if r.get('id') else 'Agregar a la nómina'), nota='Con el CUIL del padrón. Un familiar entra con su propio CUIL: la cuota la paga su grupo.') %}
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('ben_conv.adheridos_abm'), chico=True) }}
+    {% endcall %}
+    <form method="post" action="{{ url_for('ben_conv.adheridos_abm') }}">
+      <input type="hidden" name="accion" value="guardar">
+      <input type="hidden" name="id" value="{{ r.get('id') or '' }}">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;"><label for="cuil">CUIL <span class="req">*</span></label>
+            <input type="text" name="cuil" id="cuil" required maxlength="13" inputmode="numeric" value="{{ r.get('cuil') or '' }}" placeholder="20123456789" autofocus>
+            {% if r.get('apellido_nombres') %}<small class="campo-ayuda">{{ r.apellido_nombres }}</small>{% endif %}</div>
+          <div class="campo" style="--span:2;"><label for="periodo_desde">Desde (primer mes) <span class="req">*</span></label>
+            <input type="month" name="periodo_desde" id="periodo_desde" required value="{{ (r.get('periodo_desde') | periodo) if r.get('periodo_desde') else (mes | periodo) }}"></div>
+          <div class="campo" style="--span:2;"><label for="periodo_hasta">Hasta (último mes)</label>
+            <input type="month" name="periodo_hasta" id="periodo_hasta" value="{{ (r.get('periodo_hasta') | periodo) if r.get('periodo_hasta') else '' }}">
+            <small class="campo-ayuda">Vacío = sigue.</small></div>
+          <div class="campo" style="--span:5;"><label for="observaciones">Observaciones</label>
+            <input type="text" name="observaciones" id="observaciones" maxlength="300" value="{{ r.get('observaciones') or '' }}"></div>
+        </div>
+      </div>
+      <div class="form-acciones">
+        {% if r.get('id') %}{{ ui.boton('Eliminar', 'danger', icono_='borrar', onclick='borrar(' ~ r.id ~ ')') }}{% endif %}
+        {{ ui.boton('Guardar cambios' if r.get('id') else 'Agregar', icono_='guardar', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if inicial != 'sin' }}" data-panel="sin">
+  <div class="card">
+    {{ ui.card_head('Transfirieron y no están en la nómina', nota='Afiliados que acreditaron en el banco en los últimos meses y cuyo grupo no tiene adheridos. Puede ser la cuota del gimnasio o un pago por otro concepto: revisalo antes de agregar.') }}
+    {% call ui.barra_filtros('Buscar por apellido o CUIL…', 50) %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-sin" data-exportar="Transfirieron y no estan en la nomina">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th data-orden="asc">Apellido y nombres</th><th>CUIL</th><th class="th-right">Transferencias</th>
+          <th class="th-center">Última</th><th class="th-right">Último importe</th><th class="th-right">Total</th>
+        </tr></thead>
+        <tbody>
+          {% for t in sin_nomina %}
+          <tr class="{{ 'fila-baja' if t.fecha_baja }}">
+            <td><div class="acciones">{{ ui.accion('agregar', href=url_for('ben_conv.adheridos_abm', cuil=t.cuil, desde=t.ultima.strftime('%Y%m')), titulo='Agregar a la nómina') }}</div></td>
+            <td class="td-fuerte">{{ t.apellido_nombres }}{% if t.fecha_baja %} {{ ui.estado('Baja en el padrón', 'warn') }}{% endif %}</td>
+            <td class="td-mono">{{ t.cuil }}</td>
+            <td class="td-right" data-num="{{ t.veces }}">{{ t.veces }}</td>
+            <td class="td-center" data-valor="{{ t.ultima.isoformat() }}">{{ t.ultima.strftime('%d/%m/%Y') }}</td>
+            <td class="td-right" data-num="{{ t.ultimo_importe }}">{{ t.ultimo_importe | miles }}</td>
+            <td class="td-right" data-num="{{ t.total }}">{{ (t.total or 0) | miles }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="7" class="no-data">Nadie: todos los que transfirieron están en la nómina.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="modal" id="modal-baja">
+  <div class="modal-caja">
+    <div class="modal-titulo">Dar de baja de la nómina</div>
+    <div class="modal-texto" id="baja-nombre"></div>
+    <form method="post" action="{{ url_for('ben_conv.adheridos_abm') }}">
+      <input type="hidden" name="accion" value="baja">
+      <input type="hidden" name="id" id="baja-id">
+      <div class="campos">
+        <div class="campo" style="--span:5;"><label for="baja-hasta">Último mes que paga <span class="req">*</span></label>
+          <input type="month" name="periodo_hasta" id="baja-hasta" required value="{{ mes | periodo }}"></div>
+        <div class="campo" style="--span:7;"><label for="baja-motivo">Motivo</label>
+          <input type="text" name="motivo" id="baja-motivo" maxlength="200"></div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-baja')") }}
+        {{ ui.boton('Dar de baja', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+<form method="post" action="{{ url_for('ben_conv.adheridos_abm') }}" id="form-borrar" class="oculto">
+  <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" id="borrar-id">
+</form>
+{% endif %}
+
+<script>
+function abrirBaja(b) {
+  document.getElementById('baja-id').value = b.dataset.id;
+  document.getElementById('baja-nombre').textContent = b.dataset.nombre + ' (desde ' + b.dataset.desde + ')';
+  abrirModal('modal-baja');
+}
+function borrar(id) {
+  if (!confirm('¿Eliminar esta adhesión? Es solo para una carga equivocada: si ya generó cuotas, se da de baja.')) return;
+  document.getElementById('borrar-id').value = id;
+  document.getElementById('form-borrar').submit();
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado');
+  if (!fe) return;
+  gestion_admTable('tbl-adheridos', { pageSize: 50, filtroExtra: function (tr) { return !fe.value || tr.dataset.estado === fe.value; } });
+  gestion_admTable('tbl-sin', { pageSize: 50 });
+});
+</script>
+{% endblock %}

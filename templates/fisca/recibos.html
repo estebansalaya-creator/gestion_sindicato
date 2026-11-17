@@ -7,8 +7,9 @@
   acreditaciones del extracto de una cuenta, cada una con su empleador (por el
   CUIT del banco o un CUIT relacionado), si ya tiene recibo y en qué períodos
   iría. Se emite de a uno (el ícono) o los tildados de una vez; abajo, los CUIT
-  que pagan por un empleador. La transferencia de un afiliado lleva un recibo al
-  afiliado por la cuota social (recibos_afiliado.py).
+  que pagan por un empleador. Las transferencias de afiliados (cuota social del
+  convenio) van aparte, por Beneficios › Recibos de Adheridos (17/11/2026): acá
+  solo se cuentan.
 #}
 
 {% macro tarjeta(icono, tipo, rotulo, valor, sub='') -%}
@@ -23,7 +24,7 @@
 <div class="page-header">
   <div>
     <h1>Emisión de recibos de cuota sindical</h1>
-    <p>De cada acreditación del extracto sale el recibo del empleador que pagó. El empleador se reconoce por el CUIT que informa el banco o por un CUIT relacionado; la transferencia de un afiliado lleva su recibo de cuota social.</p>
+    <p>De cada acreditación del extracto sale el recibo del empleador que pagó. El empleador se reconoce por el CUIT que informa el banco o por un CUIT relacionado. Las transferencias de afiliados van por Beneficios.</p>
   </div>
   <div class="page-header-acciones">
     {% if puede_extractos %}{{ ui.boton('Extractos bancarios', 'secondary', href=url_for('extractos.index', cuenta=id_cuenta), icono_='subir') }}{% endif %}
@@ -33,6 +34,10 @@
 
 {{ ui.mensajes() }}
 {% if not cuentas and not falta_esquema %}{{ ui.aviso('No hay cuentas bancarias habilitadas: se cargan en Tesorería → Tablas → Cuentas de Fondos.', 'warning') }}{% endif %}
+{% if de_afiliados is defined and de_afiliados[0] %}
+  {{ ui.aviso(de_afiliados[0] ~ ' transferencia(s) de afiliados por $ ' ~ (de_afiliados[1] | miles) ~ ' no se muestran: son la cuota social del convenio y se emiten en Beneficios › Recibos de Adheridos.', 'info') }}
+  {% if puede_beneficios %}<div class="form-acciones">{{ ui.boton('Ir a Recibos de Adheridos', 'secondary', chico=True, href=url_for('ben_conv.recibos', cuenta=id_cuenta, desde=desde.isoformat() if desde else None, hasta=hasta.isoformat() if hasta else None)) }}</div>{% endif %}
+{% endif %}
 {% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' acreditaciones en estas fechas: se muestran las primeras. Acotá el rango.', 'warning') }}{% endif %}
 
 {% if not falta_esquema %}
@@ -53,7 +58,7 @@
   {{ tarjeta('dinero', '', 'Acreditaciones', res.cant, '$ ' ~ (res.total | miles)) }}
   {{ tarjeta('ok', 'ok', 'Con recibo', res.emitido[0] + res.ya_tiene[0],
              res.emitido[0] ~ ' emitidos acá · ' ~ res.ya_tiene[0] ~ ' ya registrados (AEDA)') }}
-  {{ tarjeta('empresa', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · empleador seguro o cuota social justa') }}
+  {{ tarjeta('empresa', 'info', 'Para emitir en lote', res.lote[0], '$ ' ~ (res.lote[1] | miles) ~ ' · empleador seguro') }}
   {{ tarjeta('alerta', 'warn', 'Para emitir de a uno', res.a_mano[0] + res.posible[0],
              res.a_mano[0] ~ ' sin empleador seguro · ' ~ res.posible[0] ~ ' a revisar') }}
 </div>
