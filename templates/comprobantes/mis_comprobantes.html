@@ -6,39 +6,37 @@
   Lo que ARCA informa como recibido (Mis Comprobantes), cruzado con lo
   cargado. Pendiente = sin expediente; cargado = con comprobante y expediente;
   descartado = alguien dijo que no corresponde (se puede restaurar).
+
+  Mismo diseño que la pantalla de gestion_adm (adm/mis_comprobantes.html):
+  la importación plegada detrás del botón del título, cuatro tarjetas que
+  filtran por estado, y la grilla con el comprobante (número y fecha debajo,
+  marcas), el emisor (CUIT debajo), el expediente, el estado y el importe.
+  A diferencia de gestion_adm, filtra y pagina en el navegador.
 #}
-{% set estado_txt = {'pendiente': ('Pendiente', 'warn'), 'cargado': ('Cargado', 'ok'), 'ignorado': ('Descartado', 'neutro')} %}
 
 {% block content %}
 <div class="page-header">
   <div>
     <h1>Comprobantes ARCA</h1>
-    <p>Los comprobantes que ARCA informa como recibidos por el sindicato (Mis Comprobantes) y si ya se cargaron.</p>
+    <p>Comprobantes recibidos informados por ARCA y su estado en el sistema.</p>
   </div>
   <div class="page-header-acciones">
+    {{ ui.boton('Importar', 'secondary', icono_='descargar', onclick='toggleImportar()') }}
     {% if puede_cargar %}{{ ui.boton('Carga de comprobantes', 'secondary', href=url_for('comprobantes.carga'), icono_='subir') }}{% endif %}
   </div>
 </div>
 
 {{ ui.mensajes(errores) }}
 
-<div class="kpi-row">
-  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
-    <div><div class="kpi-lbl">Pendientes de cargar</div><div class="kpi-val">{{ resumen.pendientes|int }}</div></div></div>
-  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('dinero', 20) }}</div>
-    <div><div class="kpi-lbl" title="Las notas de crédito restan">Importe pendiente</div><div class="kpi-val monto">$ {{ (resumen.importe_pendiente or 0)|miles }}</div></div></div>
-  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
-    <div><div class="kpi-lbl">Cargados</div><div class="kpi-val">{{ resumen.cargados|int }}</div></div></div>
-  <div class="kpi-card"><div class="kpi-ico danger">{{ ui.icono('empresa', 20) }}</div>
-    <div><div class="kpi-lbl">Pendientes sin alta de proveedor</div><div class="kpi-val">{{ resumen.sin_alta|int }}</div></div></div>
-</div>
-
-<div class="card">
+{# ── Traer datos — plegado: es una acción esporádica. Abierto si hubo errores
+   o si todavía no se importó nada. ── #}
+<div id="bloque-importar" class="card {{ 'oculto' if not errores and resumen.total }}">
   {{ ui.card_head('Importar de Mis Comprobantes',
                   nota=('última importación ' ~ resumen.ultima.strftime('%d/%m/%Y %H:%M') ~ ' · comprobantes del '
                         ~ resumen.desde.strftime('%d/%m/%Y') ~ ' al ' ~ resumen.hasta.strftime('%d/%m/%Y'))
                        if resumen.ultima else 'todavía no se importó nada') }}
-  <form method="post" enctype="multipart/form-data" class="bloque" data-proceso="Importando el archivo de ARCA…">
+  <form method="post" enctype="multipart/form-data" class="bloque" data-proceso="Importando el archivo de ARCA…"
+        data-proceso-detalle="Se lee el archivo y se cruza con lo cargado.">
     <div class="campos">
       <div class="campo" style="--span:6;">
         <label class="drop-zone chica">
@@ -52,96 +50,130 @@
       <div class="campo" style="--span:12;">
         <small class="campo-ayuda">
           En el portal de ARCA, con la clave fiscal del sindicato: <strong>Mis Comprobantes → Recibidos</strong>, elegí el
-          período, <strong>Buscar</strong> y exportá en CSV. Subí el archivo tal como baja. Volver a importar un período
-          no duplica nada: actualiza lo que cambió y agrega lo nuevo.
+          período, <strong>Buscar</strong> y exportá. Subí el archivo tal como baja: se acepta el <strong>.zip</strong> sin
+          descomprimir. Volver a importar un período no duplica nada: actualiza lo que cambió y agrega lo nuevo.
         </small>
       </div>
     </div>
   </form>
 </div>
 
+{# ── Resumen: cada tarjeta filtra la grilla por su estado ── #}
+{% macro tarjeta(estado, rotulo, valor, ico, clase_ico='', sub=none) -%}
+<a class="kpi-card" href="#" data-estado="{{ estado }}" onclick="filtrarEstado(this); return false;">
+  <div class="kpi-ico {{ clase_ico }}">{{ ui.icono(ico, 20) }}</div>
+  <div>
+    <div class="kpi-lbl">{{ rotulo }}</div>
+    <div class="kpi-val">{{ (valor or 0)|int }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}
+  </div>
+</a>
+{%- endmacro %}
+<div class="kpi-row">
+  {{ tarjeta('', 'Informados', resumen.total, 'planilla') }}
+  {{ tarjeta('cargado', 'Cargados', resumen.cargados, 'ok', 'ok') }}
+  {{ tarjeta('pendiente', 'Pendientes', resumen.pendientes, 'alerta', 'warn',
+             ('$ ' ~ (resumen.importe_pendiente|miles)) if resumen.importe_pendiente else none) }}
+  {{ tarjeta('ignorado', 'Descartados', resumen.ignorados, 'baja') }}
+</div>
+
 <div class="card">
-  {% call ui.barra_filtros('Filtrar por emisor, CUIT, número o CAE…', tam_pagina=50) %}
+  {% call ui.barra_filtros('Razón social, CUIT, número o CAE…', tam_pagina=50) %}
+    {% call ui.filtro('Desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
     {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
-      <option value="pendiente" selected>Pendientes</option>
-      <option value="cargado">Cargados</option>
-      <option value="ignorado">Descartados</option>
       <option value="">Todos</option>
+      <option value="pendiente">Pendientes de cargar</option>
+      <option value="cargado">Ya cargados</option>
+      <option value="ignorado">Descartados</option>
     </select>{% endcall %}
-    {% call ui.filtro('Proveedor') %}<select class="filtro" id="f-alta">
-      <option value="">Con y sin alta de proveedor</option>
-      <option value="1">Proveedor dado de alta</option>
-      <option value="0">Sin alta de proveedor</option>
+    {% call ui.filtro('Tipo') %}<select class="filtro filtro-angosto" id="f-tipo">
+      <option value="">Todos</option>
+      {% for cod, desc in tipos %}<option value="{{ cod }}">{{ cod }} — {{ desc }}</option>{% endfor %}
     </select>{% endcall %}
-    {% call ui.filtro('Tipo') %}<select class="filtro" id="f-tipo">
-      <option value="">Todos los tipos</option>
-      {% for cod, desc in tipos %}<option value="{{ cod }}">{{ desc }}</option>{% endfor %}
+    {% call ui.filtro('Proveedor') %}<select class="filtro filtro-angosto" id="f-alta">
+      <option value="">Todos</option>
+      <option value="1">Dado de alta</option>
+      <option value="0">Sin alta</option>
     </select>{% endcall %}
-    {% call ui.filtro('Emitidos desde') %}<input type="date" class="filtro" id="f-desde">{% endcall %}
-    {% call ui.filtro('Emitidos hasta') %}<input type="date" class="filtro" id="f-hasta">{% endcall %}
+    {% call ui.filtro('Importe desde') %}<input type="text" id="f-imin" inputmode="decimal"
+      placeholder="0,00" class="filtro mono derecha" style="width:110px;">{% endcall %}
+    {% call ui.filtro('Importe hasta') %}<input type="text" id="f-imax" inputmode="decimal"
+      placeholder="0,00" class="filtro mono derecha" style="width:110px;">{% endcall %}
   {% endcall %}
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-mis" data-exportar="Comprobantes ARCA">
       <thead>
         <tr>
           <th class="col-acciones" data-no-sort>Acciones</th>
-          <th>Emisión</th>
-          <th>Tipo</th>
-          <th>Número</th>
-          <th>CUIT</th>
+          <th>Comprobante</th>
           <th>Emisor</th>
-          <th class="th-right">Neto</th>
-          <th class="th-right">IVA</th>
-          <th class="th-right">Total</th>
-          <th>CAE</th>
-          <th>Estado</th>
           <th>Expediente</th>
+          <th class="th-center">Estado</th>
+          <th class="th-right">Importe</th>
         </tr>
       </thead>
       <tbody>
         {% for f in filas %}
-        {% set est, est_tipo = estado_txt[f.estado_mis] %}
         <tr data-estado="{{ f.estado_mis }}" data-alta="{{ 1 if f.id_proveedor else 0 }}" data-tipo="{{ f.tipo_comprobante }}"
-            data-fecha="{{ f.fecha_emision.isoformat() }}" class="{{ 'fila-baja' if f.estado_mis == 'ignorado' }}">
-          <td><div class="acciones">
-            {% if f.estado_mis == 'pendiente' and puede_cargar %}
-              {{ ui.accion('agregar', href=url_for('comprobantes.carga', mis=f.id), titulo='Cargar con los datos de ARCA') }}
-            {% endif %}
-            {% if f.id_expediente and puede_mesa %}
-              {{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=f.id_expediente), titulo='Ver el expediente') }}
-            {% endif %}
-            {% if f.estado_mis == 'pendiente' %}
-              {{ ui.accion('baja', titulo='Descartar: no corresponde cargarlo', onclick='descartar(this)',
+            data-fecha="{{ f.fecha_emision.isoformat() }}" data-importe="{{ f.importe_total or 0 }}">
+          <td class="col-acciones"><div class="acciones">
+            {% if f.id_expediente %}
+              {% if puede_mesa %}{{ ui.accion('ver', href=url_for('mesa.detalle', exp_id=f.id_expediente), titulo='Ver expediente') }}{% endif %}
+            {% elif f.estado_mis == 'ignorado' %}
+              {{ ui.accion('reactivar', titulo='Volver a pendiente', onclick='restaurar(this)',
+                           datos={'url': url_for('mis_comp.ignorar', id_mis=f.id)}) }}
+            {% else %}
+              {# Si el comprobante ya existe y sólo le falta el expediente, «Cargar»
+                 crearía un segundo comprobante: ahí va sólo el descarte. #}
+              {% if puede_cargar and not f.id_comprobante %}
+                {{ ui.accion('agregar', href=url_for('comprobantes.carga', mis=f.id), titulo='Cargar como comprobante ARCA') }}
+              {% endif %}
+              {{ ui.accion('baja', titulo='Descartar: no corresponde cargar', onclick='descartar(this)',
                            datos={'url': url_for('mis_comp.ignorar', id_mis=f.id),
                                   'cmp': (f.tipo_desc or f.tipo_comprobante) ~ ' ' ~ f.punto_de_venta ~ '-' ~ f.numero}) }}
-            {% elif f.estado_mis == 'ignorado' %}
-              {{ ui.accion('reactivar', titulo='Restaurar como pendiente', onclick='restaurar(this)',
-                           datos={'url': url_for('mis_comp.ignorar', id_mis=f.id)}) }}
             {% endif %}
           </div></td>
-          <td data-valor="{{ f.fecha_emision.isoformat() }}">{{ f.fecha_emision.strftime('%d/%m/%Y') }}</td>
-          <td>{{ f.tipo_desc or f.tipo_comprobante }}</td>
-          <td class="td-mono nowrap">{{ f.punto_de_venta }}-{{ f.numero }}</td>
-          <td class="td-mono">{{ f.cuit_emisor }}</td>
-          <td class="td-fuerte">
-            {{ f.proveedor or f.razon_social or '—' }}
-            {% if not f.id_proveedor %}
-              <span class="chip chip-alerta">sin alta</span>
-              {% if puede_alta_prov and f.estado_mis == 'pendiente' %}
-              <a class="chico" target="_blank" rel="noopener"
-                 href="{{ url_for('proveedores.abm', nuevo=1, cuit=f.cuit_emisor, razon=f.razon_social or '') }}">dar de alta</a>
-              {% endif %}
-            {% elif f.prov_activo == 0 %}<span class="chip chip-alerta">proveedor de baja</span>{% endif %}
+          <td>
+            {{ f.tipo_desc or f.tipo_comprobante }}
+            <div class="chico td-muted td-mono nowrap">
+              {{ f.punto_de_venta }}-{{ f.numero }} · {{ f.fecha_emision.strftime('%d/%m/%Y') }}
+            </div>
+            {% if f.id_comprobante %}{{ ui.marcas(f) }}{% endif %}
           </td>
-          <td class="td-right" data-num="{{ f.importe_neto }}">{{ f.importe_neto|miles }}</td>
-          <td class="td-right" data-num="{{ f.importe_iva }}">{{ f.importe_iva|miles }}</td>
-          <td class="td-right td-fuerte" data-num="{{ f.importe_total }}">{{ f.importe_total|miles }}</td>
-          <td class="td-mono td-muted">{{ f.cae or '—' }}</td>
-          <td data-valor="{{ est }}">{{ ui.estado(est, est_tipo) }}</td>
-          <td data-valor="{{ f.nro_expediente or '' }}">{{ ui.expediente(f.id_expediente, f.nro_expediente) }}</td>
+          <td class="td-recorte" title="{{ f.proveedor or f.razon_social or '' }} — CUIT {{ f.cuit_emisor }}">
+            <span class="td-fuerte">{{ f.proveedor or f.razon_social or '—' }}</span>
+            <div class="chico td-muted">
+              <span class="td-mono">{{ f.cuit_emisor }}</span>
+              {% if not f.id_proveedor %}
+                <span title="El emisor no está dado de alta como proveedor">{{ ui.estado('sin alta', 'neutro') }}</span>
+                {% if puede_alta_prov and f.estado_mis == 'pendiente' %}
+                <a target="_blank" rel="noopener"
+                   href="{{ url_for('proveedores.abm', nuevo=1, cuit=f.cuit_emisor, razon=f.razon_social or '') }}">dar de alta</a>
+                {% endif %}
+              {% elif f.prov_activo == 0 %}{{ ui.estado('proveedor de baja', 'warn') }}{% endif %}
+            </div>
+          </td>
+          <td class="nowrap" data-valor="{{ f.nro_expediente or '' }}">
+            {% if f.nro_expediente %}
+              {{ ui.expediente(f.id_expediente, f.nro_expediente) }}
+              <div class="chico td-muted">{{ f.estado_exp }}</div>
+            {% else %}<span class="td-muted">—</span>{% endif %}
+          </td>
+          <td class="td-center">
+            {% if f.estado_mis == 'cargado' %}{{ ui.estado('Cargado', 'ok') }}
+            {% elif f.estado_mis == 'ignorado' %}{{ ui.estado('Descartado', 'neutro') }}
+            {% else %}{{ ui.estado('Pendiente', 'warn') }}
+              {% if f.id_comprobante %}
+              <div class="chico texto-aviso"
+                   title="El comprobante existe en el sistema pero ningún expediente lo referencia">ya existe sin expediente</div>
+              {% endif %}
+            {% endif %}
+          </td>
+          <td class="td-right" data-num="{{ f.importe_total }}">{{ (f.importe_total or 0)|miles }}</td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="12" class="no-data">Todavía no se importó ningún archivo de Mis Comprobantes.</td></tr>
+        <tr class="no-data-row"><td colspan="6" class="no-data">Todavía no se importó ningún comprobante. Usá «Importar» arriba.</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -152,8 +184,13 @@
 <form method="post" id="form-ignorar" class="oculto"><input type="hidden" name="restaurar" id="restaurar"></form>
 
 <script>
+function toggleImportar() {
+  var b = document.getElementById('bloque-importar');
+  b.classList.toggle('oculto');
+  if (!b.classList.contains('oculto')) b.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
 function descartar(btn) {
-  if (!confirm('¿Descartar ' + btn.dataset.cmp + '? Deja de figurar como pendiente. Se puede restaurar.')) return;
+  if (!confirm('¿Marcar ' + btn.dataset.cmp + ' como que no corresponde cargar? Se puede restaurar.')) return;
   var f = document.getElementById('form-ignorar');
   f.action = btn.dataset.url; document.getElementById('restaurar').value = ''; f.submit();
 }
@@ -165,9 +202,30 @@ document.getElementById('archivo').addEventListener('change', function () {
   document.getElementById('archivo-nombre').textContent = this.files.length ? this.files[0].name
     : 'Elegí el .zip que baja ARCA (o el .csv / .xlsx de adentro)';
 });
+
+/* Las tarjetas son atajos del filtro Estado: lo eligen y la tarjeta queda marcada. */
+function marcarTarjeta() {
+  var v = document.getElementById('f-estado').value;
+  document.querySelectorAll('.kpi-card[data-estado]').forEach(function (c) {
+    c.classList.toggle('activa', c.dataset.estado === v);
+  });
+}
+function filtrarEstado(a) {
+  var s = document.getElementById('f-estado');
+  s.value = a.dataset.estado;
+  s.dispatchEvent(new Event('change', {bubbles: true}));
+  marcarTarjeta();
+}
+function numAr(s) {
+  s = (s || '').trim();
+  if (!s) return null;
+  var n = parseFloat(s.replace(/\./g, '').replace(',', '.'));
+  return isNaN(n) ? null : n;
+}
 document.addEventListener('DOMContentLoaded', function () {
   var fe = document.getElementById('f-estado'), fa = document.getElementById('f-alta'),
-      ft = document.getElementById('f-tipo'), fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
+      ft = document.getElementById('f-tipo'), fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta'),
+      fmin = document.getElementById('f-imin'), fmax = document.getElementById('f-imax');
   gestion_admTable('tbl-mis', {
     pageSize: 50,
     filtroExtra: function (tr) {
@@ -176,9 +234,16 @@ document.addEventListener('DOMContentLoaded', function () {
       if (ft.value && tr.dataset.tipo !== ft.value) return false;
       if (fd.value && tr.dataset.fecha < fd.value) return false;
       if (fh.value && tr.dataset.fecha > fh.value) return false;
+      var imp = parseFloat(tr.dataset.importe), mn = numAr(fmin.value), mx = numAr(fmax.value);
+      if (mn !== null && imp < mn) return false;
+      if (mx !== null && imp > mx) return false;
       return true;
     }
   });
+  fe.addEventListener('change', marcarTarjeta);
+  var bq = document.querySelector('#tbl-mis').closest('.card').querySelector('.btn-quitar-filtro');
+  if (bq) bq.addEventListener('click', marcarTarjeta);
+  marcarTarjeta();
 });
 </script>
 {% endblock %}

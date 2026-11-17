@@ -339,7 +339,7 @@ def listado():
                        p.id AS id_proveedor, p.razon_social AS proveedor, p.nombre_fantasia, p.activo AS prov_activo,
                        e.id AS id_expediente, e.nro_expediente, e.estado AS estado_exp,
                        ({SQL_CARGADO}) AS cargado,
-                       c.constatacion_resultado, c.leido_automatico
+                       c.constatacion_resultado, c.leido_automatico, c.verificado_visual
                   FROM f_mis_comprobantes m
                   LEFT JOIN arca_tipo_comprobante t ON t.codigo = m.tipo_comprobante
                   LEFT JOIN c_proveedores p ON p.cuit = m.cuit_emisor
