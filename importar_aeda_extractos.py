@@ -52,6 +52,10 @@ SQL_AEDA = """SELECT bna_id, cajabanco_id, fecham, fechav, ref_nro, debito, cred
                ORDER BY cajabanco_id, fecham, bna_id"""
 
 
+#: Filas por INSERT.
+LOTE = 2000
+
+
 def _d(v) -> Decimal:
     return Decimal(str(v or 0)).quantize(Decimal("0.01"))
 
@@ -171,12 +175,18 @@ def main():
                         resumen[id_cuenta][0] += 1
                         resumen[id_cuenta][2] += r["credito"] or 0
                         resumen[id_cuenta][3] += r["debito"] or 0
-                cur.executemany("""INSERT INTO c_extractos_bancarios
-                                     (c_cuentas_de_fondos_id, fecham, fechav, ref_nro, debito, credito, saldo,
-                                      concepto, cuit, origen, importado)
-                                   VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, 'BNA', %s)""",
-                                [(r["id_cuenta"], r["fecham"], r["fechav"], r["ref_nro"], r["debito"], r["credito"],
-                                  r["concepto"], r["cuit"], ahora) for r in insertar])
+                # Todo con %s: PyMySQL arma un INSERT de muchas filas solo si el VALUES no tiene
+                # literales (con NULL o 'BNA' adentro manda una fila por viaje: 165.000 viajes a Railway).
+                # De a LOTE filas, para no pasar el max_allowed_packet.
+                filas = [(r["id_cuenta"], r["fecham"], r["fechav"], r["ref_nro"], r["debito"], r["credito"], None,
+                          r["concepto"], r["cuit"], "BNA", ahora) for r in insertar]
+                for i in range(0, len(filas), LOTE):
+                    cur.executemany("""INSERT INTO c_extractos_bancarios
+                                         (c_cuentas_de_fondos_id, fecham, fechav, ref_nro, debito, credito, saldo,
+                                          concepto, cuit, origen, importado)
+                                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""", filas[i:i + LOTE])
+                    if len(filas) > LOTE:
+                        print(f"  {min(i + LOTE, len(filas)):>7} de {len(filas)} renglones", flush=True)
             if args.aplicar:
                 conn.commit()
                 estado = "APLICADA"

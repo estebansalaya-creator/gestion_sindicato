@@ -886,6 +886,11 @@ pagan los afiliados la cubre el sindicato.
 - **La nómina se carga en el sistema** (decidido). Baja = último mes que paga; eliminar solo una carga que no generó
   cuotas. La solapa «Transfirieron y no están» (extracto de los últimos 3 meses, CUIL del padrón que no es empleador,
   grupo sin adheridos) sirve para armarla.
+  **Carga inicial (17/11/2026)**: 120 adheridos de las transferencias de AEDA (`adm_bna24`, desde 2025-09: CUIL del
+  padrón, importe múltiplo de $ 5.000 hasta $ 360.000). Desde = primer mes que transfirió; hasta = último, salvo que
+  haya transferido en 2026-10 o 2026-11 (sigue, vacío). Cada uno lo dice en observaciones. Son los titulares que
+  transfieren: los familiares que cubre su pago se agregan a mano. La grilla filtra por período (adheridos en algún
+  mes entre desde y hasta).
 - **La cuota es del grupo familiar** (`cuil_titular`): cada mes debe cuota × adheridos del grupo; le cuentan los
   recibos de cualquiera del grupo. La cuenta empieza en `cc_desde` (202611): antes AEDA registraba lo cobrado en una
   orden por mes sin detalle.

@@ -1,4 +1,4 @@
-"""
+r"""
 arca_wscdc.py — Constatación de comprobantes contra ARCA (WSCDC).
 
 Le pregunta a ARCA si un comprobante existe y si sus datos —CUIT del emisor,

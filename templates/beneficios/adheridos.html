@@ -50,6 +50,8 @@
         <option value="baja">Dados de baja</option>
         <option value="">Todos</option>
       </select>{% endcall %}
+      {% call ui.filtro('Adheridos desde') %}<input type="month" class="filtro" id="f-desde" title="Adheridos en algún mes del período">{% endcall %}
+      {% call ui.filtro('Hasta') %}<input type="month" class="filtro" id="f-hasta">{% endcall %}
     {% endcall %}
     <div class="data-table-wrap">
       <table class="data-table" id="tbl-adheridos" data-exportar="Nomina de adheridos {{ conv.nombre }}">
@@ -60,7 +62,7 @@
         </tr></thead>
         <tbody>
           {% for a in filas %}
-          <tr class="{{ 'fila-baja' if a.estado == 'baja' }}" data-estado="{{ a.estado }}">
+          <tr class="{{ 'fila-baja' if a.estado == 'baja' }}" data-estado="{{ a.estado }}" data-desde="{{ a.periodo_desde }}" data-hasta="{{ a.periodo_hasta or '999912' }}">
             <td><div class="acciones">
               {{ ui.accion('editar', href=url_for('ben_conv.adheridos_abm', edit=a.id)) }}
               {% if not a.periodo_hasta %}{{ ui.accion('baja', titulo='Dar de baja: último mes que paga', onclick='abrirBaja(this)', datos={'id': a.id, 'nombre': a.apellido_nombres, 'desde': a.periodo_desde | periodo}) }}{% endif %}
@@ -185,9 +187,17 @@ function borrar(id) {
   document.getElementById('form-borrar').submit();
 }
 document.addEventListener('DOMContentLoaded', function () {
-  var fe = document.getElementById('f-estado');
+  var fe = document.getElementById('f-estado'), fd = document.getElementById('f-desde'), fh = document.getElementById('f-hasta');
   if (!fe) return;
-  gestion_admTable('tbl-adheridos', { pageSize: 50, filtroExtra: function (tr) { return !fe.value || tr.dataset.estado === fe.value; } });
+  // Con un período, los adheridos en algún mes de ese período (sin mirar el estado de hoy).
+  [fd, fh].forEach(function (i) { i.addEventListener('change', function () { if (fd.value || fh.value) fe.value = ''; }); });
+  gestion_admTable('tbl-adheridos', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value && tr.dataset.estado !== fe.value) return false;
+    var d = fd.value.replace('-', ''), h = fh.value.replace('-', '');
+    if (d && tr.dataset.hasta < d) return false;
+    if (h && tr.dataset.desde > h) return false;
+    return true;
+  } });
   gestion_admTable('tbl-sin', { pageSize: 50 });
 });
 </script>
