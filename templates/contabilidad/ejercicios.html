@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Ejercicios contables{% endblock %}
+
+{#
+  Ejercicios (cont_ej.ejercicios). Abrir uno crea sus períodos mensuales; el de
+  trabajo es el que muestran el Diario y la carga de asientos. Desde la ficha
+  (?ver=ID) se cierran, bloquean y reabren los períodos de a uno, y se cierra o
+  reabre el ejercicio. Ver contabilidad_ejercicios.py y asientos.py.
+#}
+
+{% macro fecha(d) -%}{{ d.strftime('%d/%m/%Y') if d else '—' }}{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Ejercicios contables</h1>
+    <p>Cada ejercicio con sus períodos mensuales. El ejercicio de trabajo es el que muestran el Libro Diario y la carga de asientos.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_diario %}{{ ui.boton('Libro Diario', 'secondary', href=url_for('cont_diario.diario')) }}{% endif %}
+    {% if not nuevo %}{{ ui.boton('Abrir un ejercicio', href=url_for('cont_ej.ejercicios', nuevo=1), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+{% if nuevo %}
+<form method="post" class="card">
+  {{ ui.card_head('Abrir un ejercicio', nota='se crea un período por mes, abiertos') }}
+  <input type="hidden" name="accion" value="nuevo">
+  <div class="card-body">
+    {% if not ejercicios %}{{ ui.aviso('Todavía no hay ningún ejercicio: sin él no se pueden cargar asientos ni importar los de AEDA.', 'info') }}{% endif %}
+    <div class="campos">
+      <div class="campo" style="--span:4;"><label for="nombre">Nombre <span class="req">*</span></label>
+        <input type="text" id="nombre" name="nombre" maxlength="100" value="{{ propuesta.nombre }}" required></div>
+      <div class="campo" style="--span:3;"><label for="fecha_inicio">Inicio <span class="req">*</span></label>
+        <input type="date" id="fecha_inicio" name="fecha_inicio" value="{{ propuesta.fecha_inicio.isoformat() }}" required></div>
+      <div class="campo" style="--span:3;"><label for="fecha_fin">Cierre <span class="req">*</span></label>
+        <input type="date" id="fecha_fin" name="fecha_fin" value="{{ propuesta.fecha_fin.isoformat() }}" required></div>
+      <div class="campo" style="--span:2;"><span class="campo-label">&nbsp;</span>
+        <label class="campo-check"><input type="checkbox" name="activar" value="1" {{ 'checked' if not ejercicios }}> Ejercicio de trabajo</label></div>
+      <div class="campo" style="--span:6;"><span class="campo-label">Del sindicato</span>
+        <div class="campo-valor">{{ inst.nombre or '—' }}{% if inst.cuit %} · CUIT <span class="mono">{{ inst.cuit }}</span>{% endif %}</div>
+        <small class="campo-ayuda">Sale de Datos del Sindicato.</small></div>
+      <div class="campo" style="--span:6;"><label for="observaciones">Observaciones</label>
+        <input type="text" id="observaciones" name="observaciones" maxlength="250"></div>
+    </div>
+  </div>
+  <div class="form-acciones">
+    {% if ejercicios %}{{ ui.boton('Cancelar', 'secondary', href=url_for('cont_ej.ejercicios')) }}{% endif %}
+    {{ ui.boton('Abrir el ejercicio', submit=True, icono_='guardar') }}
+  </div>
+</form>
+{% endif %}
+
+{% if ficha %}
+<div class="card">
+  {% call ui.card_head(ficha.nombre, nota=fecha(ficha.fecha_inicio) ~ ' al ' ~ fecha(ficha.fecha_fin)) %}
+    {% if ficha.activo %}{{ ui.estado('Ejercicio de trabajo', 'info') }}{% endif %}
+    {{ ui.estado(estados[ficha.estado][0], estados[ficha.estado][1]) }}
+  {% endcall %}
+  <form method="post" class="card-body">
+    <input type="hidden" name="accion" value="guardar">
+    <input type="hidden" name="id" value="{{ ficha.id_ejercicio }}">
+    <div class="campos">
+      <div class="campo" style="--span:4;"><label for="f-nombre">Nombre</label>
+        <input type="text" id="f-nombre" name="nombre" maxlength="100" value="{{ ficha.nombre }}"></div>
+      <div class="campo" style="--span:5;"><label for="f-obs">Observaciones</label>
+        <input type="text" id="f-obs" name="observaciones" maxlength="250" value="{{ ficha.observaciones or '' }}"></div>
+      <div class="campo" style="--span:3;"><span class="campo-label">Asientos</span>
+        <div class="campo-valor">{{ ficha.asientos }}{% if ficha.borradores %} · {{ ficha.borradores }} en borrador{% endif %}</div></div>
+      {% if ficha.usuario_cierre %}
+      <div class="campo" style="--span:12;"><small class="campo-ayuda">Cerrado por {{ ficha.usuario_cierre }}{% if ficha.fecha_cierre_real %} el {{ ficha.fecha_cierre_real.strftime('%d/%m/%Y %H:%M') }}{% endif %}.</small></div>
+      {% endif %}
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Guardar', 'secondary', submit=True, icono_='guardar') }}
+    </div>
+  </form>
+  <div class="card-body fila">
+    {% if puede_diario %}{{ ui.boton('Ver su Libro Diario', 'secondary', chico=True, href=url_for('cont_diario.diario', ejercicio=ficha.id_ejercicio)) }}{% endif %}
+    {% if not ficha.activo %}
+    <form method="post"><input type="hidden" name="accion" value="activar"><input type="hidden" name="id" value="{{ ficha.id_ejercicio }}">
+      {{ ui.boton('Hacerlo el ejercicio de trabajo', 'secondary', chico=True, submit=True) }}</form>
+    {% endif %}
+    {% if ficha.estado == 'abierto' %}
+    <form method="post" onsubmit="return confirm('¿Cerrar el ejercicio {{ ficha.nombre }}? Se cierran todos sus períodos: no admiten asientos y Tesorería no anula comprobantes de esas fechas.');">
+      <input type="hidden" name="accion" value="cerrar"><input type="hidden" name="id" value="{{ ficha.id_ejercicio }}">
+      {{ ui.boton('Cerrar el ejercicio', 'secondary', chico=True, submit=True) }}</form>
+    {% else %}
+    <form method="post"><input type="hidden" name="accion" value="reabrir"><input type="hidden" name="id" value="{{ ficha.id_ejercicio }}">
+      {{ ui.boton('Reabrir el ejercicio', 'secondary', chico=True, submit=True) }}</form>
+    {% endif %}
+    {% if not ficha.asientos %}
+    <form method="post" onsubmit="return confirm('¿Eliminar el ejercicio {{ ficha.nombre }} y sus períodos?');">
+      <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" value="{{ ficha.id_ejercicio }}">
+      {{ ui.boton('Eliminar', 'danger', chico=True, submit=True, icono_='borrar') }}</form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Períodos', nota='cerrado o bloqueado: no admite asientos, y Tesorería no anula comprobantes de esas fechas') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-periodos" data-exportar="Períodos {{ ficha.nombre }}">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Período</th><th class="th-center">Desde</th><th class="th-center">Hasta</th><th class="th-center">Estado</th>
+        <th class="th-right" data-tipo="n">Confirmados</th><th class="th-right" data-tipo="n">Borradores</th>
+      </tr></thead>
+      <tbody>
+        {% for p in periodos %}
+        <tr class="{{ 'fila-baja' if p.estado != 'abierto' }}">
+          <td><div class="acciones">
+            {% for est in ('abierto', 'cerrado', 'bloqueado') if est != p.estado %}
+            <form method="post" {% if est != 'abierto' %}onsubmit="return confirm('¿{{ 'Cerrar' if est == 'cerrado' else 'Bloquear' }} {{ p.nombre }}?');"{% endif %}>
+              <input type="hidden" name="accion" value="periodo"><input type="hidden" name="id_periodo" value="{{ p.id_periodo }}">
+              <input type="hidden" name="estado" value="{{ est }}">
+              {{ ui.boton({'abierto': 'Abrir', 'cerrado': 'Cerrar', 'bloqueado': 'Bloquear'}[est], 'secondary', chico=True, submit=True) }}
+            </form>
+            {% endfor %}
+          </div></td>
+          <td class="td-fuerte">{{ p.nombre }}</td>
+          <td class="td-center">{{ fecha(p.fecha_inicio) }}</td>
+          <td class="td-center">{{ fecha(p.fecha_fin) }}</td>
+          <td class="td-center">{{ ui.estado(estados[p.estado][0], estados[p.estado][1]) }}</td>
+          <td class="td-right">{% if p.confirmados and puede_diario %}<a href="{{ url_for('cont_diario.diario', ejercicio=ficha.id_ejercicio, periodo=p.id_periodo) }}">{{ p.confirmados }}</a>{% else %}{{ p.confirmados }}{% endif %}</td>
+          <td class="td-right {{ 'td-muted' if not p.borradores }}">{{ p.borradores }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar ejercicio…') %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-ejercicios" data-exportar="Ejercicios contables">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th>Nombre</th><th class="th-center" data-orden="desc">Inicio</th><th class="th-center">Cierre</th>
+        <th class="th-center">Estado</th><th class="th-right" data-tipo="n">Períodos</th>
+        <th class="th-right" data-tipo="n">Abiertos</th><th class="th-right" data-tipo="n">Asientos</th>
+        <th class="th-right" data-tipo="n">Borradores</th>
+      </tr></thead>
+      <tbody>
+        {% for e in ejercicios %}
+        <tr class="{{ 'fila-actual' if ficha and ficha.id_ejercicio == e.id_ejercicio }}">
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('cont_ej.ejercicios', ver=e.id_ejercicio), titulo='Ver el ejercicio y sus períodos') }}</div></td>
+          <td class="td-fuerte">{{ e.nombre }}{% if e.activo %} {{ ui.estado('De trabajo', 'info') }}{% endif %}</td>
+          <td class="td-center" data-valor="{{ e.fecha_inicio.isoformat() }}">{{ fecha(e.fecha_inicio) }}</td>
+          <td class="td-center" data-valor="{{ e.fecha_fin.isoformat() }}">{{ fecha(e.fecha_fin) }}</td>
+          <td class="td-center">{{ ui.estado(estados[e.estado][0], estados[e.estado][1]) }}</td>
+          <td class="td-right">{{ e.periodos }}</td>
+          <td class="td-right">{{ e.abiertos }}</td>
+          <td class="td-right">{{ e.asientos }}</td>
+          <td class="td-right {{ 'td-muted' if not e.borradores }}">{{ e.borradores }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No hay ejercicios.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-ejercicios', { pageSize: 20 });
+  if (document.getElementById('tbl-periodos')) gestion_admTable('tbl-periodos', { pageSize: 50 });
+});
+</script>
+{% endblock %}

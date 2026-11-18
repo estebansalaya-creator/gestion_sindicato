@@ -85,7 +85,11 @@ gestion_sindicato/
   transferencias.py       transferencias masivas: elegir pagos, generar el archivo, lotes generados
   transferencias_lote.py  a quién y a qué CBU se transfiere; registro, exclusión y anulación de lotes
   transferencias_formatos.py  los archivos del home banking: BNA24, BNA Empresa, ICBC (Excel)
-  contabilidad.py         módulo de contabilidad: por ahora el ABM del plan de cuentas
+  contabilidad.py         módulo de contabilidad: el ABM del plan de cuentas
+  asientos.py             ejercicios, períodos y asientos: las reglas, sin Flask (pantallas e importadores)
+  contabilidad_ejercicios.py  Contabilidad › Ejercicios: abrir (con sus períodos mensuales), de trabajo, cerrar
+  contabilidad_diario.py  Contabilidad › Asientos (carga) y Libro Diario (consulta, exportaciones, importar, renumerar)
+  exportar_contable_externo.py  el formato del sistema contable externo (copia del de gestion_adm)
   pagos.py                circuito de pagos: órdenes, aprobación, emisión, anulación, certificados, ABM de config
   pagos_datos.py          capa de datos de pagos: armar órdenes, niveles de aprobación, ejecutar el pago
   pagos_pdf.py            PDF de la orden de pago y del certificado de retención
@@ -129,6 +133,7 @@ gestion_sindicato/
                               pases, depósitos, recaudación, órdenes de ingreso y valores; ídem, con control de saldos
   importar_aeda_extractos.py  los extractos del Nación que AEDA cargó (adm_bna24) → c_extractos_bancarios; ídem
   importar_aeda_fisca_escalas.py  las escalas salariales del convenio (fis_escalas) → fisca_escala_salarial; ídem
+  importar_aeda_asientos.py   los asientos de AEDA (adm_asientos) → Libro Diario; ídem, --crear-ejercicios
   contable_oseda.py       lectura en vivo (solo lectura) de las DDJJ de OSEDA en contable de Railway
   cruce_nomina_ddjj.py    qué empleadores tienen toda su nómina de AEDA en la DDJJ de OSEDA (planillas en logs/)
   cruce_atributo_aeda.py  si los titulares activos de AEDA tienen la marca «AEDA» en el padrón de OSEDA (logs/)
@@ -252,6 +257,13 @@ repetiría en la URL lo que dice el dominio.
 /tesoreria/conc/clasificar  conceptos del extracto: ?cuenta, ?desde, ?hasta; /guardar, /quitar POST (JSON)
 /contabilidad/plan          plan de cuentas, ?edit=ID, ?nuevo=1, ?madre=ID (subcuenta con el código sugerido)
 /contabilidad/plan/codigo   qué dice un código mientras se tipea (JSON: clase, tipo, nivel, madre, errores)
+/contabilidad/ejercicios    ?ver=ID ficha con sus períodos, ?nuevo=1; POST accion=nuevo|guardar|activar|cerrar|reabrir
+                            |borrar|periodo (id_periodo, estado)
+/contabilidad/asientos      carga: ?edit=ID (un borrador), ?copiar=ID; POST graba (confirmar=1, otro=1)
+/contabilidad/diario        ?ejercicio (por defecto el de trabajo; «todos»), ?periodo, ?estado, ?tipo, ?desde, ?hasta;
+                            /<id> el asiento; /accion POST (confirmar, borrar, confirmar_todos); /exportar ?formato=
+                            xlsx|csv; /libro ?formato=xlsx|pdf; /externo ?desde&hasta; /modelo; /importar,
+                            /renumerar POST
 /pagos/ordenes              órdenes de pago; /nueva (proveedores con saldo), /nueva/<id_proveedor>,
                             /anticipo/nueva, /concepto/nueva
 /pagos/ordenes/<id>         ficha: aprobación, pago y anulación; /aprobacion, /pagar, /anular POST; /pdf
@@ -1804,8 +1816,8 @@ nueva que cubre la fecha. Los códigos se comparan normalizados a tres dígitos 
 
 ## Contabilidad: plan de cuentas
 
-Menú Contabilidad (90): Plan de Cuentas (91) en `contabilidad.py`; Ejercicios, Asientos, Libro Diario y
-Libro Mayor (92-95) están en el menú y todavía no tienen pantalla. Portado de `gestion_adm/contable.py`
+Menú Contabilidad (90): Plan de Cuentas (91) en `contabilidad.py`; Ejercicios (92), Asientos (93) y Libro Diario
+(94) en la sección siguiente; el Libro Mayor (95) todavía no tiene pantalla. Portado de `gestion_adm/contable.py`
 sin la importación desde Excel: el plan viene de AEDA y se completa en la pantalla.
 
 ```
@@ -1836,6 +1848,52 @@ adm_planctas  →  c_plan_de_cuentas   id_cuenta = pcont_id de AEDA, código 1-1
 - Dos cuentas con el mismo nombre debajo de la misma madre no se aceptan (no se distinguen al elegir);
   en lugares distintos sí (CAJA título y CAJA imputable).
 
+## Contabilidad: ejercicios, asientos y Libro Diario
+
+Pedido del 18/11/2026: el Libro Diario «con las mismas opciones que OSEDA» (`gestion_adm/contable.py`: asientos,
+exportar_asientos, exportar_diario, exportar_asientos_externo, descargar_ejemplo_asientos, importar_asientos,
+renumerar_asientos, ejercicios, periodos, seleccionar_ejercicio). Las reglas en `asientos.py`; pantallas en
+`contabilidad_ejercicios.py` (92) y `contabilidad_diario.py` (93 Asientos = cargar, 94 Libro Diario = consultar:
+el permiso es la opción de menú, como Consulta del Padrón y ABM). `sql/contabilidad_diario_20261118.sql` agrega
+`c_asientos.origen` / `id_origen` (único: `aeda` + asto_id, `excel`); las pantallas andan sin él, el importador no.
+Tests: `python tests/test_contabilidad_diario.py` (sin base); además se probó de punta a punta contra una MariaDB
+armada con estas tablas (alta, edición, confirmación, cierre, renumeración, importación, exportaciones, PDF).
+
+- **Ejercicio**: se abre con sus períodos, uno por mes («Enero 2026»; el primero y el último pueden ser parciales).
+  En gestion_adm lo hacía `sp_abrir_ejercicio`, que esta base no tiene. CUIT y razón social de Datos del Sindicato
+  (`empresa_id` queda NULL: el sindicato no es un registro de `p_empresas`). No se superponen. Uno es el **de
+  trabajo** (`c_ejercicios.activo`): el que muestran el Diario y la carga (el primero que se abre queda activo).
+- **Cerrar**: el período (de a uno, desde la ficha: cerrado o bloqueado) o el ejercicio (cierra todos los suyos).
+  No con borradores. Cerrar el ejercicio **no genera el asiento de cierre** (`sp_cerrar_ejercicio`): pendiente. Un
+  período cerrado no admite asientos y **Tesorería no anula** comprobantes de esas fechas
+  (`anulaciones._fuera_de_periodo` ya miraba `c_periodos`).
+- **Asiento**: borrador → confirmado (anulado: la pantalla de anulación de gestion_adm todavía no se trajo). El
+  **período sale de la fecha** y tiene que estar abierto (en gestion_adm se elegía aparte). Partida doble: dos
+  renglones o más, cada uno al debe o al haber, cuentas imputables y activas, debe = haber al centavo. **Número
+  correlativo por ejercicio** (`proximo_numero`, con la fila del ejercicio bloqueada; en gestion_adm la carga
+  numeraba por período y la importación por ejercicio). Un borrador se corrige y se elimina; un confirmado no.
+- **Libro Diario**: filtros ejercicio (por defecto el de trabajo, «todos»), período, estado, tipo, fechas; tarjetas
+  con borradores, total y los que no balancean. Exporta: el **libro** (Excel con encabezado, PDF con un bloque por
+  asiento), los **asientos** confirmados con las columnas del archivo de importación (lo exportado se reimporta) y
+  el **formato externo** de un rango (obligatorio; `exportar_contable_externo.py`, copiado tal cual).
+- **Importar** (.xlsx o .csv, el modelo de gestion_adm; acepta la fila de instrucciones arriba y «;» o «,»): el N°
+  del archivo solo agrupa; cada asiento entra en **borrador** (en gestion_adm el aviso decía borrador y lo grababa
+  confirmado), con un SAVEPOINT por asiento: los que fallan se informan y no frenan a los demás. «Confirmar los
+  borradores» confirma los del filtro de una vez.
+- **Renumerar**: el ejercicio del filtro, la apertura primero y el resto por fecha (pasa por negativos por el
+  índice único período + número). Pierde los números de AEDA.
+- **AEDA** (`importar_aeda_asientos.py`): `adm_asientos` + `adm_asienpase` + `adm_asienref` (4.584 asientos al
+  17/11/2026, de 10/2023 en adelante, todos en su ejercicio 1: `Adm_Ejercicios` está vacía). `pcont_id` = id_cuenta.
+  Número y usuario de AEDA, referencia = sus `adm_asienref` («OP 4475» = el pago AEDA-PG-4475 de acá). **AEDA deja
+  sin cuenta (pcont_id 0) el renglón del afiliado en los pagos de reintegros** (664 renglones): se imputa al gasto
+  del concepto de lo que el pago canceló (`adm_pasivoAplic` → `afi_reintegros.conc_id` → `adm_cptogasto.pcont_id`;
+  652 de 664 cuadran justo), y lo que no se rastrea a `--cuenta-sin-imputar` (5-3-0-00-150 GASTOS GENERALES, la de
+  importar_aeda_cc_afiliados.py), con aviso. Confirmado si balancea; si no (12 en AEDA), en borrador. Se puede
+  volver a correr (lo importado no se toca); no entra en períodos cerrados ni en fechas sin ejercicio:
+  `--crear-ejercicios` abre los que falten por año calendario.
+- **Pendiente**: Libro Mayor, anulación de asientos, asiento de cierre, libro de trabajo (los asientos que
+  generarían las operaciones; en gestion_adm `libro_trabajo.py`, que es de la obra social).
+
 ## Estado de la base
 
 Ver `sindicato_estructura.md` para el detalle completo. Resumen:
@@ -1863,8 +1921,8 @@ Ver `sindicato_estructura.md` para el detalle completo. Resumen:
 - `c_proveedores` — se cargan desde AEDA con `importar_aeda_proveedores.py` (ver «Proveedores»);
   su cuenta corriente, con `importar_aeda_cc_proveedores.py`
 - `s_usuarios`, `s_areas`, `s_menu` — armar de cero
-- `c_ejercicios` apunta a `p_empresas`: hay que identificar el registro del sindicato antes de abrir
-  el primer ejercicio contable
+- `c_ejercicios`: se abren en Contabilidad › Ejercicios (o `importar_aeda_asientos.py --crear-ejercicios`), con
+  el CUIT de Datos del Sindicato y `empresa_id` NULL
 
 ### Nombres que se prestan a confusión
 

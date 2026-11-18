@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}{{ 'Corregir asiento' if base else 'Nuevo asiento' }}{% endblock %}
+
+{#
+  Carga de un asiento (cont_diario.carga, menú 93): cabecera y renglones de
+  partida doble. El período sale de la fecha y tiene que estar abierto; el
+  número es el siguiente del ejercicio. Se guarda en borrador o se confirma
+  (balanceado). Ver asientos.py.
+#}
+
+{% macro renglon(r) -%}
+<tr class="renglon">
+  <td><select name="r_cuenta" class="r-cuenta">{{ ui.opciones_grupo(cuentas, r.id_cuenta, vacio='— Cuenta —') }}</select></td>
+  <td><input type="text" name="r_desc" maxlength="255" value="{{ r.descripcion or '' }}" placeholder="Detalle del renglón"></td>
+  <td><input type="text" name="r_debe" class="inp-importe importe r-debe" inputmode="decimal" value="{{ r.debe or '' }}" oninput="total()"></td>
+  <td><input type="text" name="r_haber" class="inp-importe importe r-haber" inputmode="decimal" value="{{ r.haber or '' }}" oninput="total()"></td>
+  <td><div class="acciones">{{ ui.accion('borrar', onclick='quitarRenglon(this)', titulo='Quitar renglón') }}</div></td>
+</tr>
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ ('Corregir el asiento N° ' ~ base.numero) if base else 'Nuevo asiento' }}</h1>
+    <p>Partida doble: al menos dos renglones y el debe igual al haber. El período sale de la fecha.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Libro Diario', 'secondary', href=url_for('cont_diario.diario'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{% if not ej %}{{ ui.aviso('No hay ejercicio de trabajo: abrí uno en Contabilidad › Ejercicios. Sin un período abierto para la fecha, el asiento no se graba.', 'warning') }}{% endif %}
+
+<form method="post" id="form-asiento">
+  {% if base %}<input type="hidden" name="edit" value="{{ base.id_asiento }}">{% endif %}
+  <input type="hidden" name="confirmar" id="f-confirmar" value="0">
+  <input type="hidden" name="otro" id="f-otro" value="0">
+  <div class="card">
+    {{ ui.card_head('Asiento', nota=('ejercicio de trabajo: ' ~ ej.nombre) if ej else None) }}
+    <div class="card-body">
+      <div class="campos">
+        <div class="campo" style="--span:2;"><label for="fecha">Fecha <span class="req">*</span></label>
+          <input type="date" id="fecha" name="fecha" value="{{ cab.fecha.isoformat() if cab.fecha is not string else cab.fecha }}" required></div>
+        <div class="campo" style="--span:2;"><label for="tipo">Tipo</label>
+          <select id="tipo" name="tipo">{% for k, t in tipos.items() %}<option value="{{ k }}" {{ 'selected' if cab.tipo == k }}>{{ t }}</option>{% endfor %}</select></div>
+        <div class="campo" style="--span:2;"><label for="referencia">Referencia</label>
+          <input type="text" id="referencia" name="referencia" maxlength="80" value="{{ cab.referencia or '' }}" placeholder="OP 1234, RC 55…"></div>
+        <div class="campo" style="--span:6;"><label for="descripcion">Descripción <span class="req">*</span></label>
+          <input type="text" id="descripcion" name="descripcion" maxlength="255" value="{{ cab.descripcion or '' }}" required></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {% call ui.card_head('Renglones') %}
+      {{ ui.boton('Agregar renglón', 'secondary', chico=True, icono_='agregar', onclick='agregarRenglon()') }}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table tabla-carga" id="tbl-renglones">
+        <thead><tr><th style="width:40%;">Cuenta</th><th>Detalle</th><th class="th-right" style="width:150px;">Debe</th>
+          <th class="th-right" style="width:150px;">Haber</th><th class="col-acciones"></th></tr></thead>
+        <tbody id="renglones">
+          {% for r in renglones %}{{ renglon(r) }}{% endfor %}
+        </tbody>
+        <tfoot><tr>
+          <td colspan="2" class="td-right"><span id="t-dif" class="chico"></span> <b>Total</b></td>
+          <td class="td-right td-fuerte" id="t-debe">0,00</td>
+          <td class="td-right td-fuerte" id="t-haber">0,00</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div class="form-acciones">
+      {{ ui.boton('Guardar en borrador', 'secondary', submit=True, icono_='guardar', onclick="enviar(0, 0)") }}
+      {% if not base %}{{ ui.boton('Guardar y cargar otro', 'secondary', submit=True, onclick="enviar(0, 1)") }}{% endif %}
+      {{ ui.boton('Guardar y confirmar', 'ok', submit=True, icono_='ok', id='btn-confirmar', onclick="enviar(1, 0)") }}
+    </div>
+  </div>
+</form>
+
+<template id="tpl-renglon">{{ renglon({'id_cuenta': '', 'descripcion': '', 'debe': '', 'haber': ''}) }}</template>
+
+<script>
+function aNumero(t) { var s = (t || '').trim(); if (!s) return 0; if (s.indexOf(',') >= 0) s = s.replace(/\./g, '').replace(',', '.'); else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, ''); return parseFloat(s) || 0; }
+function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function total() {
+  var d = 0, h = 0;
+  document.querySelectorAll('#renglones .r-debe').forEach(function (i) { d += aNumero(i.value); });
+  document.querySelectorAll('#renglones .r-haber').forEach(function (i) { h += aNumero(i.value); });
+  document.getElementById('t-debe').textContent = plata(d);
+  document.getElementById('t-haber').textContent = plata(h);
+  var dif = Math.round((d - h) * 100) / 100, el = document.getElementById('t-dif');
+  el.textContent = dif ? 'Diferencia ' + plata(dif) : (d ? 'Balancea' : '');
+  el.className = 'chico ' + (dif ? 'importe-danger' : 'importe-ok');
+  document.getElementById('btn-confirmar').disabled = !!dif || !d;
+}
+function prepararRenglon(tr) {
+  tr.querySelectorAll('.inp-importe').forEach(function (i) {
+    i.addEventListener('input', function () { fmtMiles(this); total(); });
+    i.addEventListener('blur', function () { fmtMilesBlur(this); });
+  });
+  // Un renglón va al debe o al haber: escribir en uno vacía el otro.
+  var d = tr.querySelector('.r-debe'), h = tr.querySelector('.r-haber');
+  d.addEventListener('input', function () { if (d.value) { h.value = ''; } total(); });
+  h.addEventListener('input', function () { if (h.value) { d.value = ''; } total(); });
+}
+function agregarRenglon() {
+  var nuevo = document.getElementById('tpl-renglon').content.firstElementChild.cloneNode(true);
+  document.getElementById('renglones').appendChild(nuevo);
+  prepararRenglon(nuevo);
+  // Propone el importe que falta para balancear, del lado que corresponde.
+  var d = 0, h = 0;
+  document.querySelectorAll('#renglones .r-debe').forEach(function (i) { d += aNumero(i.value); });
+  document.querySelectorAll('#renglones .r-haber').forEach(function (i) { h += aNumero(i.value); });
+  var dif = Math.round((d - h) * 100) / 100;
+  if (dif > 0) nuevo.querySelector('.r-haber').value = plata(dif);
+  else if (dif < 0) nuevo.querySelector('.r-debe').value = plata(-dif);
+  nuevo.querySelector('.r-cuenta').focus();
+  total();
+}
+function quitarRenglon(b) {
+  if (document.querySelectorAll('#renglones .renglon').length > 2) b.closest('tr').remove();
+  total();
+}
+function enviar(confirmar, otro) {
+  document.getElementById('f-confirmar').value = confirmar;
+  document.getElementById('f-otro').value = otro;
+}
+document.addEventListener('DOMContentLoaded', function () {
+  document.querySelectorAll('#renglones .renglon').forEach(prepararRenglon);
+  total();
+});
+</script>
+{% endblock %}

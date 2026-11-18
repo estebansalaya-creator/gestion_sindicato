@@ -1,6 +1,6 @@
 """
 contabilidad.py — Módulo de contabilidad (menú 90). Por ahora, el plan de
-cuentas (91); ejercicios, asientos, diario y mayor (92-95) vienen después.
+cuentas (91). Ejercicios, asientos y Libro Diario (92-94): contabilidad_ejercicios.py y contabilidad_diario.py; el Mayor (95) viene después.
 
 Plan de cuentas
 ---------------

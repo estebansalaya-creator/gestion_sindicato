@@ -51,6 +51,8 @@ from tesoreria_panel import tes_panel_bp                         # noqa: E402
 from transferencias import transferencias_bp                    # noqa: E402
 from tesoreria_rg830 import rg830_bp                            # noqa: E402
 from contabilidad import contabilidad_bp                        # noqa: E402
+from contabilidad_ejercicios import cont_ej_bp                 # noqa: E402
+from contabilidad_diario import cont_diario_bp                 # noqa: E402
 from pagos import pagos_bp                                      # noqa: E402
 from admin import admin_bp                                      # noqa: E402
 from talonarios import talonarios_bp                            # noqa: E402
@@ -478,6 +480,8 @@ app.register_blueprint(tes_panel_bp)
 app.register_blueprint(transferencias_bp)
 app.register_blueprint(rg830_bp)
 app.register_blueprint(contabilidad_bp)
+app.register_blueprint(cont_ej_bp)
+app.register_blueprint(cont_diario_bp)
 app.register_blueprint(pagos_bp)
 app.register_blueprint(admin_bp)
 app.register_blueprint(talonarios_bp)

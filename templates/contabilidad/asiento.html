@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Asiento N° {{ a.numero }}{% endblock %}
+
+{# Un asiento con sus renglones (cont_diario.asiento). #}
+
+{% block content %}
+{% set descuadra = (a.total_debe - a.total_haber)|abs > 0.005 %}
+<div class="page-header">
+  <div>
+    <h1>Asiento N° {{ a.numero }}</h1>
+    <p>{{ a.descripcion }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Libro Diario', 'secondary', href=volver, icono_='volver') }}
+    {% if puede_carga %}{{ ui.boton('Copiar en uno nuevo', 'secondary', href=url_for('cont_diario.carga', copiar=a.id_asiento), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if descuadra and a.estado != 'anulado' %}{{ ui.aviso('No balancea: debe $ ' ~ (a.total_debe|miles) ~ ' y haber $ ' ~ (a.total_haber|miles) ~ '.', 'danger') }}{% endif %}
+
+<div class="card">
+  {% call ui.card_head('Asiento', nota=a.ejercicio) %}{{ ui.estado(estados[a.estado][0], estados[a.estado][1]) }}{% endcall %}
+  <div class="card-body">
+    <div class="campos">
+      <div class="campo" style="--span:2;"><span class="campo-label">Fecha</span><div class="campo-valor">{{ a.fecha.strftime('%d/%m/%Y') }}</div></div>
+      <div class="campo" style="--span:2;"><span class="campo-label">Período</span><div class="campo-valor">{{ a.periodo }}{% if a.estado_periodo != 'abierto' %} ({{ a.estado_periodo }}){% endif %}</div></div>
+      <div class="campo" style="--span:2;"><span class="campo-label">Tipo</span><div class="campo-valor">{{ tipos.get(a.tipo, a.tipo) }}</div></div>
+      <div class="campo" style="--span:2;"><span class="campo-label">Referencia</span><div class="campo-valor mono">{{ a.referencia or '—' }}</div></div>
+      <div class="campo" style="--span:4;"><span class="campo-label">Cargó</span><div class="campo-valor">{{ a.usuario or '—' }}{% if a.created_at %} · {{ a.created_at.strftime('%d/%m/%Y %H:%M') }}{% endif %}{% if a.origen %} · {{ 'AEDA' if a.origen == 'aeda' else ('archivo' if a.origen == 'excel' else a.origen) }}{% if a.id_origen %} {{ a.id_origen }}{% endif %}{% endif %}</div></div>
+      {% if a.estado == 'anulado' and a.motivo_anulacion %}
+      <div class="campo" style="--span:12;"><span class="campo-label">Anulado</span><div class="campo-valor">{{ a.motivo_anulacion }}{% if a.fecha_anulacion %} · {{ a.fecha_anulacion.strftime('%d/%m/%Y') }}{% endif %}</div></div>
+      {% endif %}
+    </div>
+  </div>
+  {% if puede_carga and a.estado == 'borrador' and a.estado_periodo == 'abierto' %}
+  <div class="form-acciones">
+    <form method="post" action="{{ url_for('cont_diario.accion') }}" onsubmit="return confirm('¿Eliminar el borrador N° {{ a.numero }}?');">
+      <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" value="{{ a.id_asiento }}">
+      <input type="hidden" name="volver" value="{{ volver }}">
+      {{ ui.boton('Eliminar el borrador', 'danger', submit=True, icono_='borrar') }}
+    </form>
+    {{ ui.boton('Corregir', 'secondary', href=url_for('cont_diario.carga', edit=a.id_asiento), icono_='editar') }}
+    {% if not descuadra %}
+    <form method="post" action="{{ url_for('cont_diario.accion') }}">
+      <input type="hidden" name="accion" value="confirmar"><input type="hidden" name="id" value="{{ a.id_asiento }}">
+      <input type="hidden" name="volver" value="{{ request.full_path }}">
+      {{ ui.boton('Confirmar', 'ok', submit=True, icono_='ok') }}
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  {{ ui.card_head('Renglones', nota=a.renglones|length ~ ' imputaciones') }}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-renglones" data-exportar="Asiento {{ a.numero }}">
+      <thead><tr><th>Cuenta</th><th>Nombre</th><th>Detalle</th><th class="th-right">Debe</th><th class="th-right">Haber</th></tr></thead>
+      <tbody>
+        {% for r in a.renglones %}
+        <tr>
+          <td class="td-mono">{{ r.codigo }}</td>
+          <td class="{{ 'td-sangria' if r.haber and not r.debe }}">{{ r.cuenta }}</td>
+          <td class="td-wrap td-muted">{{ r.descripcion or '' }}</td>
+          <td class="td-right" data-num="{{ r.debe }}">{% if r.debe %}{{ r.debe | miles }}{% endif %}</td>
+          <td class="td-right" data-num="{{ r.haber }}">{% if r.haber %}{{ r.haber | miles }}{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot><tr>
+        <td colspan="3" class="td-right td-fuerte">Total</td>
+        <td class="td-right td-fuerte">{{ a.total_debe | miles }}</td>
+        <td class="td-right td-fuerte">{{ a.total_haber | miles }}</td>
+      </tr></tfoot>
+    </table>
+  </div>
+</div>
+{% endblock %}

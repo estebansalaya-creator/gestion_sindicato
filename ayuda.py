@@ -73,6 +73,8 @@ SIN_AYUDA = {
     "portal.instructivo", "fisca_lsd.instructivo_interno",
     # Beneficios: el flyer de una campaña, su avance (JSON) y la página pública de «no recibir más».
     "ben_camp.flyer", "ben_camp.estado", "ben_camp.baja", "ben_camp.contar", "ben_camp.lista_xlsx",
+    # Contabilidad: el Libro Diario en Excel o PDF, el formato externo y el modelo (archivos).
+    "cont_diario.libro", "cont_diario.externo", "cont_diario.modelo",
 }
 #: Lo mismo por forma del endpoint: lo que devuelve datos o un archivo.
 _RE_SIN_AYUDA = re.compile(

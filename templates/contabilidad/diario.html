@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Libro Diario{% endblock %}
+
+{#
+  Libro Diario (cont_diario.diario): los asientos del ejercicio de trabajo (o
+  del filtro), con las opciones del de gestion_adm: exportar los asientos
+  (Excel/CSV, las columnas del archivo de importación), el Libro Diario
+  (Excel/PDF), la exportación al sistema contable externo, el modelo, la
+  importación y la renumeración. Lo de cargar (nuevo, corregir, confirmar,
+  eliminar un borrador, importar, renumerar) pide la opción «Asientos» (93).
+#}
+
+{% macro tarjeta(icono, tipo, rotulo, valor, sub='') -%}
+<div class="kpi-card">
+  <div class="kpi-ico {{ tipo }}">{{ ui.icono(icono, 20) }}</div>
+  <div><div class="kpi-lbl">{{ rotulo }}</div><div class="kpi-val">{{ valor }}</div>
+    {% if sub %}<div class="kpi-sub">{{ sub }}</div>{% endif %}</div>
+</div>
+{%- endmacro %}
+
+{% macro ocultos() -%}
+  {% for k, v in args.items() %}<input type="hidden" name="{{ k }}" value="{{ v }}">{% endfor %}
+{%- endmacro %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Libro Diario</h1>
+    <p>{{ titulo }}</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede_ej %}{{ ui.boton('Ejercicios', 'secondary', href=url_for('cont_ej.ejercicios', ver=f.ejercicio or None), icono_='calendario') }}{% endif %}
+    {% if puede_carga %}{{ ui.boton('Nuevo asiento', href=url_for('cont_diario.carga'), icono_='agregar') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if not ejercicios %}
+  {{ ui.aviso('Todavía no hay ejercicios contables: sin uno no se cargan asientos ni se importan los de AEDA. Se abren en Contabilidad › Ejercicios.', 'warning') }}
+{% endif %}
+{% if excedido %}{{ ui.aviso('Hay más de ' ~ tope ~ ' asientos con estos filtros: se muestran los ' ~ tope ~ ' más nuevos. Acotá por período o fechas.', 'warning') }}{% endif %}
+
+<div class="kpi-row">
+  {{ tarjeta('libro', 'info', 'Asientos', tot.asientos, tot.confirmados ~ ' confirmados') }}
+  {{ tarjeta('editar', 'warn', 'Borradores', tot.borradores, 'para revisar y confirmar') }}
+  {{ tarjeta('dinero', 'ok', 'Total confirmado', '$ ' ~ (tot.debe | miles), 'debe = haber') }}
+  {{ tarjeta('alerta', 'danger' if tot.descuadrados else 'ok', 'Descuadrados', tot.descuadrados, 'debe distinto del haber') }}
+</div>
+
+<div class="card">
+  <form method="get" action="{{ url_for('cont_diario.diario') }}" class="filter-bar">
+    {% call ui.filtro('Ejercicio') %}<select name="ejercicio" class="filtro" onchange="this.form.periodo.value=''; this.form.submit()">
+      <option value="todos" {{ 'selected' if not f.ejercicio }}>Todos</option>
+      {% for e in ejercicios %}<option value="{{ e.id_ejercicio }}" {{ 'selected' if f.ejercicio == e.id_ejercicio|string }}>{{ e.nombre }}{{ ' (de trabajo)' if e.activo }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Período') %}<select name="periodo" class="filtro" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for p in periodos %}<option value="{{ p.id_periodo }}" {{ 'selected' if f.periodo == p.id_periodo|string }}>{{ p.nombre }}{{ ' · ' ~ p.estado if p.estado != 'abierto' }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, (t, _) in estados.items() %}<option value="{{ k }}" {{ 'selected' if f.estado == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Tipo') %}<select name="tipo" class="filtro" onchange="this.form.submit()">
+      <option value="">Todos</option>
+      {% for k, t in tipos.items() %}<option value="{{ k }}" {{ 'selected' if f.tipo == k }}>{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" value="{{ f.desde }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" value="{{ f.hasta }}">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    <a href="{{ url_for('cont_diario.diario') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+  </form>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Exportar' ~ (' e importar' if puede_carga else ''), nota='con los filtros de arriba') }}
+  <div class="card-body fila">
+    {{ ui.boton('Libro Diario Excel', 'excel', chico=True, icono_='planilla', href=url_for('cont_diario.libro', formato='xlsx', **args)) }}
+    {{ ui.boton('Libro Diario PDF', 'pdf', chico=True, icono_='pdf', blank=True, href=url_for('cont_diario.libro', formato='pdf', **args)) }}
+    {{ ui.boton('Asientos Excel', 'secondary', chico=True, icono_='descargar', href=url_for('cont_diario.exportar_asientos', formato='xlsx', **args)) }}
+    {{ ui.boton('Asientos CSV', 'secondary', chico=True, icono_='descargar', href=url_for('cont_diario.exportar_asientos', formato='csv', **args)) }}
+    {% if puede_carga %}
+    {{ ui.boton('Modelo para importar', 'secondary', chico=True, icono_='descargar', href=url_for('cont_diario.modelo', formato='xlsx')) }}
+    {{ ui.boton('Importar asientos', 'secondary', chico=True, icono_='subir', onclick="abrirModal('modal-importar')") }}
+    {% if f.ejercicio %}
+    <form method="post" action="{{ url_for('cont_diario.renumerar') }}"
+          onsubmit="return confirm('¿Renumerar todos los asientos de {{ (ej.nombre if ej else '') | e }}? La apertura queda N° 1 y el resto por fecha. Los números de AEDA se pierden.');">
+      <input type="hidden" name="ejercicio" value="{{ f.ejercicio }}">
+      {{ ui.boton('Renumerar el ejercicio', 'secondary', chico=True, submit=True) }}
+    </form>
+    {% endif %}
+    {% if tot.borradores %}
+    <form method="post" action="{{ url_for('cont_diario.accion') }}"
+          onsubmit="return confirm('¿Confirmar los {{ tot.borradores }} asiento(s) en borrador de este filtro? Los que no balancean quedan en borrador.');">
+      <input type="hidden" name="accion" value="confirmar_todos">
+      <input type="hidden" name="volver" value="{{ request.full_path }}">
+      {{ ocultos() }}
+      {{ ui.boton('Confirmar los borradores', 'ok', chico=True, submit=True, icono_='ok') }}
+    </form>
+    {% endif %}
+    {% endif %}
+  </div>
+  <form method="get" action="{{ url_for('cont_diario.externo') }}" class="filter-bar">
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" class="filtro" required value="{{ f.desde or (ej.fecha_inicio.isoformat() if ej else '') }}">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" class="filtro" required value="{{ f.hasta or (ej.fecha_fin.isoformat() if ej else '') }}">{% endcall %}
+    <button type="submit" class="btn btn-secondary btn-sm" title="Los asientos confirmados del rango, en el formato del sistema contable externo">{{ ui.icono('descargar') }}Exportar al sistema contable externo</button>
+    <span class="campo-ayuda">Solo los confirmados del rango, sin mirar los demás filtros.</span>
+  </form>
+</div>
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por número, descripción o referencia…', tam_pagina=50) %}{% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-diario" data-exportar="Libro Diario">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th class="th-right" data-tipo="n">N°</th><th class="th-center" data-orden="desc">Fecha</th><th>Período</th>
+        <th>Descripción</th><th>Tipo</th><th>Referencia</th><th class="th-right">Importe</th><th class="th-center">Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for a in filas %}
+        {% set descuadra = a.estado != 'anulado' and (a.total_debe|float - a.total_haber|float)|abs > 0.005 %}
+        <tr class="{{ 'fila-baja' if a.estado == 'anulado' }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('cont_diario.asiento', id_asiento=a.id_asiento, volver=request.full_path), titulo='Ver el asiento') }}
+            {% if puede_carga and a.estado == 'borrador' and a.estado_periodo == 'abierto' %}
+            {{ ui.accion('editar', href=url_for('cont_diario.carga', edit=a.id_asiento), titulo='Corregir el borrador') }}
+            <form method="post" action="{{ url_for('cont_diario.accion') }}">
+              <input type="hidden" name="accion" value="confirmar"><input type="hidden" name="id" value="{{ a.id_asiento }}">
+              <input type="hidden" name="volver" value="{{ request.full_path }}">
+              {{ ui.accion('auditar', submit=True, titulo='Confirmar', deshabilitado=descuadra) }}
+            </form>
+            <form method="post" action="{{ url_for('cont_diario.accion') }}" onsubmit="return confirm('¿Eliminar el borrador N° {{ a.numero }}?');">
+              <input type="hidden" name="accion" value="borrar"><input type="hidden" name="id" value="{{ a.id_asiento }}">
+              <input type="hidden" name="volver" value="{{ request.full_path }}">
+              {{ ui.accion('borrar', submit=True, titulo='Eliminar el borrador') }}
+            </form>
+            {% endif %}
+          </div></td>
+          <td class="td-right td-mono td-fuerte">{{ a.numero }}</td>
+          <td class="td-center" data-valor="{{ a.fecha.isoformat() }}">{{ a.fecha.strftime('%d/%m/%Y') }}</td>
+          <td class="chico">{{ a.periodo }}</td>
+          <td class="td-wrap">{{ a.descripcion }}{% if descuadra %} <span class="chip chip-alerta" title="Debe {{ a.total_debe|miles }} · haber {{ a.total_haber|miles }}">no balancea</span>{% endif %}</td>
+          <td class="chico">{{ tipos.get(a.tipo, a.tipo) }}</td>
+          <td class="td-mono chico">{{ a.referencia or '—' }}</td>
+          <td class="td-right" data-num="{{ a.total_debe }}">{{ (a.total_debe or 0) | miles }}</td>
+          <td class="td-center">{{ ui.estado(estados[a.estado][0], estados[a.estado][1]) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">No hay asientos con estos filtros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+{% if puede_carga %}
+<div class="modal" id="modal-importar">
+  <form method="post" action="{{ url_for('cont_diario.importar') }}" enctype="multipart/form-data" class="modal-caja">
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <div class="modal-titulo">Importar asientos</div>
+    <div class="modal-texto">Un .xlsx o .csv con las columnas del modelo: un renglón por imputación, y los del mismo N° forman un asiento. El período sale de la fecha y tiene que estar abierto; el número lo pone el sistema.</div>
+    {{ ui.aviso('Quedan en borrador: revisalos y confirmalos (también «Confirmar los borradores»).', 'warning') }}
+    <div class="campos">
+      <div class="campo" style="--span:12;"><label for="imp-archivo">Archivo <span class="req">*</span></label>
+        <input type="file" id="imp-archivo" name="archivo" accept=".xlsx,.csv" required></div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-importar')") }}
+      {{ ui.boton('Importar', submit=True, icono_='subir') }}
+    </div>
+  </form>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  gestion_admTable('tbl-diario', { pageSize: 50 });
+});
+</script>
+{% endblock %}
