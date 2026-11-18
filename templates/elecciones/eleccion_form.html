@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% from "elecciones/_campos.html" import campos %}
+{% block title %}Nueva elección{% endblock %}
+
+{#
+  Elecciones › Nueva elección (elecciones.nueva): motivo, día, lugar y horario,
+  y con qué afiliados se arma el padrón. Al guardar se genera el padrón.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Nueva elección</h1>
+    <p>Al guardarla se arma el padrón electoral: los afiliados titulares de alta al corte, con la antigüedad pedida.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('elecciones.listado'), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+
+<div class="card">
+  <form method="post" action="{{ url_for('elecciones.nueva') }}">
+    {{ campos(r) }}
+    <div class="form-acciones">
+      {{ ui.boton('Cancelar', 'secondary', href=url_for('elecciones.listado')) }}
+      {{ ui.boton('Guardar y generar el padrón', icono_='guardar', submit=True) }}
+    </div>
+  </form>
+</div>
+{% endblock %}

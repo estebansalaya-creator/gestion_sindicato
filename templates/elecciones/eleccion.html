@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% from "elecciones/_campos.html" import campos %}
+{% block title %}{{ el.motivo }}{% endblock %}
+
+{#
+  Elecciones › ficha de una elección (elecciones.ficha):
+    Padrón       el padrón electoral (foto al generarlo), quién votó, a qué hora y quién lo marcó;
+                 agregar o quitar a alguien con motivo; quitar un voto con motivo
+    Datos        motivo, día, lugar y horario, corte y antigüedad (cambiar el corte rehace el padrón)
+    Movimientos  el rastro: votos, votos quitados, agregados y quitados
+  Arriba, cerrar (ya no se marca nada), reabrir (Administrador) y anular.
+#}
+{% set est = ESTADOS[el.estado] %}
+{% set vigente = el.estado == 'vigente' %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ el.motivo }} {{ ui.estado(est[0], est[1]) }}</h1>
+    <p>Votación el {{ el.fecha_votacion.strftime('%d/%m/%Y') }}{% if el.hora_desde_txt %}, de {{ el.hora_desde_txt }}{% if el.hora_hasta_txt %} a {{ el.hora_hasta_txt }}{% endif %} h{% endif %}{% if el.lugar %} · {{ el.lugar }}{% endif %}.
+       Padrón al {{ el.fecha_padron.strftime('%d/%m/%Y') }}{% if el.antiguedad_meses %}, con {{ el.antiguedad_meses }} meses de antigüedad (alta hasta el {{ corte.strftime('%d/%m/%Y') }}){% endif %}.</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver', 'secondary', href=url_for('elecciones.listado'), icono_='volver') }}
+    {% if vigente and puede('/elecciones/votacion') %}{{ ui.boton('Mesa de votación', href=url_for('elecciones.mesa', id_el=el.id), icono_='ok') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes(errores) }}
+{% if el.estado == 'anulada' %}{{ ui.aviso('Anulada: ' ~ (el.motivo_anulacion or ''), 'danger') }}{% endif %}
+{% if el.estado == 'cerrada' %}{{ ui.aviso('Cerrada el ' ~ el.fecha_cierre.strftime('%d/%m/%Y %H:%M') ~ (' por ' ~ el.usuario_cierre if el.usuario_cierre else '') ~ ': ya no se registran votos.', 'info') }}{% endif %}
+{% if vigente and aviso_marcar and marcar %}{{ ui.aviso(aviso_marcar, 'warning') }}{% endif %}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Padrón electoral</div><div class="kpi-val">{{ el.padron }}</div>
+      <div class="kpi-sub">{% if el.padron_generado %}generado el {{ el.padron_generado.strftime('%d/%m/%Y %H:%M') }}{% else %}sin generar{% endif %}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Votaron</div><div class="kpi-val">{{ el.votaron }}</div><div class="kpi-sub">{{ el.porc }} % del padrón</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Faltan</div><div class="kpi-val">{{ el.faltan }}</div><div class="kpi-sub">no vinieron a votar</div></div></div>
+</div>
+
+{{ ui.solapas([('padron', 'Padrón electoral', filas|length), ('datos', 'Datos de la elección', None), ('movs', 'Movimientos', movs|length)], solapa) }}
+
+<div class="abm-panel {{ 'oculto' if solapa != 'padron' }}" data-panel="padron">
+  <div class="card">
+    {% call ui.card_head('Padrón electoral', nota='La foto del padrón de afiliados al generarlo. El número de orden es alfabético; los agregados a mano van al final.') %}
+      {% if vigente and el.votaron == 0 %}
+      <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}" onsubmit="return confirm('¿Volver a generar el padrón con el padrón de afiliados de hoy? Se pierden los agregados y quitados a mano.');">
+        <input type="hidden" name="accion" value="generar">
+        {{ ui.boton('Generar el padrón' if not el.padron_generado else 'Volver a generar', 'secondary', icono_='historial', submit=True, chico=True) }}
+      </form>
+      {% endif %}
+    {% endcall %}
+    {% call ui.barra_filtros('Buscar por apellido, documento, CUIL o empleador…', 50) %}
+      {% call ui.filtro('Votó') %}<select class="filtro" id="f-voto">
+        <option value="">Todos</option><option value="1">Votaron</option><option value="0">No votaron</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+        <option value="">Todos</option><option value="padron">Del padrón</option><option value="manual">Agregados a mano</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-padron" data-exportar="Padron electoral {{ el.fecha_votacion.strftime('%Y-%m-%d') }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th class="th-right" data-orden="asc">Orden</th><th>Apellido y nombres</th><th>Documento</th><th>CUIL</th>
+          <th>Empleador</th><th class="th-center">Alta</th><th>Votó</th><th>Registró</th>
+        </tr></thead>
+        <tbody>
+          {% for p in filas %}
+          <tr data-voto="{{ p.voto }}" data-origen="{{ p.origen }}">
+            <td><div class="acciones">
+              {% if vigente and p.voto %}{{ ui.accion('desaplicar', titulo='Quitar el voto', onclick="abrirMotivo(this, 'quitar_voto')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
+              {% if vigente and not p.voto %}{{ ui.accion('borrar', titulo='Quitar del padrón electoral', onclick="abrirMotivo(this, 'quitar')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
+              {% if puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=p.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
+            </div></td>
+            <td class="td-right td-mono" data-num="{{ p.orden }}">{{ p.orden }}</td>
+            <td class="td-fuerte">{{ p.apellido_nombres }}{% if p.origen == 'manual' %} {{ ui.estado('Agregado', 'info') }}{% endif %}</td>
+            <td class="td-mono">{{ p.nro_documento or '—' }}</td>
+            <td class="td-mono">{{ p.cuil or '—' }}</td>
+            <td>{{ p.empleador or (p.cuit_empleador or '—') }}</td>
+            <td class="td-center" data-valor="{{ p.fecha_alta.isoformat() if p.fecha_alta else '' }}">{{ p.fecha_alta.strftime('%d/%m/%Y') if p.fecha_alta else '—' }}</td>
+            <td data-valor="{{ p.fecha_voto.isoformat() if p.fecha_voto else '' }}">{% if p.voto %}{{ ui.estado('Votó ' ~ p.fecha_voto.strftime('%H:%M'), 'ok') }}{% if p.fecha_voto.date() != el.fecha_votacion %} <span class="chico">{{ p.fecha_voto.strftime('%d/%m/%Y') }}</span>{% endif %}{% else %}{{ ui.estado('No votó', 'neutro') }}{% endif %}</td>
+            <td>{{ p.usuario_voto or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="9" class="no-data">El padrón está vacío: generalo con el botón de arriba.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if vigente and el.padron_generado %}
+  <div class="card">
+    {{ ui.card_head('Agregar al padrón electoral', nota='Un afiliado titular que no entró al generarlo (un alta tardía, una corrección del padrón). Queda con su motivo en los movimientos.') }}
+    <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}">
+      <input type="hidden" name="accion" value="agregar">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;"><label for="numero">CUIL o documento <span class="req">*</span></label>
+            <input type="text" name="numero" id="numero" required maxlength="13" inputmode="numeric"></div>
+          <div class="campo" style="--span:9;"><label for="motivo-agregar">Motivo <span class="req">*</span></label>
+            <input type="text" name="motivo" id="motivo-agregar" required maxlength="250"></div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Agregar', icono_='agregar', submit=True) }}</div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<div class="abm-panel {{ 'oculto' if solapa != 'datos' }}" data-panel="datos">
+  <div class="card">
+    {{ ui.card_head('Datos de la elección', nota='Cambiar el corte del padrón o la antigüedad vuelve a generar el padrón (solo sin votos registrados).') }}
+    {% if vigente %}
+    <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}">
+      <input type="hidden" name="accion" value="guardar">
+      {{ campos(el, bloqueado=el.votaron > 0) }}
+      <div class="form-acciones">{{ ui.boton('Guardar cambios', icono_='guardar', submit=True) }}</div>
+    </form>
+    {% else %}
+    <fieldset class="grupo-campos solo-lectura" disabled>{{ campos(el, bloqueado=True) }}</fieldset>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Estado de la elección', nota='Cerrada, ya no se registran ni se quitan votos. Anulada, queda con su motivo y no se usa más.') }}
+    <div class="form-acciones">
+      {% if vigente %}
+      <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}" onsubmit="return confirm('¿Cerrar la elección? Ya no se van a poder registrar votos.');">
+        <input type="hidden" name="accion" value="cerrar">{{ ui.boton('Cerrar la elección', 'secondary', icono_='cerrar', submit=True) }}</form>
+      {% endif %}
+      {% if el.estado == 'cerrada' and es_admin %}
+      <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}">
+        <input type="hidden" name="accion" value="reabrir">{{ ui.boton('Reabrir', 'secondary', icono_='reactivar', submit=True) }}</form>
+      {% endif %}
+      {% if el.estado != 'anulada' %}{{ ui.boton('Anular', 'danger', icono_='baja', onclick="abrirModal('modal-anular')") }}{% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="abm-panel {{ 'oculto' if solapa != 'movs' }}" data-panel="movs">
+  <div class="card">
+    {% call ui.barra_filtros('Buscar por afiliado, detalle o usuario…', 50) %}
+      {% call ui.filtro('Acción') %}<select class="filtro" id="f-accion">
+        <option value="">Todas</option><option value="voto">Votó</option><option value="quita_voto">Voto quitado</option>
+        <option value="agregado">Agregado al padrón</option><option value="quitado">Quitado del padrón</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-movs" data-exportar="Movimientos del padron electoral">
+        <thead><tr>
+          <th data-orden="desc">Fecha</th><th>Acción</th><th>Afiliado</th><th>Documento</th><th>Detalle</th><th>Usuario</th>
+        </tr></thead>
+        <tbody>
+          {% set ACC = {'voto': ('Votó', 'ok'), 'quita_voto': ('Voto quitado', 'warn'), 'agregado': ('Agregado', 'info'), 'quitado': ('Quitado', 'danger')} %}
+          {% for m in movs %}
+          <tr data-accion="{{ m.accion }}">
+            <td data-valor="{{ m.fecha.isoformat() }}">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td>{{ ui.estado(ACC[m.accion][0], ACC[m.accion][1]) }}</td>
+            <td class="td-fuerte">{{ m.apellido_nombres or '—' }}</td>
+            <td class="td-mono">{{ m.nro_documento or '—' }}</td>
+            <td class="td-wrap chico">{{ m.detalle or '' }}</td>
+            <td>{{ m.usuario or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="6" class="no-data">Todavía no hay movimientos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="modal" id="modal-motivo">
+  <div class="modal-caja">
+    <div class="modal-titulo" id="motivo-titulo"></div>
+    <div class="modal-texto" id="motivo-nombre"></div>
+    <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}">
+      <input type="hidden" name="accion" id="motivo-accion">
+      <input type="hidden" name="id" id="motivo-id">
+      <div class="campos">
+        <div class="campo" style="--span:12;"><label for="motivo-texto">Motivo <span class="req">*</span></label>
+          <input type="text" name="motivo" id="motivo-texto" required maxlength="250"></div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-motivo')") }}
+        {{ ui.boton('Confirmar', 'danger', icono_='ok', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="modal" id="modal-anular">
+  <div class="modal-caja">
+    <div class="modal-titulo">Anular la elección</div>
+    <div class="modal-texto">{{ el.motivo }} — {{ el.fecha_votacion.strftime('%d/%m/%Y') }}. Queda con el padrón y los votos, pero no se usa más.</div>
+    <form method="post" action="{{ url_for('elecciones.accion', id_el=el.id) }}">
+      <input type="hidden" name="accion" value="anular">
+      <div class="campos">
+        <div class="campo" style="--span:12;"><label for="anular-motivo">Motivo <span class="req">*</span></label>
+          <input type="text" name="motivo" id="anular-motivo" required maxlength="300"></div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-anular')") }}
+        {{ ui.boton('Anular', 'danger', icono_='baja', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function abrirMotivo(b, accion) {
+  document.getElementById('motivo-accion').value = accion;
+  document.getElementById('motivo-id').value = b.dataset.id;
+  document.getElementById('motivo-titulo').textContent = accion === 'quitar_voto' ? 'Quitar el voto' : 'Quitar del padrón electoral';
+  document.getElementById('motivo-nombre').textContent = b.dataset.nombre;
+  document.getElementById('motivo-texto').value = '';
+  abrirModal('modal-motivo');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fv = document.getElementById('f-voto'), fo = document.getElementById('f-origen'), fa = document.getElementById('f-accion');
+  gestion_admTable('tbl-padron', { pageSize: 50, filtroExtra: function (tr) {
+    if (fv.value && tr.dataset.voto !== fv.value) return false;
+    if (fo.value && tr.dataset.origen !== fo.value) return false;
+    return true;
+  } });
+  gestion_admTable('tbl-movs', { pageSize: 50, filtroExtra: function (tr) {
+    return !fa.value || tr.dataset.accion === fa.value;
+  } });
+});
+</script>
+{% endblock %}

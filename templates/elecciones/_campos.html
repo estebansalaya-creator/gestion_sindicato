@@ -1,0 +1,39 @@
+{#
+  Los campos de una elección: los usan el alta (eleccion_form.html) y la
+  solapa Datos de la ficha (eleccion.html). `r`: la elección o lo tipeado.
+  `bloqueado`: con votos registrados, el día, el corte y la antigüedad no se cambian.
+#}
+{% macro campos(r, bloqueado=False) %}
+<div class="bloque">
+  <div class="campos">
+    <div class="campo" style="--span:12;"><label for="motivo">Motivo de la elección <span class="req">*</span></label>
+      <input type="text" name="motivo" id="motivo" required maxlength="200" value="{{ r.get('motivo') or '' }}"
+             placeholder="Renovación de Comisión Directiva 2027-2030, elección de delegados…" autofocus></div>
+    <div class="campo" style="--span:3;"><label for="fecha_votacion">Día de la votación <span class="req">*</span></label>
+      <input type="date" name="fecha_votacion" id="fecha_votacion" required {{ 'readonly' if bloqueado }}
+             value="{{ r.fecha_votacion.isoformat() if r.get('fecha_votacion') else '' }}"></div>
+    <div class="campo" style="--span:2;"><label for="hora_desde">Abre</label>
+      <input type="time" name="hora_desde" id="hora_desde" value="{{ r.get('hora_desde_txt') or r.get('hora_desde') or '' }}"></div>
+    <div class="campo" style="--span:2;"><label for="hora_hasta">Cierra</label>
+      <input type="time" name="hora_hasta" id="hora_hasta" value="{{ r.get('hora_hasta_txt') or r.get('hora_hasta') or '' }}"></div>
+    <div class="campo" style="--span:5;"><label for="lugar">Lugar</label>
+      <input type="text" name="lugar" id="lugar" maxlength="200" value="{{ r.get('lugar') or '' }}" placeholder="Sede del sindicato…"></div>
+  </div>
+</div>
+<div class="bloque">
+  <div class="bloque-titulo">Padrón electoral</div>
+  <div class="campos">
+    <div class="campo" style="--span:3;"><label for="fecha_padron">Corte del padrón</label>
+      <input type="date" name="fecha_padron" id="fecha_padron" {{ 'readonly' if bloqueado }}
+             value="{{ r.fecha_padron.isoformat() if r.get('fecha_padron') else '' }}">
+      <small class="campo-ayuda">Afiliado a esa fecha. Vacío = el día de la votación.</small></div>
+    <div class="campo" style="--span:3;"><label for="antiguedad_meses">Antigüedad mínima (meses)</label>
+      <input type="number" name="antiguedad_meses" id="antiguedad_meses" min="0" max="600" {{ 'readonly' if bloqueado }}
+             value="{{ r.get('antiguedad_meses') or 0 }}">
+      <small class="campo-ayuda">En el gremio, al corte. 0 = sin mínimo.</small></div>
+    <div class="campo" style="--span:6;"><label for="observaciones">Observaciones</label>
+      <textarea name="observaciones" id="observaciones" rows="2" maxlength="500">{{ r.get('observaciones') or '' }}</textarea></div>
+  </div>
+  {% if bloqueado %}<small class="campo-ayuda">Ya hay votos registrados: el día, el corte y la antigüedad no se cambian.</small>{% endif %}
+</div>
+{% endmacro %}

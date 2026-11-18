@@ -52,6 +52,7 @@ MANUALES = (
     "ayuda_empleadores",
     "ayuda_padron",
     "ayuda_beneficios",
+    "ayuda_elecciones",
     "ayuda_proveedores",
     "ayuda_tesoreria",
     "ayuda_pagos",

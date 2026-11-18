@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Mesa de votación — {{ el.motivo }}{% endblock %}
+
+{#
+  Elecciones › Mesa de Votación de una elección (elecciones.mesa): se busca al
+  afiliado por documento, CUIL, número de orden o apellido y se registra que
+  votó. Varias mesas a la vez: las cifras y los últimos votos se actualizan
+  solos, y si otra mesa ya lo marcó, avisa a qué hora y quién.
+  Datos: api_buscar, api_votar, api_quitar_voto, api_estado (JSON).
+#}
+{% set est = ESTADOS[el.estado] %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>{{ el.motivo }} {{ ui.estado(est[0], est[1]) }}</h1>
+    <p>Votación el {{ el.fecha_votacion.strftime('%d/%m/%Y') }}{% if el.hora_desde_txt %}, de {{ el.hora_desde_txt }}{% if el.hora_hasta_txt %} a {{ el.hora_hasta_txt }}{% endif %} h{% endif %}{% if el.lugar %} · {{ el.lugar }}{% endif %}.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/elecciones') %}{{ ui.boton('Ficha de la elección', 'secondary', href=url_for('elecciones.ficha', id_el=el.id), icono_='ver') }}{% endif %}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+{% if aviso_marcar %}{{ ui.aviso(aviso_marcar, 'warning' if marcar else 'danger') }}{% endif %}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Padrón electoral</div><div class="kpi-val" id="k-padron">{{ el.padron }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Votaron</div><div class="kpi-val" id="k-votaron">{{ el.votaron }}</div>
+      <div class="kpi-sub" id="k-porc">{{ el.porc }} % del padrón</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Faltan</div><div class="kpi-val" id="k-faltan">{{ el.faltan }}</div></div></div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Buscar al afiliado', nota='Documento, CUIL, número de orden del padrón o apellido. Enter busca; si hay uno solo, Enter otra vez registra el voto.') }}
+  <div class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:12;"><label for="q">Documento, CUIL, orden o apellido</label>
+        <input type="search" id="q" autocomplete="off" autofocus placeholder="Ej.: 28123456 · PEREZ JUAN · 154" {{ 'disabled' if not el.padron_generado }}></div>
+    </div>
+  </div>
+  <div id="mesa-aviso"></div>
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-resultados">
+      <thead><tr>
+        <th class="col-acciones">Acciones</th><th class="th-right">Orden</th><th>Apellido y nombres</th><th>Documento</th>
+        <th>CUIL</th><th>Empleador</th><th>Estado</th>
+      </tr></thead>
+      <tbody id="resultados">
+        <tr class="no-data-row"><td colspan="7" class="no-data">Escribí el documento o el apellido de quien viene a votar.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card">
+  {{ ui.card_head('Últimos votos registrados', nota='De todas las mesas; se actualiza solo.') }}
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Hora</th><th class="th-right">Orden</th><th>Apellido y nombres</th><th>Documento</th><th>Registró</th></tr></thead>
+      <tbody id="ultimos">
+        {% for u in ultimos %}
+        <tr><td>{{ u.fecha_voto.strftime('%H:%M') }}</td><td class="td-right td-mono">{{ u.orden }}</td><td class="td-fuerte">{{ u.apellido_nombres }}</td>
+          <td class="td-mono">{{ u.nro_documento or '—' }}</td><td>{{ u.usuario_voto or '' }}</td></tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="5" class="no-data">Todavía no votó nadie.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal" id="modal-quitar">
+  <div class="modal-caja">
+    <div class="modal-titulo">Quitar el voto</div>
+    <div class="modal-texto" id="quitar-nombre"></div>
+    <div class="campos">
+      <div class="campo" style="--span:12;"><label for="quitar-motivo">Motivo <span class="req">*</span></label>
+        <input type="text" id="quitar-motivo" maxlength="250" placeholder="Se marcó a otra persona por error…"></div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-quitar')") }}
+      {{ ui.boton('Quitar el voto', 'danger', icono_='desaplicar', onclick='confirmarQuitar()') }}
+    </div>
+  </div>
+</div>
+
+<template id="ico-ok">{{ ui.icono('ok') }}</template>
+<template id="ico-quitar">{{ ui.icono('desaplicar') }}</template>
+
+<script>
+var URL_BUSCAR = {{ url_for('elecciones.api_buscar', id_el=el.id) | tojson }};
+var URL_VOTAR = {{ url_for('elecciones.api_votar', id_el=el.id) | tojson }};
+var URL_QUITAR = {{ url_for('elecciones.api_quitar_voto', id_el=el.id) | tojson }};
+var URL_ESTADO = {{ url_for('elecciones.api_estado', id_el=el.id) | tojson }};
+var PUEDE_MARCAR = {{ 'true' if marcar else 'false' }};
+var ultimaBusqueda = '', timer = null, quitarId = null;
+
+function el_(tag, clase, texto) {
+  var e = document.createElement(tag);
+  if (clase) e.className = clase;
+  if (texto !== undefined && texto !== null) e.textContent = texto;
+  return e;
+}
+function estadoSpan(texto, tipo) { return el_('span', 'estado estado-' + tipo, texto); }
+function icono(id) { return document.getElementById(id).content.cloneNode(true); }
+
+function avisar(texto, tipo) {
+  var caja = document.getElementById('mesa-aviso');
+  caja.innerHTML = '';
+  if (!texto) return;
+  var a = el_('div', 'alert alert-' + tipo);
+  a.setAttribute('role', 'status');
+  a.appendChild(el_('div', null, texto));
+  caja.appendChild(a);
+}
+
+function vacio(texto) {
+  var tb = document.getElementById('resultados');
+  tb.innerHTML = '';
+  var tr = el_('tr', 'no-data-row'), td = el_('td', 'no-data', texto);
+  td.colSpan = 7; tr.appendChild(td); tb.appendChild(tr);
+}
+
+function dibujar(d) {
+  var tb = document.getElementById('resultados');
+  if (d.error) { vacio(d.error); return; }
+  if (!d.filas.length) {
+    if (d.fuera) {
+      vacio((d.fuera.nombre ? d.fuera.nombre + ' (' + (d.fuera.documento || d.fuera.cuil || '') + ')' : 'Ese número') +
+            ' no está en el padrón electoral: ' + d.fuera.motivo + '.');
+    } else {
+      vacio('No hay nadie en el padrón electoral con eso.');
+    }
+    return;
+  }
+  tb.innerHTML = '';
+  d.filas.forEach(function (f) {
+    var tr = el_('tr'); tr.dataset.id = f.id;
+    var acc = el_('td'), caja = el_('div', 'acciones');
+    if (!f.voto && PUEDE_MARCAR) {
+      var b = el_('button', 'btn btn-ok btn-sm btn-votar');
+      b.type = 'button'; b.appendChild(icono('ico-ok')); b.appendChild(document.createTextNode('Registrar voto'));
+      b.addEventListener('click', function () { votar(f.id, b); });
+      caja.appendChild(b);
+    } else if (f.voto && PUEDE_MARCAR) {
+      var q = el_('button', 'btn-accion'); q.type = 'button'; q.title = 'Quitar el voto';
+      q.appendChild(icono('ico-quitar'));
+      q.addEventListener('click', function () { abrirQuitar(f); });
+      caja.appendChild(q);
+    }
+    acc.appendChild(caja); tr.appendChild(acc);
+    tr.appendChild(el_('td', 'td-right td-mono', f.orden));
+    var nom = el_('td', 'td-fuerte', f.nombre);
+    if (f.manual) { nom.appendChild(document.createTextNode(' ')); nom.appendChild(estadoSpan('Agregado', 'info')); }
+    tr.appendChild(nom);
+    tr.appendChild(el_('td', 'td-mono', f.documento || '—'));
+    tr.appendChild(el_('td', 'td-mono', f.cuil || '—'));
+    tr.appendChild(el_('td', null, f.empleador || '—'));
+    var est = el_('td');
+    est.appendChild(f.voto ? estadoSpan('Ya votó ' + f.hora + (f.usuario ? ' · ' + f.usuario : ''), 'ok') : estadoSpan('No votó', 'neutro'));
+    tr.appendChild(est);
+    tb.appendChild(tr);
+  });
+  if (d.filas.length >= d.max) avisar('Hay más de ' + d.max + ' coincidencias: escribí algo más.', 'info');
+}
+
+function buscar(enfocar) {
+  var q = document.getElementById('q').value.trim();
+  if (q.length < 2) { ultimaBusqueda = ''; vacio('Escribí el documento o el apellido de quien viene a votar.'); return; }
+  ultimaBusqueda = q;
+  fetch(URL_BUSCAR + '?q=' + encodeURIComponent(q)).then(function (r) { return r.json(); }).then(function (d) {
+    if (q !== ultimaBusqueda) return;
+    dibujar(d);
+    if (enfocar && d.filas && d.filas.length === 1) {
+      var b = document.querySelector('#resultados .btn-votar');
+      if (b) b.focus();
+    }
+  }).catch(function () { vacio('No se pudo buscar: revisá la conexión.'); });
+}
+
+function actualizar(e) {
+  if (!e || e.error) return;
+  document.getElementById('k-padron').textContent = e.padron;
+  document.getElementById('k-votaron').textContent = e.votaron;
+  document.getElementById('k-faltan').textContent = e.faltan;
+  document.getElementById('k-porc').textContent = e.porc + ' % del padrón';
+  var tb = document.getElementById('ultimos');
+  tb.innerHTML = '';
+  if (!e.ultimos.length) {
+    var tr0 = el_('tr', 'no-data-row'), td0 = el_('td', 'no-data', 'Todavía no votó nadie.'); td0.colSpan = 5;
+    tr0.appendChild(td0); tb.appendChild(tr0); return;
+  }
+  e.ultimos.forEach(function (u) {
+    var tr = el_('tr');
+    tr.appendChild(el_('td', null, u.hora));
+    tr.appendChild(el_('td', 'td-right td-mono', u.orden));
+    tr.appendChild(el_('td', 'td-fuerte', u.nombre));
+    tr.appendChild(el_('td', 'td-mono', u.documento || '—'));
+    tr.appendChild(el_('td', null, u.usuario));
+    tb.appendChild(tr);
+  });
+}
+
+function post(url, datos) {
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(datos) })
+    .then(function (r) { return r.json(); });
+}
+
+function votar(id, boton) {
+  if (boton) boton.disabled = true;
+  post(URL_VOTAR, { id: id }).then(function (d) {
+    if (d.error) { avisar(d.error, 'danger'); if (boton) boton.disabled = false; return; }
+    var f = d.fila;
+    if (d.marcado) {
+      avisar('Voto registrado: orden ' + f.orden + ' · ' + f.nombre + ' (' + (f.documento || f.cuil) + ') a las ' + f.hora + '.', 'ok');
+    } else {
+      avisar(f.nombre + ' ya había votado a las ' + f.hora + (f.usuario ? ', lo registró ' + f.usuario : '') + '.', 'warning');
+    }
+    actualizar(d.estado);
+    var q = document.getElementById('q');
+    q.value = ''; ultimaBusqueda = '';
+    vacio('Escribí el documento o el apellido de quien viene a votar.');
+    q.focus();
+  }).catch(function () { avisar('No se pudo registrar: revisá la conexión y volvé a intentar.', 'danger'); if (boton) boton.disabled = false; });
+}
+
+function abrirQuitar(f) {
+  quitarId = f.id;
+  document.getElementById('quitar-nombre').textContent = 'Orden ' + f.orden + ' · ' + f.nombre + ' — votó a las ' + f.hora;
+  document.getElementById('quitar-motivo').value = '';
+  abrirModal('modal-quitar');
+  document.getElementById('quitar-motivo').focus();
+}
+function confirmarQuitar() {
+  var m = document.getElementById('quitar-motivo').value.trim();
+  if (!m) { document.getElementById('quitar-motivo').focus(); return; }
+  post(URL_QUITAR, { id: quitarId, motivo: m }).then(function (d) {
+    cerrarModal('modal-quitar');
+    if (d.error) { avisar(d.error, 'danger'); return; }
+    avisar('Se quitó el voto de ' + d.fila.nombre + '.', 'warning');
+    actualizar(d.estado);
+    buscar(false);
+  }).catch(function () { avisar('No se pudo quitar el voto: revisá la conexión.', 'danger'); });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  var q = document.getElementById('q');
+  q.addEventListener('input', function () { clearTimeout(timer); timer = setTimeout(function () { buscar(false); }, 300); });
+  q.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Enter') { ev.preventDefault(); clearTimeout(timer); buscar(true); }
+    if (ev.key === 'Escape') { q.value = ''; buscar(false); }
+  });
+  setInterval(function () {
+    fetch(URL_ESTADO).then(function (r) { return r.json(); }).then(actualizar).catch(function () {});
+  }, 15000);
+});
+</script>
+{% endblock %}

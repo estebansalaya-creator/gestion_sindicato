@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Elecciones{% endblock %}
+
+{#
+  Elecciones › Elecciones y Padrón (elecciones.listado): las elecciones del
+  gremio, con su día, el padrón electoral y cuántos votaron. La ficha de cada
+  una arma el padrón; la Mesa de Votación registra quién vino a votar.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Elecciones</h1>
+    <p>Cada elección con su motivo y el día de la votación. El padrón electoral se arma con los afiliados al corte; el día de la votación se marca quién vino a votar.</p>
+  </div>
+  <div class="page-header-acciones">
+    {% if puede('/elecciones/votacion') %}{{ ui.boton('Mesa de votación', 'secondary', href=url_for('elecciones.mesa_inicio'), icono_='ok') }}{% endif %}
+    {{ ui.boton('Nueva elección', href=url_for('elecciones.nueva'), icono_='agregar') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {% call ui.barra_filtros('Buscar por motivo o lugar…', 20) %}
+    {% call ui.filtro('Estado') %}<select class="filtro" id="f-estado">
+      <option value="">Todas</option>
+      {% for k, (t, _) in ESTADOS.items() %}<option value="{{ k }}">{{ t }}</option>{% endfor %}
+    </select>{% endcall %}
+  {% endcall %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-elecciones" data-exportar="Elecciones">
+      <thead><tr>
+        <th class="col-acciones" data-no-sort>Acciones</th>
+        <th data-orden="desc">Votación</th><th>Motivo</th><th>Lugar y horario</th><th class="th-center">Corte del padrón</th>
+        <th class="th-right">Padrón</th><th class="th-right">Votaron</th><th class="th-right">Participación</th><th>Estado</th>
+      </tr></thead>
+      <tbody>
+        {% for e in filas %}
+        {% set est = ESTADOS[e.estado] %}
+        <tr class="{{ 'fila-baja' if e.estado == 'anulada' }}" data-estado="{{ e.estado }}">
+          <td><div class="acciones">
+            {{ ui.accion('ver', href=url_for('elecciones.ficha', id_el=e.id)) }}
+            {% if e.estado == 'vigente' and puede('/elecciones/votacion') %}{{ ui.accion('auditar', href=url_for('elecciones.mesa', id_el=e.id), titulo='Mesa de votación') }}{% endif %}
+          </div></td>
+          <td class="td-center" data-valor="{{ e.fecha_votacion.isoformat() }}">{{ e.fecha_votacion.strftime('%d/%m/%Y') }}
+            {% if e.fecha_votacion == hoy and e.estado == 'vigente' %} {{ ui.estado('Hoy', 'info') }}{% endif %}</td>
+          <td class="td-fuerte">{{ e.motivo }}</td>
+          <td>{{ e.lugar or '—' }}{% if e.hora_desde_txt %} · {{ e.hora_desde_txt }}{% if e.hora_hasta_txt %} a {{ e.hora_hasta_txt }}{% endif %} h{% endif %}</td>
+          <td class="td-center" data-valor="{{ e.fecha_padron.isoformat() }}">{{ e.fecha_padron.strftime('%d/%m/%Y') }}{% if e.antiguedad_meses %}<br><span class="chico">antigüedad {{ e.antiguedad_meses }} meses</span>{% endif %}</td>
+          <td class="td-right" data-num="{{ e.padron }}">{{ e.padron if e.padron_generado else '—' }}</td>
+          <td class="td-right" data-num="{{ e.votaron }}">{{ e.votaron }}</td>
+          <td class="td-right" data-num="{{ e.porc }}">{{ e.porc }} %</td>
+          <td>{{ ui.estado(est[0], est[1]) }}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="9" class="no-data">Todavía no hay elecciones: cargá la primera con «Nueva elección».</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion() }}
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-estado');
+  gestion_admTable('tbl-elecciones', { pageSize: 20, filtroExtra: function (tr) {
+    return !fe.value || tr.dataset.estado === fe.value;
+  } });
+});
+</script>
+{% endblock %}

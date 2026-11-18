@@ -48,6 +48,8 @@ gestion_sindicato/
   ben_convenio.py         Beneficios › Convenio YMCA: nómina de adheridos, recibos de sus transferencias, cuotas por
                           grupo familiar, control de la factura del gimnasio, datos y precios del convenio
   ben_campanias.py        Beneficios › Campañas: flyers por correo a los afiliados, envío en segundo plano, baja pública
+  elecciones.py           Elecciones: motivo y día de la votación, padrón electoral (foto del padrón) y la mesa
+                          de votación que marca quién vino a votar
   mailer.py               el motor del correo saliente (copia del de gestion_adm) + entregar() para las campañas
   correo.py               Administración › Correo Saliente: cuenta SMTP, prueba, remitentes, avisos, envíos
   secretos.py             cifrado Fernet de las contraseñas (SIND_FERNET_KEY), copia del de gestion_adm
@@ -192,6 +194,10 @@ repetiría en la URL lo que dice el dominio.
 /beneficios/campanias        campañas; /nueva, /<id>, /<id>/editar, /<id>/flyer, /<id>/probar, /<id>/enviar POST,
                              /<id>/pausar|reanudar|cancelar|borrar POST, /<id>/estado (JSON)
 /beneficios/baja/<token>     PÚBLICA, sin sesión: «no quiero recibir más» (token firmado con SIND_SECRET_KEY)
+/elecciones                  elecciones; /nueva GET/POST; /<id> ficha (?solapa=padron|datos|movs), POST accion=guardar|
+                             generar|agregar|quitar|quitar_voto|cerrar|reabrir|anular
+/elecciones/votacion         la mesa (?elegir=1 si hay una sola hoy y va directo); /<id> la mesa de una elección;
+                             /<id>/api_buscar?q=, /api_estado (JSON); /api_votar, /api_quitar_voto POST JSON
 /admin/correo                correo saliente; /guardar, /probar, /remitentes/guardar, /remitentes/<id>/borrar,
                              /tipos/asignar POST; /envios (?origen_tipo=&origen_id=&codigo=&estado=&q=&pagina=)
 /fiscalizacion/escalas       vigencias; /<desde> ficha de la escala; /nueva (?base=AAAAMM) GET/POST;
@@ -974,6 +980,32 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
   a cuántas direcciones llega mientras se elige (`/beneficios/campanias/contar`, JSON); la Consulta del Padrón tiene
   «Campaña con estos filtros» (`/beneficios/campanias/nueva?destino=padron&…`); la ficha baja la lista en Excel
   (`/<id>/lista.xlsx`: a quién le llega o, enviada, cómo salió cada una).
+
+## Elecciones
+
+`elecciones.py` (`/elecciones`, `sql/elecciones_20261118.sql`, menú 130 «Elecciones» › 131 «Elecciones y Padrón»
+(Administrador y Supervisor) y 132 «Mesa de Votación» (también Operador); test: `python tests/test_elecciones.py`,
+sin base). Pedido del 18/11/2026: «configurar fecha de elecciones con motivo de elección y el día de la votación ir
+marcando el afiliado si vino a votar».
+
+- **La elección** (`el_eleccion`): motivo, día de la votación, horario y lugar (opcionales), **corte del padrón**
+  (vacío = el día de la votación) y **antigüedad mínima** en meses. Estados: vigente, cerrada (ya no se marca ni se
+  quita nada; el Administrador la reabre), anulada (con motivo).
+- **El padrón electoral** (`el_padron`) es una **foto** del padrón al generarlo (se genera solo al crear la elección):
+  titulares (`cod_parentesco = 0`, «afiliado = titular» como en las métricas) con alta hasta el corte, sin baja (sin
+  fecha y activo, o con la baja posterior al corte) y, si se pide antigüedad, alta hasta el corte − N meses (sin fecha
+  de alta entran solo si no se pide). Lleva orden alfabético, documento, CUIL, empleador y alta copiados. Se vuelve a
+  generar mientras nadie votó (pierde lo hecho a mano); cambiar el corte o la antigüedad lo regenera. A mano: agregar
+  un titular (CUIL o documento, con motivo; va al final del orden) y quitar a quien no votó (con motivo).
+- **La mesa**: busca por documento, CUIL, orden o apellido (`partir_busqueda`) y registra el voto con hora y usuario.
+  Varias mesas a la vez: el UPDATE marca solo `voto = 0`, así la segunda marca avisa quién y a qué hora; las cifras
+  y los últimos votos se refrescan cada 15 s (`api_estado`). Quitar un voto pide motivo. Si el documento no está en
+  el padrón electoral, dice por qué (`por_que_no_esta`: familiar, de baja al corte, alta posterior, sin antigüedad).
+- **Se marca el día de la votación** (`puede_marcar`); otro día solo el Administrador, con el aviso (la carga
+  posterior de un acta en papel).
+- **Rastro**: `el_padron_mov` (voto, quita_voto, agregado, quitado), con usuario, fecha y motivo; solapa Movimientos.
+- **Pendiente**: el padrón para imprimir (PDF por mesa, con lugar para la firma) y repartir el padrón en varias mesas
+  (por letra o por empleador).
 
 ## Escalas salariales del convenio
 

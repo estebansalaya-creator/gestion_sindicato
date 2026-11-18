@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Mesa de votación{% endblock %}
+
+{#
+  Elecciones › Mesa de Votación (elecciones.mesa_inicio): si hay una sola
+  elección vigente hoy, va directo a su mesa; si no, se elige.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Mesa de votación</h1>
+    <p>Elegí la elección para registrar quién viene a votar.</p>
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="card">
+  {{ ui.card_head('Hoy, ' ~ hoy.strftime('%d/%m/%Y')) }}
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr><th class="col-acciones">Acciones</th><th>Motivo</th><th>Lugar y horario</th><th class="th-right">Padrón</th><th class="th-right">Votaron</th></tr></thead>
+      <tbody>
+        {% for e in del_dia %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('auditar', href=url_for('elecciones.mesa', id_el=e.id), titulo='Abrir la mesa') }}</div></td>
+          <td class="td-fuerte"><a href="{{ url_for('elecciones.mesa', id_el=e.id) }}">{{ e.motivo }}</a></td>
+          <td>{{ e.lugar or '—' }}{% if e.hora_desde_txt %} · {{ e.hora_desde_txt }}{% if e.hora_hasta_txt %} a {{ e.hora_hasta_txt }}{% endif %} h{% endif %}</td>
+          <td class="td-right">{{ e.padron }}</td><td class="td-right">{{ e.votaron }} ({{ e.porc }} %)</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="5" class="no-data">Hoy no hay ninguna elección vigente.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% if otras %}
+<div class="card">
+  {{ ui.card_head('Otras elecciones vigentes', nota=('Fuera del día de la votación solo el Administrador registra votos (la carga posterior de un acta).' if es_admin else 'Los votos se registran el día de la votación.')) }}
+  <div class="data-table-wrap">
+    <table class="data-table">
+      <thead><tr><th class="col-acciones">Acciones</th><th>Votación</th><th>Motivo</th><th class="th-right">Padrón</th><th class="th-right">Votaron</th></tr></thead>
+      <tbody>
+        {% for e in otras %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('ver', href=url_for('elecciones.mesa', id_el=e.id), titulo='Abrir la mesa') }}</div></td>
+          <td>{{ e.fecha_votacion.strftime('%d/%m/%Y') }}</td>
+          <td class="td-fuerte">{{ e.motivo }}</td>
+          <td class="td-right">{{ e.padron }}</td><td class="td-right">{{ e.votaron }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
