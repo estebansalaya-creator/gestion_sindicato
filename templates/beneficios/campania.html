@@ -5,7 +5,8 @@
 {#
   Beneficios › Campañas › una campaña (ben_camp.ficha): cómo queda el correo, a
   cuántos les llega, la prueba, el envío y su avance (se sigue solo mientras
-  manda), y las direcciones que fallaron.
+  manda), y las direcciones que fallaron. Arriba, «Crear padrón de entrega»
+  (o «Padrón de entrega», ya creado): quién retira el beneficio (ben_entregas.py).
 #}
 {% macro dato(lbl, val, mono=False) -%}
 <div class="dato"><div class="dato-lbl">{{ lbl }}</div><div class="dato-val {{ 'mono' if mono }}">{{ val if val not in (None, '') else '—' }}</div></div>
@@ -21,6 +22,16 @@
     {{ ui.boton('Volver', 'secondary', href=url_for('ben_camp.lista'), icono_='volver') }}
     {% if camp.estado == 'borrador' %}{{ ui.boton('Editar', 'secondary', href=url_for('ben_camp.editar', id_camp=camp.id), icono_='editar') }}{% endif %}
     {{ ui.boton('Lista en Excel', 'secondary', href=url_for('ben_camp.lista_xlsx', id_camp=camp.id), icono_='planilla') }}
+    {# El padrón de entrega del beneficio (ben_entregas.py): con el mismo grupo de «A quién va». #}
+    {% if camp.entrega_generada %}
+    {{ ui.boton('Padrón de entrega', 'secondary', href=url_for('ben_ent.entrega', id_camp=camp.id), icono_='grupo') }}
+    {% else %}
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}" class="form-en-linea" data-proceso="Armando el padrón de entrega…"
+          onsubmit="return confirm('Se arma el padrón de entrega del beneficio con el grupo de «A quién va»{{ (' (' ~ cuenta.personas ~ ' personas') if cuenta else ' (todas las personas' }}, tengan o no correo).\n\n¿Crearlo?');">
+      <input type="hidden" name="accion" value="generar">
+      {{ ui.boton('Crear padrón de entrega', 'secondary', submit=True, icono_='grupo') }}
+    </form>
+    {% endif %}
     {% if camp.estado != 'borrador' and puede('/admin/correo') %}{{ ui.boton('Envíos', 'secondary', href=url_for('correo.envios', origen_tipo='campania', origen_id=camp.id), icono_='mail') }}{% endif %}
   </div>
 </div>

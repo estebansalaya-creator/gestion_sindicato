@@ -152,4 +152,34 @@ SECCIONES = [
     "límite queda <b>pausada</b> con el motivo y se reanuda al día siguiente, desde donde quedó."},
  ]},
 
+{
+ "grupo": "Campañas",
+ "id": "ben_entrega",
+ "titulo": "Padrón de entrega",
+ "url": "/beneficios/campanias",
+ "endpoints": ["ben_ent.entrega", "ben_ent.accion"],
+ "resumen": "Quiénes reciben el beneficio de una campaña (las cajas navideñas) y quién ya lo retiró.",
+ "bloques": [
+   {"tipo": "pasos", "items": [
+     "En la ficha de la campaña, <b>Crear padrón de entrega</b> arma la lista con el mismo grupo de "
+     "<b>A quién va</b> (los filtros del padrón, titulares, adheridos…), <b>tengan o no correo</b>. Para una "
+     "caja por familia, elegí «solo titulares» en los filtros antes de crearlo.",
+     "Cuando vienen a retirar, buscá al afiliado en el filtro de la grilla (documento, CUIL o apellido) y tocá "
+     "<b>Marcar que retiró</b> (el tilde verde). Si retira otra persona, anotá su nombre y documento; si es el "
+     "afiliado, Enter y listo. No recarga la página: el filtro queda puesto para el siguiente.",
+     "<b>Quitar el retiro</b>: si se marcó a alguien por error, con el motivo.",
+     "<b>Agregar al padrón</b> (abajo): alguien que no entró y le corresponde, por CUIL o documento, con el "
+     "motivo. <b>Quitar del padrón</b> (el tacho): solo a quien no retiró, con el motivo.",
+     "<b>Volver a crear</b>: rehace la lista con el padrón de hoy. Solo mientras nadie retiró; se pierden los "
+     "agregados y quitados a mano.",
+   ]},
+   {"tipo": "criterio", "html":
+    "El padrón de entrega es una <b>foto</b> del grupo al crearlo: lo que cambie después en el padrón de "
+    "afiliados no lo toca. Es aparte del correo: se crea con la campaña en borrador o ya enviada. Dos puestos "
+    "pueden marcar a la vez: si alguien ya retiró, el segundo ve a qué hora y quién lo marcó."},
+   {"tipo": "aviso", "html":
+    "Todo queda en la solapa <b>Movimientos</b>: cada retiro (y quién retiró), cada retiro quitado y cada "
+    "agregado o quitado, con la fecha y el usuario. La grilla se exporta a Excel con los filtros puestos."},
+ ]},
+
 ]

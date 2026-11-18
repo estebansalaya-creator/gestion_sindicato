@@ -63,6 +63,7 @@ from fisca_escalas import fisca_esc_bp                          # noqa: E402
 from fisca_actas import fisca_acta_bp                           # noqa: E402
 from ben_convenio import ben_conv_bp                            # noqa: E402
 from ben_campanias import ben_camp_bp                           # noqa: E402
+from ben_entregas import ben_ent_bp                             # noqa: E402
 from elecciones import elecciones_bp                            # noqa: E402
 from correo import mail_bp                                      # noqa: E402
 from cc_proveedores import cc_prov_bp                           # noqa: E402
@@ -493,6 +494,7 @@ app.register_blueprint(fisca_esc_bp)
 app.register_blueprint(fisca_acta_bp)
 app.register_blueprint(ben_conv_bp)
 app.register_blueprint(ben_camp_bp)
+app.register_blueprint(ben_ent_bp)
 app.register_blueprint(elecciones_bp)
 app.register_blueprint(mail_bp)
 # Portal de las empresas (/empresas/<token>): sin sesión, el enlace es la credencial.

@@ -31,6 +31,7 @@ campañas que se puedan enviar por correo a los afiliados.»
 Pantallas (blueprint `ben_camp`, /beneficios/campanias, menú 127):
   lista · /nueva · /<id> ficha · /<id>/editar · /<id>/flyer · /<id>/probar ·
   /<id>/enviar · /<id>/pausar · /<id>/reanudar · /<id>/cancelar · /<id>/estado (JSON)
+El padrón de entrega del beneficio (quién retiró la caja navideña…) está en ben_entregas.py.
 Pública, sin sesión: /beneficios/baja/<token> (no recibir más).
 """
 
@@ -235,10 +236,10 @@ def atributos_activos(cur) -> list[dict]:
         return []
 
 
-def destinatarios(cur, destino: str, id_convenio: int | None = None,
-                  filtro: dict | None = None) -> tuple[list[dict], dict]:
-    """[{id_afiliado, nombre, email}] sin direcciones repetidas ni dadas de baja,
-    y la cuenta: {"personas", "sin_correo", "baja", "repetidas"}."""
+def personas(cur, destino: str, id_convenio: int | None = None, filtro: dict | None = None) -> list[dict]:
+    """[{id_afiliado, apellido_nombres}]: las personas del grupo elegido en «A quién
+    va», tengan o no correo. Es la lista del correo antes de mirar las direcciones
+    y la del padrón de entrega del beneficio (ben_entregas.py)."""
     if destino == "padron":
         import afiliados
         where, params = afiliados._where_listado({**filtro_de({}), **(filtro or {})})
@@ -255,7 +256,14 @@ def destinatarios(cur, destino: str, id_convenio: int | None = None,
         cur.execute(f"""SELECT a.id_afiliado, a.apellido_nombres FROM p_afiliados a
                          WHERE (a.fecha_baja IS NULL OR a.fecha_baja > CURDATE())
                            {"AND a.cod_parentesco = 0" if destino == "titulares" else ""}""")
-    personas = cur.fetchall()
+    return cur.fetchall()
+
+
+def destinatarios(cur, destino: str, id_convenio: int | None = None,
+                  filtro: dict | None = None) -> tuple[list[dict], dict]:
+    """[{id_afiliado, nombre, email}] sin direcciones repetidas ni dadas de baja,
+    y la cuenta: {"personas", "sin_correo", "baja", "repetidas"}."""
+    grupo = personas(cur, destino, id_convenio, filtro)
     cur.execute("""SELECT entidad_id, email FROM s_contactos
                     WHERE entidad_tipo = 'afiliado' AND activo = 1 AND email LIKE '%@%'
                     ORDER BY principal DESC, id""")
@@ -267,8 +275,8 @@ def destinatarios(cur, destino: str, id_convenio: int | None = None,
     cur.execute("SELECT LOWER(email) AS e FROM ben_baja_correo")
     bajas = {r["e"] for r in cur.fetchall()}
     out, vistos = [], set()
-    cuenta = {"personas": len(personas), "sin_correo": 0, "baja": 0, "repetidas": 0}
-    for p in personas:
+    cuenta = {"personas": len(grupo), "sin_correo": 0, "baja": 0, "repetidas": 0}
+    for p in grupo:
         e = correo.get(p["id_afiliado"])
         if not e:
             cuenta["sin_correo"] += 1
@@ -715,6 +723,8 @@ def cambiar(id_camp, accion):
             elif accion == "cancelar" and camp["estado"] in ("pausada", "enviando"):
                 cur.execute("UPDATE ben_campania SET estado = 'cancelada', envio_hasta = NOW() WHERE id = %s", (id_camp,))
                 flash("Campaña cancelada: lo que faltaba no se manda.")
+            elif accion == "borrar" and camp["estado"] == "borrador" and camp.get("entrega_generada"):
+                flash("!La campaña tiene padrón de entrega: no se elimina (se perdería quién retiró).")
             elif accion == "borrar" and camp["estado"] == "borrador":
                 cur.execute("DELETE FROM ben_campania WHERE id = %s", (id_camp,))
                 conn.commit()

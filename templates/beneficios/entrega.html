@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Entrega · {{ camp.titulo }}{% endblock %}
+
+{#
+  Beneficios › Campañas › padrón de entrega (ben_ent.entrega): quiénes reciben el
+  beneficio de la campaña (una foto del grupo de «A quién va» al crearlo) y quién
+  ya lo retiró. Se busca con el filtro de la grilla (documento, CUIL, apellido) y
+  «Marcar que retiró» registra el retiro sin recargar la página.
+    Padrón       la lista, marcar o quitar un retiro, agregar o quitar a alguien
+    Movimientos  el rastro: retiros, retiros quitados, agregados, quitados, creado
+#}
+{% set generado = camp.entrega_generada %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Entrega · {{ camp.titulo }}</h1>
+    <p>{{ grupo }}{% if generado %} · padrón creado el {{ generado.strftime('%d/%m/%Y %H:%M') }}{% endif %}</p>
+  </div>
+  <div class="page-header-acciones">
+    {{ ui.boton('Volver a la campaña', 'secondary', href=url_for('ben_camp.ficha', id_camp=camp.id), icono_='volver') }}
+  </div>
+</div>
+
+{{ ui.mensajes() }}
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
+    <div><div class="kpi-lbl">Padrón de entrega</div><div class="kpi-val">{{ camp.padron }}</div>
+      <div class="kpi-sub">{{ 'creado' if generado else 'sin crear' }}</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
+    <div><div class="kpi-lbl">Retiraron</div><div class="kpi-val" id="kpi-entregados">{{ camp.entregados }}</div>
+      <div class="kpi-sub"><span id="kpi-porc">{{ camp.porc }}</span> % del padrón</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
+    <div><div class="kpi-lbl">Faltan</div><div class="kpi-val" id="kpi-faltan">{{ camp.faltan }}</div>
+      <div class="kpi-sub">todavía no retiraron</div></div></div>
+</div>
+
+{{ ui.solapas([('padron', 'Padrón de entrega', filas|length), ('movs', 'Movimientos', movs|length)], solapa) }}
+
+<div class="abm-panel {{ 'oculto' if solapa != 'padron' }}" data-panel="padron">
+  <div class="card">
+    {% call ui.card_head('Padrón de entrega', nota='El grupo de «A quién va» de la campaña cuando se creó, tenga o no correo. El número de orden es alfabético; los agregados a mano van al final.') %}
+      {% if camp.entregados == 0 %}
+      <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}" data-proceso="Armando el padrón de entrega…"
+            {% if generado %}onsubmit="return confirm('¿Volver a crear el padrón con el grupo de «A quién va» y el padrón de afiliados de hoy? Se pierden los agregados y quitados a mano.');"{% endif %}>
+        <input type="hidden" name="accion" value="generar">
+        {{ ui.boton('Volver a crear' if generado else 'Crear padrón de entrega', 'secondary' if generado else 'primary', icono_='historial', submit=True, chico=True) }}
+      </form>
+      {% endif %}
+    {% endcall %}
+    {% call ui.barra_filtros('Buscar por documento, CUIL, apellido o empleador…', 50) %}
+      {% call ui.filtro('Retiró') %}<select class="filtro" id="f-entregado">
+        <option value="">Todos</option><option value="1">Retiraron</option><option value="0">No retiraron</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Titular o familiar') %}<select class="filtro" id="f-tipo">
+        <option value="">Titulares y familiares</option><option value="titular">Solo titulares</option><option value="familiar">Solo familiares</option>
+      </select>{% endcall %}
+      {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
+        <option value="">Todos</option><option value="padron">Del grupo de la campaña</option><option value="manual">Agregados a mano</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div id="msg-entrega"></div>
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-entrega" data-exportar="Entrega {{ camp.titulo }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th class="th-right" data-orden="asc">Orden</th><th>Apellido y nombres</th><th>Documento</th><th>CUIL</th>
+          <th>Parentesco</th><th>Empleador</th><th>Retiró</th><th>Quién retiró</th><th>Registró</th>
+        </tr></thead>
+        <tbody>
+          {% for f in filas %}
+          <tr data-id="{{ f.id }}" data-entregado="{{ f.entregado }}" data-origen="{{ f.origen }}"
+              data-tipo="{{ 'titular' if f.cod_parentesco == 0 else 'familiar' }}">
+            <td><div class="acciones">
+              {% if not f.entregado %}{{ ui.accion('votar', titulo='Marcar que retiró', onclick="abrirEntrega(this)", datos={'id': f.id, 'nombre': f.apellido_nombres, 'documento': f.nro_documento or '', 'orden': f.orden}) }}{% endif %}
+              {% if f.entregado %}{{ ui.accion('desaplicar', titulo='Quitar el retiro', onclick="abrirMotivo(this, 'quitar_entrega')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
+              {% if not f.entregado %}{{ ui.accion('borrar', titulo='Quitar del padrón de entrega', onclick="abrirMotivo(this, 'quitar')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
+              {% if puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
+            </div></td>
+            <td class="td-right td-mono" data-num="{{ f.orden }}">{{ f.orden }}</td>
+            <td class="td-fuerte">{{ f.apellido_nombres }}{% if f.origen == 'manual' %} {{ ui.estado('Agregado', 'info') }}{% endif %}</td>
+            <td class="td-mono">{{ f.nro_documento or '—' }}</td>
+            <td class="td-mono">{{ f.cuil or '—' }}</td>
+            <td class="td-muted">{{ 'Titular' if f.cod_parentesco == 0 else (f.parentesco or '—') }}</td>
+            <td>{{ f.empleador or '—' }}</td>
+            <td class="td-entrega" data-valor="{{ f.fecha_entrega.isoformat() if f.fecha_entrega else '' }}">{% if f.entregado %}{{ ui.estado('Retiró', 'ok') }} <span class="chico">{{ f.fecha_entrega.strftime('%d/%m/%Y %H:%M') }}</span>{% else %}{{ ui.estado('No retiró', 'neutro') }}{% endif %}</td>
+            <td class="td-quien">{% if f.retiro_nombre %}{{ f.retiro_nombre }}{% if f.retiro_documento %} <span class="chico td-mono">DNI {{ f.retiro_documento }}</span>{% endif %}{% elif f.entregado %}<span class="td-muted">El afiliado</span>{% endif %}</td>
+            <td class="td-registro">{{ f.usuario_entrega or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="10" class="no-data">{{ 'El padrón de entrega está vacío.' if generado else 'Todavía no se creó el padrón de entrega: usá «Crear padrón de entrega».' }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+
+  {% if generado %}
+  <div class="card">
+    {{ ui.card_head('Agregar al padrón de entrega', nota='Alguien que no entró en el grupo de la campaña y le corresponde. Queda con su motivo en los movimientos.') }}
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}">
+      <input type="hidden" name="accion" value="agregar">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;"><label for="numero">CUIL o documento <span class="req">*</span></label>
+            <input type="text" name="numero" id="numero" required maxlength="13" inputmode="numeric"></div>
+          <div class="campo" style="--span:9;"><label for="motivo-agregar">Motivo <span class="req">*</span></label>
+            <input type="text" name="motivo" id="motivo-agregar" required maxlength="250"></div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Agregar', icono_='agregar', submit=True) }}</div>
+    </form>
+  </div>
+  {% endif %}
+</div>
+
+<div class="abm-panel {{ 'oculto' if solapa != 'movs' }}" data-panel="movs">
+  <div class="card">
+    {% call ui.barra_filtros('Buscar por afiliado, detalle o usuario…', 50) %}
+      {% call ui.filtro('Acción') %}<select class="filtro" id="f-accion">
+        <option value="">Todas</option><option value="entrega">Retiró</option><option value="quita_entrega">Retiro quitado</option>
+        <option value="agregado">Agregado</option><option value="quitado">Quitado</option><option value="generado">Padrón creado</option>
+      </select>{% endcall %}
+    {% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-movs" data-exportar="Movimientos de la entrega {{ camp.titulo }}">
+        <thead><tr>
+          <th data-orden="desc">Fecha</th><th>Acción</th><th>Afiliado</th><th>Documento</th><th>Detalle</th><th>Usuario</th>
+        </tr></thead>
+        <tbody>
+          {% set ACC = {'entrega': ('Retiró', 'ok'), 'quita_entrega': ('Retiro quitado', 'warn'), 'agregado': ('Agregado', 'info'),
+                        'quitado': ('Quitado', 'danger'), 'generado': ('Padrón creado', 'neutro')} %}
+          {% for m in movs %}
+          <tr data-accion="{{ m.accion }}">
+            <td data-valor="{{ m.fecha.isoformat() }}">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td>{{ ui.estado(ACC[m.accion][0], ACC[m.accion][1]) }}</td>
+            <td class="td-fuerte">{{ m.apellido_nombres or '—' }}</td>
+            <td class="td-mono">{{ m.nro_documento or '—' }}</td>
+            <td class="td-wrap chico">{{ m.detalle or '' }}</td>
+            <td>{{ m.usuario or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="6" class="no-data">Todavía no hay movimientos.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+
+<div class="modal" id="modal-entrega">
+  <div class="modal-caja">
+    <div class="modal-titulo">Marcar que retiró</div>
+    <div class="modal-texto" id="entrega-nombre"></div>
+    <input type="hidden" id="entrega-id">
+    <div class="campos">
+      <div class="campo" style="--span:8;"><label for="entrega-retiro-nombre">Si no lo retira el afiliado: quién retira</label>
+        <input type="text" id="entrega-retiro-nombre" maxlength="150" placeholder="Vacío: lo retira el afiliado"></div>
+      <div class="campo" style="--span:4;"><label for="entrega-retiro-doc">Su documento</label>
+        <input type="text" id="entrega-retiro-doc" maxlength="12" inputmode="numeric"></div>
+    </div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-entrega')") }}
+      {{ ui.boton('Retiró', 'primary', icono_='ok', onclick="confirmarEntrega()", id='btn-entrega') }}
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal-motivo">
+  <div class="modal-caja">
+    <div class="modal-titulo" id="motivo-titulo"></div>
+    <div class="modal-texto" id="motivo-nombre"></div>
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}">
+      <input type="hidden" name="accion" id="motivo-accion">
+      <input type="hidden" name="id" id="motivo-id">
+      <div class="campos">
+        <div class="campo" style="--span:12;"><label for="motivo-texto">Motivo <span class="req">*</span></label>
+          <input type="text" name="motivo" id="motivo-texto" required maxlength="250"></div>
+      </div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-motivo')") }}
+        {{ ui.boton('Confirmar', 'danger', icono_='ok', submit=True) }}
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+// «Marcar que retiró» sin recargar la página: el filtro de la grilla (el
+// documento que se acaba de buscar) y la página quedan como estaban.
+var URL_ENTREGAR = {{ url_for('ben_ent.api_entregar', id_camp=camp.id)|tojson }};
+var botonEntrega = null;
+function msgEntrega(texto, tipo) {
+  var c = document.getElementById('msg-entrega');
+  c.innerHTML = '';
+  var d = document.createElement('div');
+  d.className = 'alert alert-' + tipo;
+  d.setAttribute('role', 'status');
+  d.textContent = texto;
+  c.appendChild(d);
+}
+function abrirEntrega(b) {
+  botonEntrega = b;
+  document.getElementById('entrega-id').value = b.dataset.id;
+  document.getElementById('entrega-nombre').textContent = 'Orden ' + b.dataset.orden + ' · ' + b.dataset.nombre +
+    (b.dataset.documento ? ' · DNI ' + b.dataset.documento : '');
+  document.getElementById('entrega-retiro-nombre').value = '';
+  document.getElementById('entrega-retiro-doc').value = '';
+  abrirModal('modal-entrega');
+  // El foco al botón: si retira el afiliado, alcanza con Enter.
+  setTimeout(function () { document.getElementById('btn-entrega').focus(); }, 0);
+}
+function confirmarEntrega() {
+  var b = botonEntrega, btn = document.getElementById('btn-entrega');
+  if (!b) return;
+  btn.disabled = true;
+  fetch(URL_ENTREGAR, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ id: document.getElementById('entrega-id').value,
+                                               retiro_nombre: document.getElementById('entrega-retiro-nombre').value,
+                                               retiro_documento: document.getElementById('entrega-retiro-doc').value }) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      btn.disabled = false;
+      var d = res.d;
+      if (!res.ok || d.error) { msgEntrega(d.error || 'No se pudo registrar el retiro.', 'danger'); cerrarModal('modal-entrega'); return; }
+      cerrarModal('modal-entrega');
+      var f = d.fila, tr = b.closest('tr');
+      tr.dataset.entregado = '1';
+      var celda = tr.querySelector('.td-entrega');
+      celda.dataset.valor = f.iso;
+      celda.innerHTML = '';
+      var est = document.createElement('span');
+      est.className = 'estado estado-ok';
+      est.textContent = 'Retiró';
+      celda.appendChild(est);
+      var ch = document.createElement('span');
+      ch.className = 'chico';
+      ch.textContent = ' ' + f.fecha;
+      celda.appendChild(ch);
+      tr.querySelector('.td-quien').textContent = f.retiro_nombre
+        ? f.retiro_nombre + (f.retiro_documento ? ' (DNI ' + f.retiro_documento + ')' : '') : 'El afiliado';
+      tr.querySelector('.td-registro').textContent = f.usuario;
+      // Ya retiró: ni marcar de nuevo ni quitarlo del padrón. Quitar el retiro, al recargar.
+      tr.querySelectorAll('.btn-accion.votar, .btn-accion.borrar').forEach(function (x) { x.remove(); });
+      document.getElementById('kpi-entregados').textContent = d.estado.entregados;
+      document.getElementById('kpi-porc').textContent = d.estado.porc;
+      document.getElementById('kpi-faltan').textContent = d.estado.faltan;
+      msgEntrega(d.marcado ? f.nombre + ': retiro registrado.'
+                           : f.nombre + ' ya había retirado (' + f.fecha + (f.usuario ? ', ' + f.usuario : '') + ').',
+                 d.marcado ? 'ok' : 'warning');
+    })
+    .catch(function () { btn.disabled = false; msgEntrega('No se pudo registrar el retiro: revisá la conexión.', 'danger'); });
+}
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Enter' && document.getElementById('modal-entrega').classList.contains('abierto')
+      && !(e.target.tagName === 'BUTTON' && e.target.id !== 'btn-entrega')) {
+    e.preventDefault();
+    confirmarEntrega();
+  }
+});
+function abrirMotivo(b, accion) {
+  document.getElementById('motivo-accion').value = accion;
+  document.getElementById('motivo-id').value = b.dataset.id;
+  document.getElementById('motivo-titulo').textContent = accion === 'quitar_entrega' ? 'Quitar el retiro' : 'Quitar del padrón de entrega';
+  document.getElementById('motivo-nombre').textContent = b.dataset.nombre;
+  document.getElementById('motivo-texto').value = '';
+  abrirModal('modal-motivo');
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var fe = document.getElementById('f-entregado'), ft = document.getElementById('f-tipo'),
+      fo = document.getElementById('f-origen'), fa = document.getElementById('f-accion');
+  gestion_admTable('tbl-entrega', { pageSize: 50, filtroExtra: function (tr) {
+    if (fe.value && tr.dataset.entregado !== fe.value) return false;
+    if (ft.value && tr.dataset.tipo !== ft.value) return false;
+    if (fo.value && tr.dataset.origen !== fo.value) return false;
+    return true;
+  } });
+  gestion_admTable('tbl-movs', { pageSize: 50, filtroExtra: function (tr) {
+    return !fa.value || tr.dataset.accion === fa.value;
+  } });
+});
+</script>
+{% endblock %}
