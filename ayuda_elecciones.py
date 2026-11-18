@@ -64,6 +64,10 @@ SECCIONES = [
      "pierden los agregados y quitados a mano.",
      "<b>Agregar al padrón</b> (abajo de la grilla): un titular que no entró, por CUIL o documento, con el motivo.",
      "<b>Quitar del padrón</b> (el tacho): solo a quien no votó, con el motivo.",
+     "<b>Marcar que votó</b> (el tilde verde de la fila): registra el voto desde el padrón, <b>cualquier día</b>, "
+     "también pasada la votación: para pasar un acta o una planilla en papel. No recarga la página, así el filtro "
+     "y la página de la grilla quedan como estaban. Fuera del día de la votación la grilla muestra «cargado el …» "
+     "y el movimiento lo dice. Con la elección cerrada no se puede: el Administrador la reabre.",
      "<b>Quitar el voto</b>: si se marcó a alguien por error, con el motivo.",
      "En <b>Datos de la elección</b> se corrigen los datos. Cambiar el corte o la antigüedad vuelve a generar el "
      "padrón; con votos registrados, el día, el corte y la antigüedad ya no se cambian.",

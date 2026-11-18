@@ -387,7 +387,8 @@ code, kbd { font-family: var(--mono); font-size: .9em; }
 .btn-accion:hover { background: var(--c); border-color: var(--c); color: #fff; text-decoration: none; }
 .btn-accion:focus-visible { outline: none; box-shadow: var(--foco); }
 .btn-accion svg { pointer-events: none; }
-.btn-accion.ver, .btn-accion.reactivar { --c: var(--ok);     --c-borde: var(--ok-borde); }
+.btn-accion.ver, .btn-accion.reactivar,
+.btn-accion.votar                       { --c: var(--ok);     --c-borde: var(--ok-borde); }
 .btn-accion.editar, .btn-accion.agregar,
 .btn-accion.mail                        { --c: var(--blue);   --c-borde: var(--info-borde); }
 .btn-accion.borrar, .btn-accion.baja    { --c: var(--danger); --c-borde: var(--danger-borde); }

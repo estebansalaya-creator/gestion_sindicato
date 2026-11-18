@@ -26,8 +26,16 @@ Se busca al afiliado por documento, CUIL, número de orden o apellido, y se
 registra que votó: cuándo y quién lo marcó. Varias mesas a la vez: el UPDATE
 solo marca a quien no votó, así dos marcas del mismo no se pisan (la segunda
 avisa quién y a qué hora). Quitar un voto pide motivo. Se marca el DÍA de la
-votación; fuera de ese día solo el Administrador (la carga posterior de un
-acta en papel), con el aviso. Quien no está en el padrón electoral sale con el
+votación; fuera de ese día solo el Administrador, con el aviso.
+
+DESDE EL PADRÓN ELECTORAL (pedido del 18/11/2026): la ficha de la elección
+tiene en cada fila el botón «Marcar que votó», que anda CUALQUIER DÍA (antes,
+el mismo o después de la votación): es la carga posterior de un acta o de una
+planilla en papel. Lo usa quien tiene la opción «Elecciones y Padrón»
+(Administrador y Supervisor). Pide la elección vigente y el padrón generado:
+cerrada, el Administrador la reabre. Fuera del día de la votación el
+movimiento lo dice («cargado desde el padrón el …») y la grilla muestra cuándo
+se cargó, no una hora de voto que nadie anotó. Quien no está en el padrón electoral sale con el
 porqué (familiar, de baja, alta posterior al corte, sin la antigüedad).
 
 OSEDA (pedido del 18/11/2026): el padrón electoral dice de cada afiliado si
@@ -40,6 +48,7 @@ menú 130-132):
   /elecciones                       listado (Administrador y Supervisor)
   /elecciones/nueva                 alta
   /elecciones/<id>                  ficha: datos, padrón, movimientos; POST acciones
+  /elecciones/<id>/api_votar        «Marcar que votó» desde el padrón (JSON), cualquier día
   /elecciones/votacion              la mesa (también Operador): elige la elección del día
   /elecciones/votacion/<id>         la mesa de una elección
   /elecciones/votacion/<id>/api_buscar, api_votar, api_quitar_voto, api_estado   (JSON)
@@ -108,6 +117,25 @@ def puede_marcar(el: dict, hoy: datetime.date, es_admin: bool) -> tuple[bool, st
         return True, (f"El día de la votación ({el['fecha_votacion']:%d/%m/%Y}) {cuando}: "
                       "registrás votos como Administrador (carga posterior o prueba).")
     return False, f"Los votos se registran el día de la votación ({el['fecha_votacion']:%d/%m/%Y})."
+
+
+def puede_marcar_padron(el: dict) -> tuple[bool, str | None]:
+    """(se puede marcar desde el padrón electoral, motivo si no). Cualquier día."""
+    if el["estado"] == "anulada":
+        return False, "La elección está anulada."
+    if el["estado"] == "cerrada":
+        return False, "La elección está cerrada: para marcar votos, el Administrador la reabre."
+    if not el.get("padron_generado"):
+        return False, "Todavía no se generó el padrón electoral."
+    return True, None
+
+
+def detalle_carga(el: dict, hoy: datetime.date) -> str | None:
+    """Lo que agrega al movimiento un voto marcado desde el padrón fuera del día."""
+    if el["fecha_votacion"] == hoy:
+        return None
+    return (f"cargado desde el padrón el {hoy:%d/%m/%Y} "
+            f"(votación del {el['fecha_votacion']:%d/%m/%Y})")
 
 
 def partir_busqueda(q: str) -> tuple[str, list[str]]:
@@ -372,7 +400,7 @@ def quitar(cur, el: dict, id_padron: int, motivo: str, uid) -> str:
     return p["apellido_nombres"]
 
 
-def votar(cur, el: dict, id_padron: int, uid) -> dict:
+def votar(cur, el: dict, id_padron: int, uid, detalle: str | None = None) -> dict:
     """Marca que votó. Si ya votó (otra mesa), lo dice con la hora y quién."""
     cur.execute("""UPDATE el_padron SET voto = 1, fecha_voto = NOW(), id_usuario_voto = %s
                     WHERE id = %s AND id_eleccion = %s AND voto = 0""", (uid, id_padron, el["id"]))
@@ -383,7 +411,8 @@ def votar(cur, el: dict, id_padron: int, uid) -> dict:
     if not p:
         raise ErrorEleccion("No está en el padrón electoral.")
     if marcado:
-        _mov(cur, el["id"], p["id_afiliado"], "voto", f"Orden {p['orden']}", uid)
+        _mov(cur, el["id"], p["id_afiliado"], "voto",
+             f"Orden {p['orden']}" + (f": {detalle}" if detalle else ""), uid)
     return {"marcado": marcado, "fila": p}
 
 
@@ -576,6 +605,7 @@ def ficha(id_el):
     hoy = datetime.date.today()
     marcar, aviso_marcar = puede_marcar(el, hoy, tiene_rol("Administrador"))
     return render_template("elecciones/eleccion.html", el=el, filas=filas, movs=movs, ESTADOS=ESTADOS, puede=puede,
+                           marcar_padron=puede_marcar_padron(el)[0],
                            hoy=hoy, marcar=marcar, aviso_marcar=aviso_marcar, es_admin=tiene_rol("Administrador"),
                            solapa=request.args.get("solapa") or "padron", corte=corte_antiguedad(el),
                            editar=request.args.get("editar") == "1", aviso_oseda=aviso_oseda,
@@ -611,6 +641,7 @@ def accion(id_el):
                                                filas=filas, aviso_oseda=aviso_oseda, OSEDA_ESTADOS=OSEDA_ESTADOS,
                                                movs=movimientos(cur, id_el, 1000), ESTADOS=ESTADOS, puede=puede,
                                                hoy=hoy, marcar=marcar, aviso_marcar=aviso_marcar,
+                                               marcar_padron=puede_marcar_padron(el)[0],
                                                es_admin=tiene_rol("Administrador"), solapa="datos",
                                                corte=corte_antiguedad(el), editar=True, errores=errores)
                     cambia_padron = (r["fecha_padron"] != el["fecha_padron"]
@@ -682,6 +713,41 @@ def accion(id_el):
     if acc in ("guardar",):
         solapa = "datos"
     return redirect(url_for("elecciones.ficha", id_el=id_el, solapa=solapa))
+
+
+@elecciones_bp.route("/<int:id_el>/api_votar", methods=["POST"])
+def api_votar_padron(id_el):
+    """«Marcar que votó» desde el padrón electoral: cualquier día (ver el docstring)."""
+    if not validasesion():
+        return jsonify({"error": "La sesión venció: volvé a ingresar."}), 401
+    if not puede(URL_ABM):
+        return jsonify({"error": "No tenés permiso para el padrón electoral."}), 403
+    datos = request.get_json(silent=True) or {}
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            try:
+                el = eleccion(cur, id_el, bloquear=True)
+                if not el:
+                    raise ErrorEleccion("No existe esa elección.")
+                ok, motivo = puede_marcar_padron(el)
+                if not ok:
+                    raise ErrorEleccion(motivo)
+                hoy = datetime.date.today()
+                res = votar(cur, el, int(datos.get("id") or 0), _uid(), detalle_carga(el, hoy))
+                conn.commit()
+            except ErrorEleccion as e:
+                conn.rollback()
+                return jsonify({"error": str(e)}), 409
+            except Exception:
+                conn.rollback()
+                raise
+            el2 = eleccion(cur, id_el)
+    fila = _fila_json(res["fila"])
+    fila["iso"] = res["fila"]["fecha_voto"].isoformat() if res["fila"]["fecha_voto"] else ""
+    fila["fuera_del_dia"] = bool(res["fila"]["fecha_voto"]
+                                 and res["fila"]["fecha_voto"].date() != el["fecha_votacion"])
+    return jsonify({"marcado": res["marcado"], "fila": fila,
+                    "estado": {k: el2[k] for k in ("padron", "votaron", "faltan", "porc")}})
 
 
 # ── Mesa de votación ─────────────────────────────────────────────────────────

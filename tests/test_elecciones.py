@@ -51,6 +51,17 @@ ok(not E.puede_marcar({**el, "estado": "cerrada"}, D(2026, 12, 4), True)[0], "ce
 ok(not E.puede_marcar({**el, "estado": "anulada"}, D(2026, 12, 4), True)[0], "anulada: nadie")
 ok(not E.puede_marcar({**el, "padron_generado": None}, D(2026, 12, 4), True)[0], "sin padrón: nadie")
 
+print("Marcar desde el padrón electoral")
+ok(E.puede_marcar_padron(el) == (True, None), "vigente con padrón: se marca")
+ok(E.puede_marcar_padron(el)[0] and not E.puede_marcar(el, D(2026, 12, 20), False)[0],
+   "pasada la fecha: desde el padrón sí, aunque la mesa no deje al Supervisor")
+ok(not E.puede_marcar_padron({**el, "estado": "cerrada"})[0], "cerrada: no (se reabre)")
+ok(not E.puede_marcar_padron({**el, "estado": "anulada"})[0], "anulada: no")
+ok(not E.puede_marcar_padron({**el, "padron_generado": None})[0], "sin padrón: no")
+ok(E.detalle_carga(el, D(2026, 12, 4)) is None, "el día de la votación: movimiento sin agregado")
+ok("05/12/2026" in E.detalle_carga(el, D(2026, 12, 5)) and "04/12/2026" in E.detalle_carga(el, D(2026, 12, 5)),
+   "otro día: el movimiento dice cuándo se cargó y de qué votación")
+
 print("Búsqueda")
 ok(E.partir_busqueda("28.123.456") == ("28123456", []), "documento con puntos")
 ok(E.partir_busqueda("20-28123456-3") == ("20281234563", []), "CUIL con guiones")

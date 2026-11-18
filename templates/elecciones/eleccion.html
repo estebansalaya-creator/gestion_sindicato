@@ -7,6 +7,7 @@
   Elecciones › ficha de una elección (elecciones.ficha):
     Padrón       el padrón electoral (foto al generarlo), si tiene OSEDA hoy (en vivo de Railway),
                  quién votó, a qué hora y quién lo marcó;
+                 «Marcar que votó» en cada fila, cualquier día (la carga posterior de un acta);
                  agregar o quitar a alguien con motivo; quitar un voto con motivo
     Datos        motivo, día, lugar y horario, corte y antigüedad (cambiar el corte rehace el padrón)
     Movimientos  el rastro: votos, votos quitados, agregados y quitados
@@ -30,7 +31,7 @@
 
 {{ ui.mensajes(errores) }}
 {% if el.estado == 'anulada' %}{{ ui.aviso('Anulada: ' ~ (el.motivo_anulacion or ''), 'danger') }}{% endif %}
-{% if el.estado == 'cerrada' %}{{ ui.aviso('Cerrada el ' ~ el.fecha_cierre.strftime('%d/%m/%Y %H:%M') ~ (' por ' ~ el.usuario_cierre if el.usuario_cierre else '') ~ ': ya no se registran votos.', 'info') }}{% endif %}
+{% if el.estado == 'cerrada' %}{{ ui.aviso('Cerrada el ' ~ el.fecha_cierre.strftime('%d/%m/%Y %H:%M') ~ (' por ' ~ el.usuario_cierre if el.usuario_cierre else '') ~ ': ya no se registran votos.' ~ (' Para marcar votos desde el padrón, reabrila.' if es_admin else ''), 'info') }}{% endif %}
 {% if vigente and aviso_marcar and marcar %}{{ ui.aviso(aviso_marcar, 'warning') }}{% endif %}
 
 <div class="kpi-row">
@@ -38,9 +39,9 @@
     <div><div class="kpi-lbl">Padrón electoral</div><div class="kpi-val">{{ el.padron }}</div>
       <div class="kpi-sub">{% if el.padron_generado %}generado el {{ el.padron_generado.strftime('%d/%m/%Y %H:%M') }}{% else %}sin generar{% endif %}</div></div></div>
   <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
-    <div><div class="kpi-lbl">Votaron</div><div class="kpi-val">{{ el.votaron }}</div><div class="kpi-sub">{{ el.porc }} % del padrón</div></div></div>
+    <div><div class="kpi-lbl">Votaron</div><div class="kpi-val" id="kpi-votaron">{{ el.votaron }}</div><div class="kpi-sub"><span id="kpi-porc">{{ el.porc }}</span> % del padrón</div></div></div>
   <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
-    <div><div class="kpi-lbl">Faltan</div><div class="kpi-val">{{ el.faltan }}</div><div class="kpi-sub">no vinieron a votar</div></div></div>
+    <div><div class="kpi-lbl">Faltan</div><div class="kpi-val" id="kpi-faltan">{{ el.faltan }}</div><div class="kpi-sub">no vinieron a votar</div></div></div>
 </div>
 
 {{ ui.solapas([('padron', 'Padrón electoral', filas|length), ('datos', 'Datos de la elección', None), ('movs', 'Movimientos', movs|length)], solapa) }}
@@ -67,6 +68,7 @@
       </select>{% endcall %}
     {% endcall %}
     {% if aviso_oseda %}{{ ui.aviso(aviso_oseda, 'warning') }}{% endif %}
+    <div id="msg-padron"></div>
     <div class="data-table-wrap">
       <table class="data-table" id="tbl-padron" data-exportar="Padron electoral {{ el.fecha_votacion.strftime('%Y-%m-%d') }}">
         <thead><tr>
@@ -77,8 +79,9 @@
         <tbody>
           {% for p in filas %}
           {% set os = OSEDA_ESTADOS.get(p.oseda) %}
-          <tr data-voto="{{ p.voto }}" data-origen="{{ p.origen }}" data-oseda="{{ os[2] if os else '' }}">
+          <tr data-id="{{ p.id }}" data-voto="{{ p.voto }}" data-origen="{{ p.origen }}" data-oseda="{{ os[2] if os else '' }}">
             <td><div class="acciones">
+              {% if marcar_padron and not p.voto %}{{ ui.accion('votar', onclick="marcarVoto(this)", datos={'id': p.id, 'nombre': p.apellido_nombres, 'orden': p.orden}) }}{% endif %}
               {% if vigente and p.voto %}{{ ui.accion('desaplicar', titulo='Quitar el voto', onclick="abrirMotivo(this, 'quitar_voto')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
               {% if vigente and not p.voto %}{{ ui.accion('borrar', titulo='Quitar del padrón electoral', onclick="abrirMotivo(this, 'quitar')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
               {% if puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=p.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
@@ -90,8 +93,10 @@
             <td>{{ p.empleador or (p.cuit_empleador or '—') }}</td>
             <td class="td-center" data-valor="{{ p.fecha_alta.isoformat() if p.fecha_alta else '' }}">{{ p.fecha_alta.strftime('%d/%m/%Y') if p.fecha_alta else '—' }}</td>
             <td>{% if os %}{{ ui.estado(os[0], os[1]) }}{% if p.oseda_baja %} <span class="chico">{{ p.oseda_baja.strftime('%d/%m/%Y') }}</span>{% endif %}{% else %}—{% endif %}</td>
-            <td data-valor="{{ p.fecha_voto.isoformat() if p.fecha_voto else '' }}">{% if p.voto %}{{ ui.estado('Votó ' ~ p.fecha_voto.strftime('%H:%M'), 'ok') }}{% if p.fecha_voto.date() != el.fecha_votacion %} <span class="chico">{{ p.fecha_voto.strftime('%d/%m/%Y') }}</span>{% endif %}{% else %}{{ ui.estado('No votó', 'neutro') }}{% endif %}</td>
-            <td>{{ p.usuario_voto or '' }}</td>
+            {# Marcado otro día que el de la votación (la carga posterior desde el padrón):
+               la hora es la de la carga, no la del voto, y así se muestra. #}
+            <td class="td-voto" data-valor="{{ p.fecha_voto.isoformat() if p.fecha_voto else '' }}">{% if p.voto %}{% if p.fecha_voto.date() == el.fecha_votacion %}{{ ui.estado('Votó ' ~ p.fecha_voto.strftime('%H:%M'), 'ok') }}{% else %}{{ ui.estado('Votó', 'ok') }} <span class="chico">cargado el {{ p.fecha_voto.strftime('%d/%m/%Y %H:%M') }}</span>{% endif %}{% else %}{{ ui.estado('No votó', 'neutro') }}{% endif %}</td>
+            <td class="td-registro">{{ p.usuario_voto or '' }}</td>
           </tr>
           {% else %}
           <tr class="no-data-row"><td colspan="10" class="no-data">El padrón está vacío: generalo con el botón de arriba.</td></tr>
@@ -223,6 +228,55 @@
 </div>
 
 <script>
+// «Marcar que votó» desde el padrón: sin recargar la página, así no se pierden
+// el filtro ni la página de la grilla mientras se pasa un acta.
+var URL_VOTAR = {{ url_for('elecciones.api_votar_padron', id_el=el.id)|tojson }};
+function msgPadron(texto, tipo) {
+  var c = document.getElementById('msg-padron');
+  c.innerHTML = '';
+  var d = document.createElement('div');
+  d.className = 'alert alert-' + tipo;
+  d.setAttribute('role', 'status');
+  d.textContent = texto;
+  c.appendChild(d);
+}
+function marcarVoto(b) {
+  var nombre = b.dataset.nombre;
+  if (!confirm('¿Marcar que votó ' + nombre + ' (orden ' + b.dataset.orden + ')?')) return;
+  b.disabled = true;
+  fetch(URL_VOTAR, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                     body: JSON.stringify({ id: b.dataset.id }) })
+    .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+    .then(function (res) {
+      var d = res.d;
+      if (!res.ok || d.error) { b.disabled = false; msgPadron(d.error || 'No se pudo registrar el voto.', 'danger'); return; }
+      var f = d.fila, tr = b.closest('tr');
+      tr.dataset.voto = '1';
+      var celda = tr.querySelector('.td-voto');
+      celda.dataset.valor = f.iso;
+      celda.innerHTML = '';
+      var est = document.createElement('span');
+      est.className = 'estado estado-ok';
+      est.textContent = f.fuera_del_dia ? 'Votó' : 'Votó ' + f.hora;
+      celda.appendChild(est);
+      if (f.fuera_del_dia) {
+        var ch = document.createElement('span');
+        ch.className = 'chico';
+        ch.textContent = ' cargado el ' + f.fecha + ' ' + f.hora;
+        celda.appendChild(ch);
+      }
+      tr.querySelector('.td-registro').textContent = f.usuario;
+      // Ya votó: ni marcar de nuevo ni quitarlo del padrón. Quitar el voto, al recargar.
+      tr.querySelectorAll('.btn-accion.votar, .btn-accion.borrar').forEach(function (x) { x.remove(); });
+      document.getElementById('kpi-votaron').textContent = d.estado.votaron;
+      document.getElementById('kpi-porc').textContent = d.estado.porc;
+      document.getElementById('kpi-faltan').textContent = d.estado.faltan;
+      msgPadron(d.marcado ? nombre + ': voto registrado.'
+                          : nombre + ' ya tenía el voto registrado (' + f.fecha + ' ' + f.hora +
+                            (f.usuario ? ', ' + f.usuario : '') + ').', d.marcado ? 'ok' : 'warning');
+    })
+    .catch(function () { b.disabled = false; msgPadron('No se pudo registrar el voto: revisá la conexión.', 'danger'); });
+}
 function abrirMotivo(b, accion) {
   document.getElementById('motivo-accion').value = accion;
   document.getElementById('motivo-id').value = b.dataset.id;
