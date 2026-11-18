@@ -59,8 +59,11 @@ SECCIONES = [
     "cuotas del grupo. Las demás se emiten de a una (el <b>+</b>), donde se corrigen los meses. Lo que AEDA ya "
     "registró en su orden del mes sale como «Ya tiene recibo»."},
    {"tipo": "aviso", "html":
-    "Si la transferencia no es la cuota del gimnasio sino la cuota sindical de un empleador, en la pantalla del "
-    "recibo está el botón para emitirla como cuota sindical."},
+    "Queda a criterio de quien emite. Lo que un afiliado transfiere con centavos o no redondo a la medida de la "
+    "cuota ya no llega acá: es la cuota sindical del empleador de su ficha y sale en Emisión de Recibos. Si una "
+    "de las que llegan no es la cuota del gimnasio, el botón del <b>edificio</b> la emite como cuota sindical de "
+    "una empresa, y <b>Asociar</b> (la persona) deja dicho de quién son los pagos de ese CUIT: la <b>cuota "
+    "sindical</b> de una empresa o la <b>cuota social</b> de un afiliado (el mismo CUIT puede tener las dos)."},
  ]},
 
 {

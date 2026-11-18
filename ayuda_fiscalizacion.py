@@ -228,8 +228,9 @@ SECCIONES = [
       "ya registró en su orden YMCA del mes figura «Ya tiene recibo». Si esa persona paga por una empresa, "
       "se carga como CUIT relacionado; y al emitir de a uno se puede emitir como cuota sindical de un "
       "empleador."),
-     ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir. Sin identificar y justo una o más cuotas sociales del convenio (30.000, 60.000…): queda «Otro ingreso», porque casi seguro es un afiliado; se puede emitir igual de a uno."),
-     ("Asociar (la persona)", "En lo sin identificar: dice de quién es el pago. Si el banco no trajo el CUIT, se escribe (queda «a mano»; vacío, es el mismo de la empresa o el afiliado). Si el que pagó es otro (el estudio, el cónyuge), sus próximos pagos se reconocen solos: los de una empresa, acá; los de un afiliado, en Beneficios."),
+     ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir. Sin identificar y un importe de la cuota social (redondo a la medida de la cuota: 30.000, 55.000…): queda «Otro ingreso», porque casi seguro es un afiliado; se puede emitir igual de a uno."),
+     ("Lo pagó el afiliado", "Un afiliado transfirió un importe que no es de la cuota social (tiene centavos o no es redondo a la medida de la cuota): es la cuota sindical del empleador de su ficha. Se emite de a uno."),
+     ("Asociar (la persona)", "En todo lo que no es el mismo CUIT del empleador: dice de quién es el pago, a criterio de quien emite. Dos asociaciones: cuota sindical de una empresa o cuota social de un afiliado, y el mismo CUIT puede tener las dos (lo redondo a la medida de la cuota va al afiliado; lo demás, a la empresa). Si el banco no trajo el CUIT, se escribe (queda «a mano»; vacío, es el mismo de la empresa o el afiliado). Los próximos pagos de ese CUIT se reconocen solos. También está en Beneficios › Recibos de Adheridos."),
    ]},
    {"tipo": "campos", "items": [
      ("Sin recibo", "Hay que emitirlo."),

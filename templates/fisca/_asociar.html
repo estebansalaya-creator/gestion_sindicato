@@ -1,0 +1,124 @@
+{#
+  «Asociar» (fisca_rec.asociar): de quién es una acreditación. Dos asociaciones, una
+  por concepto (pedido del 18/11/2026): CUOTA SINDICAL de una empresa
+  (fisca_cuit_relacionado) o CUOTA SOCIAL de un afiliado (fisca_cuit_afiliado); el
+  mismo CUIT puede tener las dos y el operador elige. Si el banco no trajo el
+  CUIT, se carga en el renglón. Lo usan Emisión de Recibos y Beneficios › Recibos
+  de adheridos: el botón es ui.accion('asociar', onclick='asociar(this)',
+  datos={'id', 'cuit', 'manual', 'txt'}). Trae buscarEmpleador(inp, idAyuda), que usa también la pantalla.
+#}
+<div class="modal" id="modal-asociar">
+  <form method="post" action="{{ url_for('fisca_rec.asociar') }}" class="modal-caja ancha" id="form-asociar" novalidate>
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <input type="hidden" name="cuenta" value="{{ id_cuenta or '' }}">
+    <input type="hidden" name="desde" value="{{ desde.isoformat() if desde else '' }}">
+    <input type="hidden" name="hasta" value="{{ hasta.isoformat() if hasta else '' }}">
+    <input type="hidden" name="id_extracto" id="as-id">
+    <div class="modal-titulo">¿De quién es este pago?</div>
+    <div class="modal-texto" id="as-txt"></div>
+    <div class="campos">
+      <div class="campo" style="--span:5">
+        <label for="as-pagador">CUIT / CUIL de quien pagó</label>
+        <input type="text" id="as-pagador" name="cuit_pagador" class="mono" inputmode="numeric" maxlength="13" autocomplete="off">
+        <small class="campo-ayuda" id="as-pagador-ayuda"></small>
+      </div>
+      <div class="campo" style="--span:7">
+        <span class="campo-label">Asociar como</span>
+        <div class="opciones-tarjeta">
+          <label class="radio-card"><input type="radio" name="tipo" value="empresa" onchange="asociarTipo()">
+            <div><strong>Cuota sindical</strong><span>De una empresa: se emite acá.</span></div></label>
+          <label class="radio-card"><input type="radio" name="tipo" value="afiliado" onchange="asociarTipo()">
+            <div><strong>Cuota social</strong><span>De un afiliado: se emite en Beneficios.</span></div></label>
+        </div>
+      </div>
+      <div class="campo" style="--span:5">
+        <label for="as-destino" id="as-destino-lbl">CUIT de la empresa o CUIL del afiliado <span class="req">*</span></label>
+        <input type="text" id="as-destino" name="destino" class="mono" inputmode="numeric" maxlength="13" autocomplete="off"
+               oninput="asociarBuscar()">
+        <small class="campo-ayuda" id="as-destino-ayuda"></small>
+      </div>
+      <div class="campo" style="--span:7">
+        <label for="as-obs">Observaciones</label>
+        <input type="text" id="as-obs" name="observaciones" maxlength="250" placeholder="Quién es: el cónyuge, el estudio, el dueño…">
+      </div>
+    </div>
+    <div class="modal-texto chico" id="as-nota"></div>
+    <div class="alert alert-danger oculto" id="as-error" role="alert"></div>
+    <div class="modal-acciones">
+      {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-asociar')") }}
+      {{ ui.boton('Asociar', 'primary', icono_='usuario', submit=True) }}
+    </div>
+  </form>
+</div>
+
+
+<script>
+var URL_BUSQUEDA = "{{ url_for('buscador.buscar') }}";
+var URL_EMPLEADOR = "{{ url_for('afiliados.buscar_empleador') }}";
+function buscarEmpleador(inp, idAyuda) {
+  var cuit = inp.value.replace(/\D/g, ''), ayuda = document.getElementById(idAyuda);
+  ayuda.textContent = '';
+  if (cuit.length !== 11) return;
+  fetch(URL_EMPLEADOR + '?cuit=' + cuit).then(function (r) { return r.json(); }).then(function (d) {
+    ayuda.textContent = d.razon_social || 'No está en Empleadores';
+    ayuda.classList.toggle('ok', !!d.razon_social);
+  }).catch(function () {});
+}
+
+// «Asociar»: de quién es un pago sin identificar. Si el banco trajo el CUIT, se
+// relaciona ese CUIT con la empresa o el afiliado (sus pagos se van a reconocer
+// solos); si no lo trajo, se carga a mano en el renglón (vacío: el mismo de abajo).
+function asociar(btn) {
+  var d = btn.dataset, pag = document.getElementById('as-pagador'), ayuda = document.getElementById('as-pagador-ayuda');
+  document.getElementById('as-id').value = d.id;
+  document.getElementById('as-txt').textContent = d.txt;
+  pag.value = d.cuit;
+  pag.readOnly = !!d.cuit && !d.manual;
+  ayuda.textContent = d.cuit && !d.manual ? 'Lo trajo el banco.'
+    : (d.manual ? 'Cargado a mano: se puede corregir.' : 'El banco no lo trajo. Si lo sabés, escribilo; vacío, es el mismo de abajo.');
+  document.querySelectorAll('#form-asociar input[name=tipo]').forEach(function (r) { r.checked = false; });
+  document.getElementById('as-destino').value = '';
+  document.getElementById('as-destino-ayuda').textContent = '';
+  document.getElementById('as-obs').value = '';
+  document.getElementById('as-error').classList.add('oculto');
+  asociarTipo();
+  abrirModal('modal-asociar');
+}
+function asociarTipo() {
+  var t = (document.querySelector('#form-asociar input[name=tipo]:checked') || {}).value;
+  document.getElementById('as-destino-lbl').firstChild.textContent =
+    t === 'empresa' ? 'CUIT de la empresa ' : (t === 'afiliado' ? 'CUIL del afiliado ' : 'CUIT de la empresa o CUIL del afiliado ');
+  document.getElementById('as-nota').textContent = t === 'empresa'
+    ? 'Lo que ese CUIT pague que no sea un importe de la cuota social se va a reconocer como cuota sindical de la empresa (abajo, «Cuota sindical: CUIT que pagan por un empleador»).'
+    : (t === 'afiliado' ? 'Lo que ese CUIT pague con importe de la cuota social (redondo, a la medida de la cuota) se va a reconocer como del afiliado y se emite en Beneficios. Lo demás sigue siendo cuota sindical.' : '');
+  if (t) document.getElementById('as-nota').textContent += ' El mismo CUIT puede tener las dos asociaciones.';
+  asociarBuscar();
+}
+function asociarBuscar() {
+  var inp = document.getElementById('as-destino'), ayuda = document.getElementById('as-destino-ayuda');
+  var t = (document.querySelector('#form-asociar input[name=tipo]:checked') || {}).value;
+  var n = inp.value.replace(/\D/g, '');
+  ayuda.textContent = ''; ayuda.classList.remove('ok');
+  if (n.length !== 11 || !t) return;
+  if (t === 'empresa') { buscarEmpleador(inp, 'as-destino-ayuda'); return; }
+  fetch(URL_BUSQUEDA + '?q=' + n).then(function (r) { return r.json(); }).then(function (d) {
+    var a = (d.resultados || []).find(function (x) { return x.tipo === 'afiliado' && String(x.numero || '').replace(/\D/g, '') === n; });
+    ayuda.textContent = a ? a.nombre + (a.activo === false ? ' (de baja)' : '') : 'No está en el padrón';
+    ayuda.classList.toggle('ok', !!a);
+  }).catch(function () {});
+}
+document.addEventListener('DOMContentLoaded', function () {
+  var f = document.getElementById('form-asociar');
+  if (!f) return;
+  f.addEventListener('submit', function (ev) {
+    var err = document.getElementById('as-error'), msg = '';
+    var t = f.querySelector('input[name=tipo]:checked');
+    var dest = document.getElementById('as-destino').value.replace(/\D/g, '');
+    var pag = document.getElementById('as-pagador').value.replace(/\D/g, '');
+    if (!t) msg = 'Elegí si es de una empresa o de un afiliado.';
+    else if (dest.length !== 11) msg = 'Escribí el CUIT o el CUIL completo (11 números).';
+    else if (pag && pag.length !== 11) msg = 'El CUIT de quien pagó tiene que tener 11 números (o dejalo vacío).';
+    if (msg) { ev.preventDefault(); err.textContent = msg; err.classList.remove('oculto'); }
+  });
+});
+</script>

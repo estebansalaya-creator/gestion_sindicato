@@ -29,6 +29,12 @@ EL EMPLEADOR (`resolver_empleador`)
   empleador: su transferencia es un pago por otro concepto, no la cuota
   sindical de la empresa. Si ese CUIL paga por una empresa, se carga como CUIT
   relacionado y entonces sí se reconoce.
+- Salvo el importe (pedido del 18/11/2026, `por_su_empleador`): la cuota social
+  es redonda a la medida de la cuota (RA.es_cuota_social: 30.000, 55.000…); lo
+  que un afiliado transfiere con centavos o no redondo es la cuota sindical del
+  empleador de su ficha (como lo registraba AEDA: 34.304,12 de CERSOSIMO es la
+  cuota de CTL INTERNATIONAL). Se sugiere con ese empleador, «Lo pagó el
+  afiliado», de a uno (no en lote) y sin «Recordar».
 
 QUIÉN PAGÓ (pedido del 18/11/2026, sql/recibos_pagadores_20261118.sql)
 - El banco no siempre trae el CUIT (TRANSF.INT.DIST.TITULAR sin CUIT: tampoco lo
@@ -37,8 +43,10 @@ QUIÉN PAGÓ (pedido del 18/11/2026, sql/recibos_pagadores_20261118.sql)
 - Un CUIT que paga por un AFILIADO (el cónyuge, una cuenta de otro):
   `fisca_cuit_afiliado`, el par de fisca_cuit_relacionado. Sus pagos se
   reconocen como del afiliado (`emp["cuil"]` es el CUIL del afiliado, no el del
-  banco) y van por Beneficios. Un pagador va a una empresa o a un afiliado, no
-  a los dos.
+  banco) y van por Beneficios. Son dos asociaciones, una por concepto: la de
+  la empresa vale para la CUOTA SINDICAL y la del afiliado para la CUOTA SOCIAL
+  (el importe redondo a la medida de la cuota, RA.es_cuota_social); el mismo
+  CUIT puede tener las dos.
 
 EL AFILIADO (recibos_afiliado.py, pedido del 15/11/2026)
 Si el CUIT del banco es un CUIL del padrón (y no un pagador relacionado), es la
@@ -133,6 +141,7 @@ COMO = {
     "mismo":       ("Mismo CUIT", "ok"),
     "relacionado": ("CUIT relacionado", "info"),
     "afiliado":    ("Afiliado", "info"),
+    "por_afiliado": ("Lo pagó el afiliado", "info"),
     "varios":      ("Varios posibles", "warn"),
     "sin":         ("Sin identificar", "danger"),
 }
@@ -349,19 +358,32 @@ def en_letras(importe) -> str:
 # =============================================================================
 
 def resolver_empleador(cuit_banco, empresas: dict, relaciones: dict, afiliados: dict | None = None,
-                       pagadores: dict | None = None) -> dict:
+                       pagadores: dict | None = None, social: bool = False) -> dict:
     """De quién es el pago. `empresas`: CUIT → razón social; `relaciones`:
     pagador → [CUIT de empleadores]; `afiliados`: CUIL → apellido y nombres de
     los del padrón. Devuelve cuit, razon, como, las opciones y, si pagó un
     afiliado, su `nombre` y su `cuil`: un afiliado no se relaciona con su
     empleador (ver el encabezado), queda sin empleador. `pagadores`: pagador →
-    CUIL del afiliado por el que paga (fisca_cuit_afiliado)."""
+    CUIL del afiliado por el que paga (fisca_cuit_afiliado).
+
+    Dos asociaciones, una por concepto (pedido del 18/11/2026): las relaciones
+    con un empleador son de la CUOTA SINDICAL y los pagadores de un afiliado,
+    de la CUOTA SOCIAL. `social`: el importe es de la cuota social
+    (RA.es_cuota_social); entonces el afiliado (el mismo o por el que paga) va
+    antes que las relaciones con un empleador. El mismo CUIT puede tener las dos."""
     c = digitos(cuit_banco)
     sin = {"cuit": None, "razon": None, "como": "sin", "opciones": []}
     if len(c) != 11:
         return sin
     if c in empresas:
         return {"cuit": c, "razon": empresas[c], "como": "mismo", "opciones": []}
+    p = (pagadores or {}).get(c)
+    if social and afiliados:
+        if c in afiliados:
+            return {"cuit": None, "razon": None, "como": "afiliado", "opciones": [], "nombre": afiliados[c], "cuil": c}
+        if p and p in afiliados:
+            return {"cuit": None, "razon": None, "como": "afiliado", "opciones": [], "nombre": afiliados[p],
+                    "cuil": p, "por_otro": True}
     cand = sorted({e for e in relaciones.get(c, ()) if e in empresas})
     if len(cand) == 1:
         return {"cuit": cand[0], "razon": empresas[cand[0]], "como": "relacionado", "opciones": []}
@@ -370,7 +392,6 @@ def resolver_empleador(cuit_banco, empresas: dict, relaciones: dict, afiliados: 
                 "opciones": [{"cuit": e, "razon": empresas[e], "como": "relacionado"} for e in cand]}
     if afiliados and c in afiliados:
         return {"cuit": None, "razon": None, "como": "afiliado", "opciones": [], "nombre": afiliados[c], "cuil": c}
-    p = (pagadores or {}).get(c)
     if p and afiliados and p in afiliados:
         return {"cuit": None, "razon": None, "como": "afiliado", "opciones": [], "nombre": afiliados[p], "cuil": p,
                 "por_otro": True}
@@ -615,19 +636,34 @@ def libro_ingresos(cur, id_cuenta, desde, hasta) -> list[dict]:
 
 
 def cuotas_sociales(cur, cfg: dict | None) -> list[tuple[str, Decimal]]:
-    """(desde AAAAMM, cuota) de los convenios de Beneficios activos, de la más
-    nueva a la más vieja; sin Beneficios, la cuota de Datos del Sindicato."""
-    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
-                    WHERE table_schema = DATABASE() AND table_name = 'ben_convenio_precio'""")
-    if cur.fetchone()["n"]:
-        cur.execute("""SELECT p.periodo_desde, p.cuota_afiliado FROM ben_convenio_precio p
-                         JOIN ben_convenio c ON c.id = p.id_convenio
-                        WHERE c.activo = 1 AND p.cuota_afiliado > 0
-                        ORDER BY p.periodo_desde DESC""")
-        cuotas = [(str(r["periodo_desde"]), _d(r["cuota_afiliado"])) for r in cur.fetchall()]
-        if cuotas:
-            return cuotas
-    return [("000000", cfg["cuota"])] if cfg and cfg.get("cuota") else []
+    return RA.cuotas_sociales(cur, cfg)
+
+
+def empleadores_de(cur, cuils) -> dict:
+    """CUIL del afiliado → CUIT del empleador de su ficha (el de la relación
+    vigente más nueva, `p_afiliados.cuit_empleador`)."""
+    cuils = sorted({c for c in cuils if c and len(c) == 11})
+    if not cuils:
+        return {}
+    cur.execute(f"""SELECT cuil, MAX(cuit_empleador) AS cuit FROM p_afiliados
+                     WHERE cuil IN ({','.join(['%s'] * len(cuils))}) AND cuit_empleador REGEXP '^[0-9]{{11}}$'
+                     GROUP BY cuil""", cuils)
+    return {f["cuil"]: f["cuit"] for f in cur.fetchall()}
+
+
+def por_su_empleador(e: dict, importe, fecha, cuotas, emp_de: dict, empresas: dict) -> dict:
+    """La transferencia de un afiliado que NO es un importe de la cuota social
+    (con centavos, o no redondo a la medida de la cuota) es la cuota sindical de su empleador (pedido del 18/11/2026: la paga el afiliado
+    —monotributista, o la empresa que no transfiere—). Se sugiere con el
+    empleador de su ficha, de a uno; si no tiene uno de Empleadores, sigue como
+    afiliado (Beneficios)."""
+    if e.get("como") != "afiliado" or RA.es_cuota_social(importe, fecha, cuotas):
+        return e
+    c = emp_de.get(e.get("cuil"))
+    if c not in empresas:
+        return e
+    return {"cuit": c, "razon": empresas[c], "como": "por_afiliado", "opciones": [], "nombre": e.get("nombre"),
+            "cuil": e.get("cuil")}
 
 
 def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
@@ -655,9 +691,14 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
     except ErrorRecibo:
         motivo = None
 
+    cfg = RA.config(cur)
+    cuotas = cuotas_sociales(cur, cfg)
+    emp_de = empleadores_de(cur, set(afi))
     for f in filas:
         f["importe"] = _d(f["credito"])
-        f["emp"] = resolver_empleador(f["cuit"], emp, rel, afi, pag)
+        social = RA.es_cuota_social(f["importe"], f["fecham"], cuotas)
+        f["emp"] = por_su_empleador(resolver_empleador(f["cuit"], emp, rel, afi, pag, social), f["importe"],
+                                    f["fecham"], cuotas, emp_de, emp)
         f["cuits"] = {x for x in (digitos(f["cuit"]), f["emp"]["cuit"]) if x}
         f["recibo"], f["regla"] = None, None
         if f["conciliado"] or f["id_conc"]:
@@ -675,7 +716,6 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
     # La transferencia de un afiliado es la cuota social (después de emparejar:
     # si ya tiene recibo, se sigue viendo así). Lo que AEDA registró en su orden
     # agrupada del mes (YMCA), «Ya tiene recibo»; sin el script, «Otro ingreso».
-    cfg = RA.config(cur)
     afis = [f for f in filas if f["estado"] == "pendiente" and f["emp"]["como"] == "afiliado"]
     aeda = RA.ordenes_aeda(cur, id_cuenta, cfg["motivo"], desde, hasta) if cfg and afis else []
     for f in afis:
@@ -691,23 +731,19 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
             f["regla"] = (f"AEDA la registró en su orden {cfg['motivo_txt'] or ''} {o['nro_orden']} "
                           f"del {o['fecha']:%d/%m/%Y}, junto con las demás del mes.")
 
-    # Un importe sin pagador identificado que es justo N cuotas sociales del
-    # convenio (30.000, 60.000…) es un afiliado que pagó desde una cuenta que
-    # no lo nombra, no una empresa (pedido del 18/11/2026): no se sugiere como
-    # cuota sindical. Queda «Otro ingreso» y se puede emitir igual de a uno.
+    # Un importe sin pagador identificado que es de la cuota social (redondo a
+    # la medida de la cuota: 30.000, 55.000…, RA.es_cuota_social) es un afiliado
+    # que pagó desde una cuenta que no lo nombra, no una empresa (pedido del
+    # 18/11/2026): no se sugiere como cuota sindical. Queda «Otro ingreso» y se
+    # puede emitir igual de a uno.
     sin_pagador = [f for f in filas if f["estado"] == "pendiente" and f["emp"]["como"] == "sin"]
     if sin_pagador:
-        cuotas = cuotas_sociales(cur, cfg)
         for f in sin_pagador:
-            mes = f["fecham"].strftime("%Y%m")
-            for c in [c for d, c in cuotas if d <= mes]:
-                n = RA.meses_justos(f["importe"], c)
-                if n:
-                    f["estado"] = "otro"
-                    f["regla"] = (f"Es {'una cuota social' if n == 1 else f'{n} cuotas sociales'} del convenio "
-                                  f"({pesos(c)}) y el banco no dice quién pagó: no se sugiere como cuota sindical. "
-                                  "Si sabés de quién es, «Asociar» lo identifica.")
-                    break
+            if RA.es_cuota_social(f["importe"], f["fecham"], cuotas):
+                f["estado"] = "otro"
+                f["regla"] = ("Es un importe de la cuota social del convenio (redondo, a la medida de la cuota) y el "
+                              "banco no dice quién pagó: no se sugiere como cuota sindical. Si sabés de quién es, "
+                              "«Asociar» lo identifica.")
 
     sal = saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
     # Un empleador con un acuerdo de pago: su pago puede ser una cuota del acuerdo. Se emite de a uno.
@@ -986,8 +1022,13 @@ def emitir_uno(id_extracto):
             emp_todas, rel = empresas(cur), relaciones(cur)
             pagador = digitos(e["cuit"])
             pag = pagadores_afiliado(cur)
+            cuotas = cuotas_sociales(cur, RA.config(cur))
+            social = RA.es_cuota_social(e["credito"], e["fecham"], cuotas)
             sugerido = resolver_empleador(pagador, emp_todas, rel,
-                                          afiliados_de(cur, ({pagador} - set(emp_todas)) | set(pag.values())), pag)
+                                          afiliados_de(cur, ({pagador} - set(emp_todas)) | set(pag.values())), pag,
+                                          social)
+            sugerido = por_su_empleador(sugerido, _d(e["credito"]), e["fecham"], cuotas,
+                                        empleadores_de(cur, {sugerido.get("cuil")}), emp_todas)
             # El recibo al afiliado (la cuota social), salvo que se elija un empleador.
             cfg = RA.config(cur)
             modo_afiliado = bool(cfg) and sugerido["como"] == "afiliado" and request.values.get("para") != "empleador" \
@@ -1024,7 +1065,11 @@ def emitir_uno(id_extracto):
                                                      {p: v["saldo"] for p, v in saldos.items()})] if razon else []
     if modo_afiliado:
         renglones = RA.periodos(e["credito"], e["fecham"], cfg["cuota"])
-    recordar = pagador != elegido and len(pagador) == 11 and elegido not in rel.get(pagador, ())
+    # Lo que pagó un afiliado por el empleador de su ficha se reconoce solo
+    # (por_su_empleador): recordarlo no hace falta. Si eligió otro empleador, sí:
+    # la relación es de la cuota sindical y no se lleva su cuota social.
+    recordar = (pagador != elegido and len(pagador) == 11 and elegido not in rel.get(pagador, ())
+                and not (sugerido["como"] == "por_afiliado" and elegido == sugerido["cuit"]))
     obs = ""
     imput = dict(FRA.sugerir(est["cuotas"], e["credito"])) if est else {}
     accion = request.form.get("accion") if request.method == "POST" else None
@@ -1428,7 +1473,7 @@ def asociar():
     obs = " ".join((request.form.get("observaciones") or "").split())[:250] or None
     if tipo not in ("empresa", "afiliado"):
         flash("!Elegí si el pago es de una empresa o de un afiliado.")
-        return _volver_lista()
+        return _volver_asociar()
     msgs = []
     with get_connection() as conn:
         with conn.cursor() as cur:
@@ -1437,7 +1482,7 @@ def asociar():
             e = cur.fetchone()
             if not e or _d(e["credito"]) <= 0:
                 flash("!No existe esa acreditación.")
-                return _volver_lista()
+                return _volver_asociar()
             del_banco = digitos(e["cuit"]) if not e.get("cuit_manual") else ""
             pagador = del_banco or escrito or ""
             # Sin CUIT del banco ni escrito: el destino es el que pagó (lo más común:
@@ -1446,50 +1491,41 @@ def asociar():
                 pagador = destino
             if not cuit_valido(pagador):
                 flash(f"!El CUIT/CUIL de quien pagó ({pagador or 'vacío'}) no verifica.")
-                return _volver_lista()
+                return _volver_asociar()
             if not cuit_valido(destino):
                 flash(f"!El {'CUIT de la empresa' if tipo == 'empresa' else 'CUIL del afiliado'} "
                       f"({destino or 'vacío'}) no verifica.")
-                return _volver_lista()
+                return _volver_asociar()
             if tipo == "empresa":
                 cur.execute("SELECT razon_social FROM p_empresas WHERE CUIT = %s", (int(destino),))
                 d = cur.fetchone()
                 if not d:
                     flash(f"!El CUIT {destino} no está en Empleadores.")
-                    return _volver_lista()
+                    return _volver_asociar()
                 nombre = d["razon_social"]
             else:
                 a = RA.afiliado(cur, destino)
                 if not a:
                     flash(f"!El CUIL {destino} no está en el padrón.")
-                    return _volver_lista()
+                    return _volver_asociar()
                 nombre = a["apellido_nombres"]
-            # Un pagador va a una empresa o a un afiliado, no a los dos.
-            if pagador != destino:
-                if tipo == "afiliado":
-                    cur.execute("SELECT razon_social FROM p_empresas WHERE CUIT = %s", (int(pagador),))
-                    otra = cur.fetchone()
-                    if otra:
-                        flash(f"!{pagador} es la empresa {otra['razon_social']}: sus pagos son de ella.")
-                        return _volver_lista()
-                    cur.execute("SELECT 1 FROM fisca_cuit_relacionado WHERE cuit_pagador = %s AND activo = 1", (pagador,))
-                    if cur.fetchone():
-                        flash(f"!{pagador} ya paga por un empleador (abajo, «CUIT que pagan por un empleador»): "
-                              "dalo de baja ahí antes de asociarlo a un afiliado.")
-                        return _volver_lista()
-                    if not esq["afiliado"]:
-                        flash("!Falta correr sql/recibos_pagadores_20261118.sql para asociar un CUIT a un afiliado.")
-                        return _volver_lista()
-                elif esq["afiliado"]:
-                    cur.execute("SELECT 1 FROM fisca_cuit_afiliado WHERE cuit_pagador = %s AND activo = 1", (pagador,))
-                    if cur.fetchone():
-                        flash(f"!{pagador} ya paga por un afiliado (abajo, «CUIT que pagan por un afiliado»): "
-                              "dalo de baja ahí antes de asociarlo a una empresa.")
-                        return _volver_lista()
+            # Las dos asociaciones conviven (una de cada concepto): el mismo CUIT
+            # puede pagar la cuota sindical de una empresa y la cuota social de un
+            # afiliado. Solo una empresa no paga la cuota social de nadie: sus
+            # pagos son siempre de ella.
+            if pagador != destino and tipo == "afiliado":
+                cur.execute("SELECT razon_social FROM p_empresas WHERE CUIT = %s", (int(pagador),))
+                otra = cur.fetchone()
+                if otra:
+                    flash(f"!{pagador} es la empresa {otra['razon_social']}: sus pagos son de ella.")
+                    return _volver_asociar()
+                if not esq["afiliado"]:
+                    flash("!Falta correr sql/recibos_pagadores_20261118.sql para asociar la cuota social a un afiliado.")
+                    return _volver_asociar()
             if not del_banco:
                 if not esq["manual"]:
                     flash("!El banco no trajo el CUIT y falta correr sql/recibos_pagadores_20261118.sql para cargarlo.")
-                    return _volver_lista()
+                    return _volver_asociar()
                 cur.execute("""UPDATE c_extractos_bancarios SET cuit = %s, cuit_manual = 1, cuit_manual_usuario = %s,
                                       cuit_manual_fecha = NOW() WHERE id = %s""", (pagador, _uid(), id_ext))
                 msgs.append(f"La acreditación quedó con el CUIT {pagador} (cargado a mano).")
@@ -1507,13 +1543,22 @@ def asociar():
                                        observaciones = COALESCE(VALUES(observaciones), observaciones),
                                        id_usuario = VALUES(id_usuario)""",
                                 (pagador, destino, obs, _uid()))
-                msgs.append(f"Los pagos de {pagador} se reconocen como de {nombre}.")
+                msgs.append(f"Los pagos de {pagador} de la {'cuota sindical' if tipo == 'empresa' else 'cuota social'} "
+                            f"se reconocen como de {nombre}.")
             else:
                 msgs.append(f"Es de {nombre}.")
         conn.commit()
     if tipo == "afiliado":
         msgs.append("El recibo al afiliado se emite en Beneficios › Convenio YMCA › Recibos.")
     flash(" ".join(msgs))
+    return _volver_asociar()
+
+
+def _volver_asociar():
+    """A la pantalla de la que vino (Emisión de Recibos o Beneficios), solo rutas internas."""
+    volver = (request.form.get("volver") or "").strip()
+    if volver.startswith("/") and not volver.startswith("//") and "\\" not in volver:
+        return redirect(volver)
     return _volver_lista()
 
 

@@ -34,6 +34,7 @@ afiliados quedan como «Otro ingreso», como antes.
 from __future__ import annotations
 
 import datetime
+import math
 from decimal import Decimal
 
 import movimientos_fondos as mf
@@ -98,6 +99,42 @@ def meses_justos(importe, cuota) -> int:
         return 0
     n = imp / cuota
     return int(n) if n == n.to_integral_value() and 1 <= n <= MAX_MESES else 0
+
+
+def cuotas_sociales(cur, cfg: dict | None = None) -> list[tuple[str, Decimal]]:
+    """(desde AAAAMM, cuota) de los convenios de Beneficios activos, de la más
+    nueva a la más vieja; sin Beneficios, la cuota de Datos del Sindicato."""
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name = 'ben_convenio_precio'""")
+    if cur.fetchone()["n"]:
+        cur.execute("""SELECT p.periodo_desde, p.cuota_afiliado FROM ben_convenio_precio p
+                         JOIN ben_convenio c ON c.id = p.id_convenio
+                        WHERE c.activo = 1 AND p.cuota_afiliado > 0
+                        ORDER BY p.periodo_desde DESC""")
+        cuotas = [(str(r["periodo_desde"]), _d(r["cuota_afiliado"])) for r in cur.fetchall()]
+        if cuotas:
+            return cuotas
+    cfg = cfg if cfg is not None else config(cur)
+    return [("000000", cfg["cuota"])] if cfg and cfg.get("cuota") else []
+
+
+def es_cuota_social(importe, fecha: datetime.date, cuotas: list[tuple[str, Decimal]]) -> bool:
+    """¿Es un importe de la cuota social? Redondo a la medida de las cuotas que
+    regían hasta ese mes: múltiplo del divisor común (con 25.000 y 30.000,
+    5.000: 30.000, 55.000 —un mes de cada precio—, 85.000…), hasta 12 cuotas.
+    Lo que tiene centavos o no es redondo así es otra cosa (la cuota sindical)."""
+    mes = fecha.strftime("%Y%m")
+    vig = [int(c) for d, c in cuotas if d <= mes and c and c == c.to_integral_value()]
+    imp = _d(importe)
+    if not vig or imp <= 0 or imp != imp.to_integral_value() or imp > max(vig) * MAX_MESES:
+        return False
+    return int(imp) % math.gcd(*vig) == 0
+
+
+def divisor_cuotas(cuotas: list[tuple[str, Decimal]]) -> int | None:
+    """El divisor común de todas las cuotas (para filtrar en SQL)."""
+    vig = [int(c) for _, c in cuotas if c and c == c.to_integral_value()]
+    return math.gcd(*vig) if vig else None
 
 
 def periodos(importe, fecha: datetime.date, cuota) -> list[tuple[str, Decimal]]:
@@ -293,4 +330,7 @@ def transferencias_sin_recibo(cur, cuil: str, cfg: dict | None) -> list[dict]:
         for f in lista:
             f["aeda"] = cubierta(f["fecham"], ordenes)
             f["justas"] = meses_justos(f["credito"], cfg.get("cuota"))
-    return filas
+    # Lo que no es justo N cuotas sociales es la cuota sindical de su empleador
+    # (pedido del 18/11/2026): va por Emisión de Recibos, no acá.
+    cuotas = cuotas_sociales(cur, cfg)
+    return [f for f in filas if es_cuota_social(f["credito"], f["fecham"], cuotas)] if cuotas else filas

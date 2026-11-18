@@ -90,6 +90,11 @@
               {% endif %}
               {% if f.estado in emitibles %}
               {{ ui.accion('agregar', href=url_for('ben_conv.emitir_uno', id_extracto=f.id, cuenta=id_cuenta, desde=desde.isoformat(), hasta=hasta.isoformat()), titulo='Emitir el recibo') }}
+              {# A criterio del operador (18/11/2026): si no es la cuota social, el recibo de cuota sindical de una empresa. #}
+              {{ ui.accion('cuota_sindical', href=url_for('fisca_rec.emitir_uno', id_extracto=f.id, para='empleador', desde=desde.isoformat(), hasta=hasta.isoformat()), titulo='No es la cuota social: emitirlo como cuota sindical de una empresa') }}
+              {{ ui.accion('asociar', onclick='asociar(this)', titulo='¿De quién es? Asociarlo: cuota sindical de una empresa o cuota social de un afiliado', datos={
+                   'id': f.id, 'cuit': f.cuit or '', 'manual': '1' if f.cuit_manual else '',
+                   'txt': f.fecham.strftime('%d/%m/%Y') ~ ' · ' ~ (f.concepto or '') ~ ' · $ ' ~ (f.importe | miles)}) }}
               {% elif f.recibo and f.recibo.clase in ('cuota_sindical', 'fiscalizacion', 'afiliado') %}
               {{ ui.accion('ver', href=url_for('fisca_rec.recibo', id_orden=f.recibo.id_orden), titulo='Ver el recibo') }}
               {{ ui.accion('pdf', href=url_for('fisca_rec.recibo_pdf_ruta', id_orden=f.recibo.id_orden), titulo='Recibo en PDF', blank=True) }}
@@ -132,6 +137,8 @@
   {% endif %}
 </form>
 {% endif %}
+
+{% if cuenta %}{% include "fisca/_asociar.html" %}{% endif %}
 
 <script>
 function items() { return Array.from(document.querySelectorAll('.chk-item')); }

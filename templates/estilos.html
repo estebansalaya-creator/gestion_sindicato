@@ -109,7 +109,8 @@
           ('auditar', 'Resuelve algo pendiente de control', "ui.accion('auditar', href=url_for('reintegros.auditoria_ficha', ...))"),
           ('aplicaciones', 'Con qué se canceló un comprobante, o a qué se imputó un pago', "ui.accion('aplicaciones', onclick='verAplicaciones(this)', datos={'url': …})"),
           ('desaplicar', 'Suelta una aplicación: pide importe y motivo', "ui.accion('desaplicar', onclick='desaplicar(this)', datos={…})"),
-          ('asociar', 'Dice de quién es un pago sin identificar: una empresa o un afiliado', "ui.accion('asociar', onclick='asociar(this)', datos={…})"),
+          ('asociar', 'Dice de quién es un pago: cuota sindical de una empresa o cuota social de un afiliado', "ui.accion('asociar', onclick='asociar(this)', datos={…})"),
+          ('cuota_sindical', 'Lo que parecía de un afiliado se emite como cuota sindical de una empresa', "ui.accion('cuota_sindical', href=url_for('fisca_rec.emitir_uno', …, para='empleador'))"),
         ] %}
         <tr>
           <td><div class="acciones">{{ ui.accion(tipo) }} {{ ui.accion(tipo, deshabilitado=True) }}</div></td>

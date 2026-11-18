@@ -69,6 +69,40 @@ ok(r["como"] == "afiliado" and r["cuil"] == "27000000006" and r["nombre"] == "PE
 ok(R.resolver_empleador("27000000006", emp, rel, afi, pag)["cuil"] == "27000000006", "el afiliado mismo: su CUIL")
 ok(R.resolver_empleador("30709404047", emp, rel, afi, pag)["como"] == "mismo", "una empresa no pasa a ser de un afiliado")
 ok(R.resolver_empleador("20999999995", emp, rel, afi, pag)["como"] == "sin", "paga por alguien que no está en el padrón: sin identificar")
+# Dos asociaciones, una por concepto: 20081898201 es afiliado y además paga la cuota sindical de RMO SA.
+r = R.resolver_empleador("20081898201", emp, rel, afi, pag, social=True)
+ok(r["como"] == "afiliado" and r["cuil"] == "20081898201", "cuota social: la del afiliado, aunque pague la sindical de una empresa")
+ok(R.resolver_empleador("20081898201", emp, rel, afi, pag, social=False)["cuit"] == "30696906420",
+   "cuota sindical: la de la empresa con la que está asociado")
+rel2 = {**rel, "23238151694": ["30709404047"]}
+ok(R.resolver_empleador("23238151694", emp, rel2, afi, pag, social=True)["cuil"] == "27000000006",
+   "el mismo CUIT con las dos asociaciones: lo redondo va al afiliado")
+ok(R.resolver_empleador("23238151694", emp, rel2, afi, pag, social=False)["cuit"] == "30709404047",
+   "… y lo demás a la empresa")
+import datetime as _dt
+from decimal import Decimal as _D
+cuotas = [("202609", _D("30000")), ("202604", _D("25000"))]
+emp_de = {"27000000006": "30711111118"}
+a_ = R.resolver_empleador("27000000006", emp, rel, afi)
+r = R.por_su_empleador(a_, _D("34304.12"), _dt.date(2026, 10, 14), cuotas, emp_de, emp)
+ok(r["como"] == "por_afiliado" and r["cuit"] == "30711111118" and r["cuil"] == "27000000006",
+   "afiliado con un importe que no es cuota social: la cuota sindical de su empleador")
+ok(R.por_su_empleador(a_, _D("60000"), _dt.date(2026, 10, 14), cuotas, emp_de, emp)["como"] == "afiliado",
+   "dos cuotas sociales: sigue siendo del afiliado (Beneficios)")
+ok(R.por_su_empleador(a_, _D("25000"), _dt.date(2026, 10, 14), cuotas, emp_de, emp)["como"] == "afiliado",
+   "la cuota anterior (25.000) también es cuota social")
+for imp in ("55000", "5000", "85000"):
+    ok(R.por_su_empleador(a_, _D(imp), _dt.date(2026, 10, 14), cuotas, emp_de, emp)["como"] == "afiliado",
+       f"{imp}: redondo a la medida de la cuota (5.000), cuota social")
+for imp in ("23872.10", "137836.08", "32610"):
+    ok(R.por_su_empleador(a_, _D(imp), _dt.date(2026, 10, 14), cuotas, emp_de, emp)["como"] == "por_afiliado",
+       f"{imp}: no es redondo, cuota sindical de su empleador")
+ok(R.por_su_empleador(a_, _D("400000"), _dt.date(2026, 10, 14), cuotas, emp_de, emp)["como"] == "por_afiliado",
+   "más de 12 cuotas: no es la cuota social")
+ok(R.por_su_empleador(a_, _D("25000"), _dt.date(2026, 3, 14), cuotas, emp_de, emp)["como"] == "por_afiliado",
+   "antes del convenio no hay cuota social: es cuota sindical")
+ok(R.por_su_empleador(a_, _D("34304.12"), _dt.date(2026, 10, 14), cuotas, {}, emp)["como"] == "afiliado",
+   "sin empleador en Empleadores: sigue como afiliado")
 ok(R.resolver_empleador("20081898201", emp, {"20081898201": ["30999999990"]}, {})["como"] == "sin",
    "relacionado con un CUIT que no está en Empleadores")
 

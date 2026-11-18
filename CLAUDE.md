@@ -824,13 +824,25 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   tiene), se carga en el renglón (`c_extractos_bancarios.cuit_manual` = 1, usuario y fecha; la grilla lo marca «a
   mano»; el que trajo el banco no se pisa); y si el que pagó no es la misma empresa o el mismo afiliado, se lo
   relaciona: con una empresa (`fisca_cuit_relacionado`, como siempre) o con un afiliado (**`fisca_cuit_afiliado`**,
-  pagador → CUIL; el cónyuge, la cuenta de otro). Un pagador va a una empresa o a un afiliado, no a los dos.
+  pagador → CUIL; el cónyuge, la cuenta de otro). **Dos asociaciones, una por concepto** (18/11/2026): la de la
+  empresa es de la CUOTA SINDICAL y la del afiliado de la CUOTA SOCIAL; el mismo CUIT puede tener las dos y el
+  importe decide (`resolver_empleador(..., social=)`: lo redondo a la medida de la cuota va al afiliado antes que a
+  las relaciones con un empleador). Queda a criterio del operador: Asociar está en todo lo que no es el mismo CUIT
+  del empleador, en Emisión de Recibos y en Beneficios › Recibos de Adheridos (`templates/fisca/_asociar.html`, el
+  diálogo y su JS, vuelve con `volver`); en Beneficios, además, `ui.accion('cuota_sindical')` emite la acreditación
+  como cuota sindical de una empresa (`fisca_rec.emitir_uno?para=empleador`).
   `resolver_empleador(..., pagadores)` devuelve `como = afiliado` con `cuil` = el del afiliado (no el del banco), y
   Beneficios, el lote y `recibos_afiliado.transferencias_sin_recibo` usan ese CUIL. Sin el script la pantalla
   funciona igual, sin poder cargar el CUIT ni asociar a un afiliado.
+- **La transferencia de un afiliado que no es la cuota social** (pedido del 18/11/2026, `por_su_empleador`): la
+  cuota social es redonda a la medida de las cuotas del convenio (`recibos_afiliado.es_cuota_social`: múltiplo del
+  divisor común de las cuotas vigentes hasta ese mes —con 25.000 y 30.000, 5.000: 55.000 es un mes de cada precio—,
+  hasta 12 cuotas). Lo que un afiliado transfiere con centavos o no redondo es la **cuota sindical del empleador de
+  su ficha** (así lo registraba AEDA en `fis_cobros`): se sugiere en Emisión de Recibos con ese empleador (como
+  `por_afiliado`, «Lo pagó el afiliado»), de a uno y sin «Recordar», y no aparece en Beneficios (ni en «Transfirieron
+  y no están» ni en la solapa de cuota social de la ficha). Sin empleador en Empleadores, sigue como afiliado.
 - **Cuota social sin pagador** (pedido del 18/11/2026, `cuotas_sociales`): una acreditación sin pagador identificado
-  cuyo importe es justo N cuotas sociales del convenio (`ben_convenio_precio.cuota_afiliado` vigente desde ese mes o
-  antes: 30.000, 60.000, 25.000…) no se sugiere como cuota sindical: queda «Otro ingreso» con la nota (se puede
+  cuyo importe es de la cuota social (la misma regla, `es_cuota_social`) no se sugiere como cuota sindical: queda «Otro ingreso» con la nota (se puede
   emitir igual de a uno).
 - **Lote**: solo lo «sin recibo» con empleador seguro (mismo CUIT o relacionado), con los períodos que muestra la
   grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).

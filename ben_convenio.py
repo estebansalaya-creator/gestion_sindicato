@@ -484,12 +484,17 @@ def _transfirieron_sin_nomina(cur, nomina) -> list[dict]:
     """Afiliados que transfirieron (extracto) o tienen recibo de la cuota social en
     los últimos meses y cuyo grupo no tiene adheridos ese mes: para armar la nómina."""
     desde = (datetime.date.today().replace(day=1) - datetime.timedelta(days=31 * (MESES_SIN_NOMINA - 1))).replace(day=1)
-    cur.execute("""SELECT e.cuit AS cuil, COUNT(*) AS veces, MAX(e.fecham) AS ultima, SUM(e.credito) AS total,
+    # Solo lo que es justo N cuotas sociales: lo demás es la cuota sindical de su
+    # empleador (pedido del 18/11/2026) y va por Emisión de Recibos.
+    base = RA.divisor_cuotas(RA.cuotas_sociales(cur))
+    solo_cuotas = " AND MOD(e.credito, %s) = 0" if base else ""
+    cuotas = [base] if base else []
+    cur.execute(f"""SELECT e.cuit AS cuil, COUNT(*) AS veces, MAX(e.fecham) AS ultima, SUM(e.credito) AS total,
                           SUBSTRING_INDEX(GROUP_CONCAT(e.credito ORDER BY e.fecham DESC), ',', 1) AS ultimo_importe
                      FROM c_extractos_bancarios e
-                    WHERE e.credito > 0 AND e.fecham >= %s AND e.cuit REGEXP '^(20|23|24|27)[0-9]{9}$'
-                      AND NOT EXISTS (SELECT 1 FROM p_empresas p WHERE p.CUIT = CAST(e.cuit AS UNSIGNED))
-                    GROUP BY e.cuit""", (desde,))
+                    WHERE e.credito > 0 AND e.fecham >= %s AND e.cuit REGEXP '^(20|23|24|27)[0-9]{{9}}$'
+                      AND NOT EXISTS (SELECT 1 FROM p_empresas p WHERE p.CUIT = CAST(e.cuit AS UNSIGNED)){solo_cuotas}
+                    GROUP BY e.cuit""", [desde] + cuotas)
     transf = {f["cuil"]: f for f in cur.fetchall()}
     if not transf:
         return []
