@@ -142,6 +142,36 @@
   </form>
 </div>
 
+{% if not elegido and sugerido.como in ('sin', 'varios') %}
+{# Sin empleador: las cuotas impagas de los últimos períodos que dan justo el importe (18/11/2026). #}
+<div class="card">
+  {{ ui.card_head('Cuotas impagas por ' ~ ('$ ' ~ (e.credito | miles)),
+                  nota='de los últimos ' ~ (periodos_atras | default(3)) ~ ' períodos, una o varias seguidas que suman justo ese importe. Es una ayuda: elegí el empleador si corresponde.') }}
+  {% if candidatos %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-candidatos" data-exportar="Cuotas impagas por importe">
+      <thead><tr><th class="col-acciones" data-no-sort>Elegir</th><th>Empleador</th><th>CUIT</th><th>Períodos</th>
+        <th class="th-right">Saldo</th></tr></thead>
+      <tbody>
+        {% for c in candidatos %}
+        <tr>
+          <td><div class="acciones">{{ ui.boton('Elegir', 'secondary', chico=True,
+                href=url_for('fisca_rec.emitir_uno', id_extracto=e.id, cuit=c.cuit, desde=request.values.get('desde'), hasta=request.values.get('hasta'))) }}</div></td>
+          <td class="td-fuerte">{{ c.razon }}</td>
+          <td class="td-mono">{{ c.cuit }}</td>
+          <td class="td-mono chico">{% for p in c.periodos %}<div>{{ p | periodo }}{% if c.periodos | length > 1 %} <span class="td-muted">{{ c.saldos[loop.index0] | miles }}</span>{% endif %}</div>{% endfor %}</td>
+          <td class="td-right td-fuerte" data-num="{{ e.credito }}">{{ e.credito | miles }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="card-body">{{ ui.aviso('Ningún empleador tiene cuotas impagas de esos períodos que sumen justo este importe.', 'info') }}</div>
+  {% endif %}
+</div>
+{% endif %}
+
 {% if razon and acuerdos %}
 <div class="card">
   {{ ui.card_head('Qué se cobra', nota='El empleador tiene un acuerdo de pago: esta acreditación puede ser una de sus cuotas.') }}

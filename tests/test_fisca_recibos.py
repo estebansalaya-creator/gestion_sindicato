@@ -186,6 +186,20 @@ ok(any("dos veces" in x for x in e), "período repetido")
 r, e = R.leer_renglones(Form(r_periodo=["2026-13"], r_importe=["0"]))
 ok(len(e) == 2, "período e importe inválidos")
 
+
+print("Cuotas impagas por importe (pago sin empleador)")
+import datetime as _dt2
+from decimal import Decimal as _D2
+ok(R.periodos_atras(_dt2.date(2026, 11, 3)) == ["202610", "202609", "202608"], "los 3 períodos anteriores")
+ok(R.periodos_atras(_dt2.date(2026, 1, 5), 2) == ["202512", "202511"], "cruza el año")
+per = ["202610", "202609", "202608"]
+sal = {"202610": _D2("85403.72"), "202609": _D2("40000"), "202608": _D2("45403.72")}
+ok(R.coincidencias(_D2("85403.72"), sal, per) == [["202610"], ["202608", "202609"]], "una cuota sola o dos seguidas")
+ok(R.coincidencias(_D2("85403.73"), sal, per) == [], "al centavo")
+ok(R.coincidencias(_D2("125403.72"), {"202610": _D2("85403.72"), "202608": _D2("40000")}, per) == [],
+   "salteando un período sin saldo no suma")
+ok(R.coincidencias(_D2("100"), {"202610": _D2("0"), "202609": _D2("100")}, per) == [["202609"]], "lo pagado no cuenta")
+
 print()
 if fallos:
     print(f"{len(fallos)} FALLAS")

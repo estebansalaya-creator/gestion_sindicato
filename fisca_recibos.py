@@ -583,6 +583,63 @@ def saldos_de(cur, cuits) -> dict:
     return out
 
 
+#: Cuántos períodos para atrás se buscan las cuotas impagas de un pago sin empleador.
+PERIODOS_ATRAS = 3
+
+
+def periodos_atras(fecha: datetime.date, n: int = PERIODOS_ATRAS) -> list[str]:
+    """Los `n` períodos anteriores a la acreditación, del más nuevo al más viejo
+    (acreditación de noviembre: octubre, septiembre, agosto)."""
+    out, d = [], fecha.replace(day=1)
+    for _ in range(n):
+        d = (d - datetime.timedelta(days=1)).replace(day=1)
+        out.append(d.strftime("%Y%m"))
+    return out
+
+
+def coincidencias(importe, saldos_cuit: dict, periodos: list[str]) -> list[list[str]]:
+    """Qué cuotas impagas de un CUIT suman justo el importe: un período solo o
+    varios seguidos de `periodos` (del más nuevo al más viejo). `saldos_cuit`:
+    período → saldo. Al centavo."""
+    imp, out = _d(importe), []
+    for i in range(len(periodos)):
+        suma, tramo = Decimal("0"), []
+        for p in periodos[i:]:
+            saldo = saldos_cuit.get(p)
+            if saldo is None or saldo <= CENT:
+                break
+            suma += saldo
+            tramo.append(p)
+            if abs(suma - imp) < CENT:
+                out.append(sorted(tramo))
+                break
+            if suma > imp:
+                break
+    return out
+
+
+def candidatos_por_importe(cur, importe, fecha: datetime.date, empresas: dict, n: int = PERIODOS_ATRAS) -> list[dict]:
+    """Un pago sin CUIT o sin empleador (pedido del 18/11/2026): los empleadores
+    con cuotas impagas de los últimos `n` períodos que suman justo el importe
+    (una cuota o varias seguidas). Es una ayuda para elegir: no elige solo."""
+    periodos = periodos_atras(fecha, n)
+    marcas = ",".join(["%s"] * len(periodos))
+    cur.execute(f"""SELECT l.cuit, l.periodo, l.importe - {fa.sql_aplicado_liq('l')} AS saldo
+                      FROM fisca_liquidacion l
+                     WHERE l.estado = 'vigente' AND l.periodo IN ({marcas}) AND l.importe > 0""", periodos)
+    por_cuit: dict[str, dict] = defaultdict(dict)
+    for f in cur.fetchall():
+        por_cuit[f["cuit"]][str(f["periodo"])] = _d(f["saldo"])
+    out = []
+    for cuit, sal in por_cuit.items():
+        for tramo in coincidencias(importe, sal, periodos):
+            out.append({"cuit": cuit, "razon": empresas.get(cuit) or "(no está en Empleadores)",
+                        "periodos": tramo, "saldos": [sal[p] for p in tramo]})
+    # Primero una sola cuota y la más nueva.
+    out.sort(key=lambda c: (len(c["periodos"]), [-int(p) for p in c["periodos"]], c["razon"]))
+    return out[:30]
+
+
 def cobrado_sin_liquidar(cur, cuit) -> dict:
     """Lo cobrado de períodos sin liquidación vigente: período → importe."""
     cur.execute("""SELECT d.periodo, SUM(d.importe) AS cobrado
@@ -1060,6 +1117,10 @@ def emitir_uno(id_extracto):
             if id_acuerdo and not acuerdo:
                 errores.append("Ese acuerdo de pago no es de este empleador o ya no debe nada.")
             est = FRA.estado_cobro(cur, acuerdo) if acuerdo else None
+            # Sin empleador (sin CUIT en el extracto o sin identificar): las cuotas
+            # impagas de los últimos períodos que dan justo el importe.
+            candidatos = (candidatos_por_importe(cur, e["credito"], e["fecham"], emp_todas)
+                          if not elegido and sugerido["como"] in ("sin", "varios") else [])
 
     renglones = [(p, imp) for p, imp in distribuir(e["credito"], e["fecham"],
                                                      {p: v["saldo"] for p, v in saldos.items()})] if razon else []
@@ -1154,6 +1215,7 @@ def emitir_uno(id_extracto):
                            como=COMO, estados=ESTADOS, periodo_mes=periodo_anterior(e["fecham"]),
                            hoy=datetime.date.today().strftime("%Y-%m"),
                            acuerdos=acuerdos, acuerdo=acuerdo, est=est, imput=imput, capital=capital, interes=interes,
+                           candidatos=candidatos, periodos_atras=PERIODOS_ATRAS,
                            estados_cuota=ESTADOS_CUOTA,
                            modo_afiliado=modo_afiliado, afi=afi, cfg=cfg, cubierta=cubierta,
                            mes_max=RA.periodo_txt(RA.sumar_meses(e["fecham"].strftime("%Y%m"), RA.MAX_MESES - 1)),

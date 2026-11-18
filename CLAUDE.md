@@ -841,6 +841,11 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   su ficha** (así lo registraba AEDA en `fis_cobros`): se sugiere en Emisión de Recibos con ese empleador (como
   `por_afiliado`, «Lo pagó el afiliado»), de a uno y sin «Recordar», y no aparece en Beneficios (ni en «Transfirieron
   y no están» ni en la solapa de cuota social de la ficha). Sin empleador en Empleadores, sigue como afiliado.
+- **Pago sin empleador: cuotas impagas por importe** (pedido del 18/11/2026, `candidatos_por_importe`): al emitir
+  de a uno una acreditación sin CUIT o sin identificar, la pantalla lista los empleadores con cuotas impagas de los
+  últimos `PERIODOS_ATRAS` (3) períodos anteriores a la acreditación que suman justo el importe, al centavo: una sola
+  o varias seguidas (`coincidencias`). «Elegir» lo usa como empleador; no elige solo. Ej.: 85.403,72 del 03/11/2026
+  sin CUIT → ALBORNOZ JULIO RAUL, 2026-09 o 2026-10.
 - **Cuota social sin pagador** (pedido del 18/11/2026, `cuotas_sociales`): una acreditación sin pagador identificado
   cuyo importe es de la cuota social (la misma regla, `es_cuota_social`) no se sugiere como cuota sindical: queda «Otro ingreso» con la nota (se puede
   emitir igual de a uno).
