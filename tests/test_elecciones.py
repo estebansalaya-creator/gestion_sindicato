@@ -103,6 +103,30 @@ ok(all(E.OSEDA_ESTADOS[f["oseda"]][2] in ("si", "no") for f in fs), "cada estado
 E.marcar_oseda(fs, None)
 ok(all(f["oseda"] is None for f in fs), "sin consulta (Railway caído): sin dato, no «No»")
 
+print("Domicilio y contacto del empleador (para el Excel)")
+emp = {"id_empresa": 7, "dom_calle": "Av. Rivadavia", "dom_numero": "1234", "dom_piso": "3", "dom_depto": "B",
+       "dom_cp": "1406", "dom_localidad_nombre": "CABA", "dom_provincia_nombre": "Ciudad de Buenos Aires",
+       "emp_telefonos": "4444-5555", "emp_email": "info@empresa.com"}
+f = dict(emp)
+E.datos_empresa(f, {"nombre": "Ana Pérez", "cargo": "RRHH", "telefono": "4444-1111", "celular": "11-5555-6666",
+                    "email": "ana@empresa.com"})
+ok(f["emp_domicilio"] == "Av. Rivadavia 1234, piso 3 dto. B, (1406) CABA, Ciudad de Buenos Aires",
+   "el domicilio legal en una línea: " + f["emp_domicilio"])
+ok(f["contacto"] == "Ana Pérez — RRHH" and f["contacto_telefono"] == "4444-1111 / 11-5555-6666"
+   and f["contacto_email"] == "ana@empresa.com", "el contacto con su teléfono, celular y correo")
+f = dict(emp)
+E.datos_empresa(f, {"nombre": "Juan", "cargo": None, "telefono": None, "celular": None, "email": None})
+ok(f["contacto"] == "Juan" and f["contacto_telefono"] == "4444-5555" and f["contacto_email"] == "info@empresa.com",
+   "contacto sin teléfono ni correo: los de la empresa")
+f = {"id_empresa": 8, "fdom_calle": "San Martín", "fdom_numero": "50", "fdom_localidad_nombre": "Morón",
+     "fdom_provincia_nombre": "Buenos Aires"}
+E.datos_empresa(f, None)
+ok(f["emp_domicilio"] == "San Martín 50, Morón, Buenos Aires" and f["contacto"] == ""
+   and f["contacto_telefono"] == "" and f["contacto_email"] == "", "sin domicilio legal, el fiscal; sin contacto, vacío")
+f = {"id_empresa": None, "cuit_empleador": "30111111118"}
+E.datos_empresa(f, None)
+ok(f["emp_domicilio"] == "" and f["contacto"] == "", "empleador que no está en Empleadores: sin datos")
+
 if fallos:
     print(f"{len(fallos)} FALLAS")
     sys.exit(1)

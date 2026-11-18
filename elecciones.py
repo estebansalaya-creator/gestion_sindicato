@@ -63,6 +63,7 @@ import re
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
 import contable_oseda
+from fisca_actas import domicilio as domicilio_empresa
 from db import get_connection, puede, tiene_rol, usuario_actual, validasesion
 
 log = logging.getLogger(__name__)
@@ -224,10 +225,59 @@ def elecciones(cur) -> list[dict]:
 
 
 def padron(cur, id_el: int) -> list[dict]:
-    cur.execute("""SELECT p.*, u.nombre AS usuario_voto FROM el_padron p
+    """El padrón electoral, con el domicilio y un contacto de cada empleador.
+
+    El padrón es una foto de los afiliados, pero el domicilio y el contacto de
+    la empresa se leen al momento de la ficha de Empleadores: sirven para
+    ubicar al empleador hoy (el Excel del padrón, 18/11/2026), no para decir
+    dónde estaba cuando se generó.
+    """
+    cur.execute("""SELECT p.*, u.nombre AS usuario_voto, e.id AS id_empresa,
+                          e.telefonos AS emp_telefonos, e.email AS emp_email,
+                          e.dom_calle, e.dom_numero, e.dom_piso, e.dom_depto, e.dom_cp,
+                          e.dom_localidad_nombre, e.dom_provincia_nombre,
+                          e.fdom_calle, e.fdom_numero, e.fdom_piso, e.fdom_depto, e.fdom_cp,
+                          e.fdom_localidad_nombre, e.fdom_provincia_nombre
+                     FROM el_padron p
                      LEFT JOIN s_usuarios u ON u.id = p.id_usuario_voto
+                     LEFT JOIN p_empresas e ON p.cuit_empleador REGEXP '^[0-9]+$'
+                                           AND e.CUIT = CAST(p.cuit_empleador AS UNSIGNED)
                     WHERE p.id_eleccion = %s ORDER BY p.orden""", (id_el,))
-    return cur.fetchall()
+    filas = cur.fetchall()
+    ids = sorted({f["id_empresa"] for f in filas if f.get("id_empresa")})
+    contactos = {}
+    if ids:
+        marcas = ",".join(["%s"] * len(ids))
+        # El mismo orden que la ficha del empleador (contactos.de): el principal
+        # primero, que es también el que reciben los avisos.
+        cur.execute(f"""SELECT c.entidad_id, c.nombre, c.cargo, c.telefono, c.celular, c.email
+                          FROM s_contactos c
+                          LEFT JOIN c_areas_contacto a ON a.id = c.id_area_contacto
+                         WHERE c.entidad_tipo = 'empresa' AND c.activo = 1
+                           AND c.entidad_id IN ({marcas})
+                         ORDER BY c.entidad_id, c.principal DESC, a.orden, c.nombre""", ids)
+        for c in cur.fetchall():
+            contactos.setdefault(c["entidad_id"], c)
+    for f in filas:
+        datos_empresa(f, contactos.get(f.get("id_empresa")))
+    return filas
+
+
+def datos_empresa(f: dict, contacto: dict | None) -> None:
+    """Pone en la fila el domicilio del empleador y su contacto, en texto.
+
+    El domicilio es el legal de la ficha y, si falta, el fiscal. El contacto es
+    el principal; el teléfono y el correo, los suyos, y si no los tiene, los
+    de la empresa.
+    """
+    f["emp_domicilio"] = domicilio_empresa(f) if f.get("id_empresa") else ""
+    c = contacto or {}
+    f["contacto"] = " — ".join(x for x in ((c.get("nombre") or "").strip(),
+                                           (c.get("cargo") or "").strip()) if x)
+    tel = " / ".join(x for x in ((c.get("telefono") or "").strip(),
+                                 (c.get("celular") or "").strip()) if x)
+    f["contacto_telefono"] = tel or (f.get("emp_telefonos") or "").strip()
+    f["contacto_email"] = (c.get("email") or "").strip() or (f.get("emp_email") or "").strip()
 
 
 #: Lo que muestra la columna OSEDA: texto, tipo de estado y valor del filtro.

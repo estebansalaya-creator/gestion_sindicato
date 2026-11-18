@@ -54,7 +54,10 @@ SECCIONES = [
     "El padrón es una <b>foto</b> del padrón de afiliados del momento en que se generó: lo que cambie después en "
     "el padrón de afiliados no lo toca. La solapa <b>Padrón electoral</b> muestra cada afiliado con su orden, "
     "documento, empleador, si tiene <b>OSEDA</b> y si votó (hora y quién lo registró); se filtra por «Votaron» / "
-    "«No votaron» y por «Con OSEDA» / «Sin OSEDA», y se exporta a Excel con los filtros puestos."},
+    "«No votaron» y por «Con OSEDA» / «Sin OSEDA», y se exporta a Excel con los filtros puestos. El Excel suma "
+    "cuatro columnas que en pantalla no se ven: el <b>domicilio del empleador</b> (el legal de su ficha, o el "
+    "fiscal si falta) y su <b>contacto</b> principal con teléfono y email (si el contacto no los tiene, los de "
+    "la empresa). Se leen de la ficha de Empleadores al momento, no son parte de la foto."},
    {"tipo": "criterio", "html":
     "La columna <b>OSEDA</b> dice si el afiliado está <b>hoy</b> en el padrón de la obra social OSEDA: «Sí» (titular), «Sí, familiar» "
     "(está como familiar de otro titular), «De baja» (con la fecha) o «No». Se consulta cada vez que se abre la "

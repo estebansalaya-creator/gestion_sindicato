@@ -213,7 +213,7 @@
             elegir y ordena por columna, todo yendo al servidor. Exportar a Excel es un enlace a una ruta que arma el .xlsx con los mismos
             filtros (<code>exportar.xlsx</code>). Sin «Todos» en filas por página: es lo que la hacía lenta.</li>
         <li><strong>Exportar a Excel</strong>: las filas filtradas, todas las páginas, sin la columna de acciones. Nombre del archivo en
-            <code>data-exportar</code> de la tabla; una celda puede exportar otro valor con <code>data-valor</code>; una columna se excluye con <code>data-no-export</code>.</li>
+            <code>data-exportar</code> de la tabla; una celda puede exportar otro valor con <code>data-valor</code>; una columna se excluye con <code>data-no-export</code>, y una que solo va al Excel lleva <code>solo-excel</code> en el <code>th</code> y en cada <code>td</code>.</li>
         <li><strong>Orden</strong>: clic en cualquier encabezado (⇅); ▲ / ▼ marca la columna y el sentido. Todas las grillas, también las chicas de una ficha;
             <code>data-no-sort</code> en un th lo excluye, <code>data-sin-orden</code> en la tabla, toda la tabla.</li>
         <li><strong>Barra de desplazamiento arriba</strong>, sincronizada con la de abajo, cuando la tabla no entra en el ancho

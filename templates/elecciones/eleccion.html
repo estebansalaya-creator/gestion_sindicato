@@ -75,6 +75,9 @@
           <th class="col-acciones" data-no-sort>Acciones</th>
           <th class="th-right" data-orden="asc">Orden</th><th>Apellido y nombres</th><th>Documento</th><th>CUIL</th>
           <th>Empleador</th><th class="th-center">Alta</th><th>OSEDA</th><th>Votó</th><th>Registró</th>
+          {# Solo para el Excel: en pantalla estiran la grilla y no hacen falta. #}
+          <th class="solo-excel">Domicilio del empleador</th><th class="solo-excel">Contacto del empleador</th>
+          <th class="solo-excel">Teléfono del contacto</th><th class="solo-excel">Email del contacto</th>
         </tr></thead>
         <tbody>
           {% for p in filas %}
@@ -97,6 +100,10 @@
                la hora es la de la carga, no la del voto, y así se muestra. #}
             <td class="td-voto" data-valor="{{ p.fecha_voto.isoformat() if p.fecha_voto else '' }}">{% if p.voto %}{% if p.fecha_voto.date() == el.fecha_votacion %}{{ ui.estado('Votó ' ~ p.fecha_voto.strftime('%H:%M'), 'ok') }}{% else %}{{ ui.estado('Votó', 'ok') }} <span class="chico">cargado el {{ p.fecha_voto.strftime('%d/%m/%Y %H:%M') }}</span>{% endif %}{% else %}{{ ui.estado('No votó', 'neutro') }}{% endif %}</td>
             <td class="td-registro">{{ p.usuario_voto or '' }}</td>
+            <td class="solo-excel">{{ p.emp_domicilio }}</td>
+            <td class="solo-excel">{{ p.contacto }}</td>
+            <td class="solo-excel">{{ p.contacto_telefono }}</td>
+            <td class="solo-excel">{{ p.contacto_email }}</td>
           </tr>
           {% else %}
           <tr class="no-data-row"><td colspan="10" class="no-data">El padrón está vacío: generalo con el botón de arriba.</td></tr>

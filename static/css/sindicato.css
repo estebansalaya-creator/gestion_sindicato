@@ -466,6 +466,9 @@ code, kbd { font-family: var(--mono); font-size: .9em; }
 .data-table .th-right,  .data-table .td-right  { text-align: right; }
 .data-table .th-center, .data-table .td-center { text-align: center; }
 .data-table .td-mono   { font-family: var(--mono); font-size: .8rem; }
+/* Columnas que solo van al Excel: la exportación lee las celdas aunque no se
+   vean, así que la grilla queda angosta y el archivo trae el dato. */
+.data-table .solo-excel { display: none; }
 .data-table .td-muted  { color: var(--text-muted); }
 .data-table .td-wrap   { white-space: normal; }
 .data-table .td-fuerte { font-weight: 600; }
