@@ -853,6 +853,10 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   su ficha** (así lo registraba AEDA en `fis_cobros`): se sugiere en Emisión de Recibos con ese empleador (como
   `por_afiliado`, «Lo pagó el afiliado»), de a uno y sin «Recordar», y no aparece en Beneficios (ni en «Transfirieron
   y no están» ni en la solapa de cuota social de la ficha). Sin empleador en Empleadores, sigue como afiliado.
+- **Importe a distribuir** (pedido del 18/11/2026, solo en la pantalla de emitir de a uno): en «Lo que debe» se
+  escribe el importe (por defecto el de la acreditación) y se tildan los períodos con saldo; cada tilde aplica el
+  saldo del período, o lo que falta del importe, en el orden en que se tildan, y arma los «Períodos que se pagan»
+  (JS `distribuir()` en `fisca/recibo_emitir.html`; el servidor valida igual que siempre que sumen la acreditación).
 - **Pago sin empleador: cuotas impagas por importe** (pedido del 18/11/2026, `candidatos_por_importe`): al emitir
   de a uno una acreditación sin CUIT o sin identificar, la pantalla lista los empleadores con cuotas impagas de los
   últimos `PERIODOS_ATRAS` (3) períodos anteriores a la acreditación que suman justo el importe, al centavo: una sola

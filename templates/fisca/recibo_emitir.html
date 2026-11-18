@@ -258,20 +258,33 @@
 {% if razon and not acuerdo %}
 <div class="card">
   {{ ui.card_head('Lo que debe', nota='Lo liquidado vigente menos lo cobrado, por período. El mes anterior a la acreditación es ' ~ (periodo_mes | periodo) ~ '.') }}
+  {# Distribuir (18/11/2026): se escribe el importe y se tildan los períodos; cada tilde le aplica su saldo, en
+     el orden en que se tildan, hasta completar el importe. Arma los «Períodos que se pagan» de abajo. #}
+  <div class="filter-bar">
+    {% call ui.filtro('Importe a distribuir') %}<input type="text" id="a-distribuir" class="filtro inp-importe importe" inputmode="decimal"
+        value="{{ e.credito | miles }}" oninput="distribuir()">{% endcall %}
+    <span class="campo-ayuda">Tildá los períodos: cada uno toma su saldo, en el orden en que los tildás, hasta completar el importe.
+      Sin distribuir: <b id="a-resto" class="mono">$ 0,00</b></span>
+    {{ ui.boton('Quitar los tildes', 'secondary', chico=True, onclick='destildar()') }}
+  </div>
   <div class="data-table-wrap">
     <table class="data-table" id="tbl-saldos" data-exportar="Saldos {{ elegido }}">
-      <thead><tr><th>Período</th><th>Vence</th><th class="th-right">Liquidado</th><th class="th-right">Cobrado</th><th class="th-right">Saldo</th></tr></thead>
+      <thead><tr><th class="col-acciones" data-no-sort>Pagar</th><th>Período</th><th>Vence</th><th class="th-right">Liquidado</th><th class="th-right">Cobrado</th><th class="th-right">Saldo</th>
+        <th class="th-right" data-no-sort>Se aplica</th></tr></thead>
       <tbody>
         {% for p in periodos %}{% set s = saldos.get(p) %}
         <tr class="{{ 'fila-actual' if p == periodo_mes }}">
+          <td>{% if s and s.saldo > 0 %}<input type="checkbox" class="chk-saldo" data-periodo="{{ p | periodo }}" data-saldo="{{ s.saldo }}"
+                aria-label="Pagar {{ p | periodo }}" onchange="tildar(this)">{% endif %}</td>
           <td class="td-mono">{{ p | periodo }}</td>
           <td>{{ s.vencimiento.strftime('%d/%m/%Y') if s and s.vencimiento else '—' }}</td>
           <td class="td-right" data-num="{{ s.liquidado if s else 0 }}">{{ (s.liquidado | miles) if s else 'sin liquidar' }}</td>
           <td class="td-right" data-num="{{ s.cobrado if s else sin_liq[p] }}">{{ (s.cobrado if s else sin_liq[p]) | miles }}</td>
           <td class="td-right td-fuerte {{ 'importe-danger' if s and s.saldo > 0 }}" data-num="{{ s.saldo if s else 0 }}">{{ (s.saldo | miles) if s else '—' }}</td>
+          <td class="td-right td-mono a-aplica"></td>
         </tr>
         {% else %}
-        <tr class="no-data-row"><td colspan="5" class="no-data">No tiene liquidaciones ni cobros: el pago queda como «pago sin liquidar».</td></tr>
+        <tr class="no-data-row"><td colspan="7" class="no-data">No tiene liquidaciones ni cobros: el pago queda como «pago sin liquidar».</td></tr>
         {% endfor %}
       </tbody>
     </table>
@@ -387,6 +400,47 @@ function recalcularFisca() {
   d.classList.toggle('danger', Math.abs(dif) >= 0.01);
   document.getElementById('btn-fisca').disabled = Math.abs(dif) >= 0.01 {{ '|| true' if conciliado }};
 }
-document.addEventListener('DOMContentLoaded', function () { recalcular(); recalcularFisca(); });
+// Distribuir el importe en los períodos con saldo: cada tilde aplica el saldo del
+// período (o lo que falta del importe, si es menos), en el orden en que se tildan.
+// Con algo tildado, los «Períodos que se pagan» se arman con eso.
+var ORDEN = [];
+function tildar(chk) {
+  var i = ORDEN.indexOf(chk);
+  if (chk.checked && i < 0) ORDEN.push(chk);
+  if (!chk.checked && i >= 0) ORDEN.splice(i, 1);
+  distribuir();
+}
+function destildar() {
+  ORDEN.forEach(function (c) { c.checked = false; });
+  ORDEN = [];
+  distribuir();
+}
+function distribuir() {
+  var inp = document.getElementById('a-distribuir'); if (!inp) return;
+  var resto = Math.round(leer(inp.value) * 100) / 100, filas = [];
+  document.querySelectorAll('#tbl-saldos .a-aplica').forEach(function (td) { td.textContent = ''; });
+  ORDEN.forEach(function (c) {
+    var imp = Math.max(0, Math.min(parseFloat(c.dataset.saldo) || 0, resto));
+    imp = Math.round(imp * 100) / 100;
+    resto = Math.round((resto - imp) * 100) / 100;
+    c.closest('tr').querySelector('.a-aplica').textContent = imp > 0 ? numeroAR(imp) : '—';
+    if (imp > 0) filas.push([c.dataset.periodo, imp]);
+  });
+  document.getElementById('a-resto').textContent = pesos(resto);
+  if (!ORDEN.length) { recalcular(); return; }
+  var tb = document.getElementById('renglones');
+  tb.innerHTML = '';
+  filas.forEach(function (f) {
+    tb.appendChild(document.getElementById('tpl-renglon').content.cloneNode(true));
+    var tr = tb.rows[tb.rows.length - 1];
+    tr.querySelector('input[name=r_periodo]').value = f[0];
+    tr.querySelector('input[name=r_importe]').value = numeroAR(f[1]);
+  });
+  if (!filas.length) {
+    tb.appendChild(document.getElementById('tpl-renglon').content.cloneNode(true));
+  }
+  recalcular();
+}
+document.addEventListener('DOMContentLoaded', function () { recalcular(); recalcularFisca(); distribuir(); });
 </script>
 {% endblock %}
