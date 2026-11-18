@@ -1768,7 +1768,8 @@ conciliaciones). Una foto de hoy, bloques uno debajo del otro:
 áreas ni Interbanking (en gestion_adm depende de sueldos).
 
 - **Qué se ofrece**: un renglón por instrumento de transferencia (un pago abierto en dos cuentas son dos) de
-  pagos no anulados de clase proveedor, anticipo o reintegro (`transferencias_lote.CLASES`: lo que entra, no
+  pagos no anulados (**ni de AEDA**, `AEDA-PG-…`: ya salieron desde allá; 18/11/2026, el Panel de Tesorería
+  resolvía el beneficiario de ~2.000 y tardaba minutos) de clase proveedor, anticipo o reintegro (`transferencias_lote.CLASES`: lo que entra, no
   lo que queda afuera), no conciliados (`anulaciones.sql_pago_conciliado`, la misma regla que al anular) y que
   no salieron en un lote vigente. Por defecto, los pagos de hoy y la cuenta predeterminada.
 - **La cuenta del filtro es la ordenante**, y el formato es el de la cuenta (Cuentas de Fondos → Formato de

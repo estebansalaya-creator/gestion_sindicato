@@ -116,7 +116,12 @@ def pagos_transferibles(cur, *, desde=None, hasta=None, id_cuenta=None, ids=None
     """Instrumentos de transferencia de pagos vivos, no conciliados y que no
     salieron en otro archivo, con su beneficiario resuelto. La usan la grilla
     y la generación: lo que se ofrece y lo que se acepta es lo mismo."""
-    where = ["p.estado <> 'anulado'", "i.tipo_instrumento = 'transferencia'",
+    # Lo pagado en AEDA (nro_pago AEDA-PG-…) ya salió por el home banking desde
+    # allá: no es una transferencia por hacer (18/11/2026). Sin esto el Panel de
+    # Tesorería resolvía el beneficiario de ~2.000 pagos históricos, uno por uno
+    # contra Railway, y tardaba minutos en abrir.
+    where = ["p.estado <> 'anulado'", "COALESCE(p.nro_pago, '') NOT LIKE 'AEDA-%%'",
+             "i.tipo_instrumento = 'transferencia'",
              f"o.clase IN ({', '.join(['%s'] * len(CLASES))})",
              """NOT EXISTS (SELECT 1 FROM pago_transferencias_lote_det d
                               JOIN pago_transferencias_lote l ON l.id = d.id_lote
