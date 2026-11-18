@@ -228,7 +228,7 @@ SECCIONES = [
       "ya registró en su orden YMCA del mes figura «Ya tiene recibo». Si esa persona paga por una empresa, "
       "se carga como CUIT relacionado; y al emitir de a uno se puede emitir como cuota sindical de un "
       "empleador."),
-     ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir."),
+     ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir. Sin identificar y justo una o más cuotas sociales del convenio (30.000, 60.000…): queda «Otro ingreso», porque casi seguro es un afiliado; se puede emitir igual de a uno."),
    ]},
    {"tipo": "campos", "items": [
      ("Sin recibo", "Hay que emitirlo."),

@@ -11,7 +11,7 @@ agrega es lo que un afiliado tiene y una empresa no:
 - **Baja lógica, nunca DELETE.** De `p_afiliados` cuelgan por FK reintegros,
   comprobantes y la auditoría, y la baja de una persona es un dato del padrón,
   no un error que se borra. Lleva fecha y motivo (`p_motivo_movimiento`); la
-  de un titular ofrece arrastrar a su grupo.
+  de un titular se lleva a su grupo.
 - **Auditoría.** Cada cambio deja una fila por campo en
   `p_afiliados_movimientos`, con usuario y fecha. Es la solapa «Movimientos».
 - **Atributos.** Las marcas activas de `p_afiliado_atributo` se tildan en la
@@ -966,7 +966,7 @@ def _actualizar(cur, antes: dict, d: dict, cat: dict):
 
 
 def _cambiar_estado(accion: str, id_af: int):
-    """Baja o reactivación. La baja de un titular puede arrastrar a su grupo."""
+    """Baja o reactivación. La baja de un titular se lleva a su grupo (siempre)."""
     with get_connection() as conn:
         conn.begin()
         try:
@@ -1001,8 +1001,10 @@ def _cambiar_estado(accion: str, id_af: int):
                         flash(e)
                     return redirect(url_for("afiliados.abm_afiliados", edit=id_af))
 
+                # La baja de un titular se lleva a su grupo, siempre (decidido el
+                # 17/11/2026): un familiar no sigue afiliado sin su titular.
                 ids = [id_af]
-                if antes["cod_parentesco"] == TITULAR and request.form.get("con_grupo"):
+                if antes["cod_parentesco"] == TITULAR:
                     cur.execute("SELECT id_afiliado FROM p_afiliados "
                                 "WHERE cuil_titular = %s AND id_afiliado <> %s AND activo = 1",
                                 (antes["cuil"], id_af))

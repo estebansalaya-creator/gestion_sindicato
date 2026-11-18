@@ -117,7 +117,7 @@ def leer_destino(cur) -> dict:
         salir(f"p_afiliados.domicilio_calle tiene {ancho} caracteres y AEDA necesita "
               f"{ANCHO_CALLE}. Correr antes sql/afiliados_20261107.sql.")
 
-    cur.execute("SELECT id_afiliado, cuil, activo, observaciones FROM p_afiliados")
+    cur.execute("SELECT id_afiliado, cuil, cod_parentesco, activo, fecha_baja, observaciones FROM p_afiliados")
     por_cuil, por_ben = {}, {}
     for f in cur.fetchall():
         if f["cuil"]:
@@ -447,6 +447,20 @@ def armar_plan(aeda: dict, destino: dict, hoy: datetime) -> Plan:
                     estado="activo" if fila["activo"] else f"baja {ddmmaaaa(fila['fecha_baja'])}",
                     nota=" ".join(notas))
 
+    # ── El grupo cae con el titular (decidido el 17/11/2026) ─────────────────
+    # AEDA deja a los familiares sin fecha de baja aunque el titular se haya
+    # ido: un familiar que entra activo con su titular de baja (acá o en esta
+    # misma corrida) entra de baja, con la fecha del titular.
+    baja_titular = {f["cuil"]: f["fecha_baja"] for f in destino["por_cuil"].values()
+                    if f.get("cod_parentesco") == 0 and not f["activo"] and f.get("fecha_baja")}
+    baja_titular.update({a["cuil"]: a["fecha_baja"] for a in plan.afiliados
+                         if a["cod_parentesco"] == 0 and not a["activo"] and a["cuil"] and a["fecha_baja"]})
+    for a in plan.afiliados:
+        if a["cod_parentesco"] != 0 and a["activo"] and a["cuil_titular"] in baja_titular:
+            a["activo"], a["fecha_baja"], a["_baja_grupo"] = 0, baja_titular[a["cuil_titular"]], True
+            activo_de[("alta", a["ben_id"])] = 0
+            plan.contar("  de ellos, familiares de un titular de baja (entran de baja)")
+
     # ── Relaciones laborales ─────────────────────────────────────────────────
     for x in aeda["empleos"]:
         marca = f"[AEDA afi_afixempre {x['id']}]"
@@ -561,7 +575,9 @@ def aplicar(cur, plan: Plan) -> int:
                             None, "sí", "Alta importada de AEDA"))
         if not a["activo"]:
             movimientos.append((id_afiliado, a["cuil"], a["fecha_baja"], "BAJA", ref,
-                                a["ben_id"], "sí", "no", "Baja registrada en AEDA"))
+                                a["ben_id"], "sí", "no",
+                                "Baja del grupo con el titular (en AEDA sigue sin baja)"
+                                if a.get("_baja_grupo") else "Baja registrada en AEDA"))
 
     def id_de(clave):
         return clave[1] if clave[0] == "id" else ids[clave]

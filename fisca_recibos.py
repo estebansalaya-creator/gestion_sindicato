@@ -567,6 +567,22 @@ def libro_ingresos(cur, id_cuenta, desde, hasta) -> list[dict]:
     return filas
 
 
+def cuotas_sociales(cur, cfg: dict | None) -> list[tuple[str, Decimal]]:
+    """(desde AAAAMM, cuota) de los convenios de Beneficios activos, de la más
+    nueva a la más vieja; sin Beneficios, la cuota de Datos del Sindicato."""
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name = 'ben_convenio_precio'""")
+    if cur.fetchone()["n"]:
+        cur.execute("""SELECT p.periodo_desde, p.cuota_afiliado FROM ben_convenio_precio p
+                         JOIN ben_convenio c ON c.id = p.id_convenio
+                        WHERE c.activo = 1 AND p.cuota_afiliado > 0
+                        ORDER BY p.periodo_desde DESC""")
+        cuotas = [(str(r["periodo_desde"]), _d(r["cuota_afiliado"])) for r in cur.fetchall()]
+        if cuotas:
+            return cuotas
+    return [("000000", cfg["cuota"])] if cfg and cfg.get("cuota") else []
+
+
 def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
     """Los créditos del extracto con su empleador, su estado y lo sugerido."""
     cur.execute("""SELECT e.id, e.fecham, e.fechav, e.ref_nro, e.credito, e.concepto, e.cuit, e.conciliado,
@@ -623,6 +639,24 @@ def acreditaciones(cur, id_cuenta, desde, hasta) -> tuple[list[dict], bool]:
                            "clase": "varios", "fecha": o["fecha"], "importe": o["importe_total"]}
             f["regla"] = (f"AEDA la registró en su orden {cfg['motivo_txt'] or ''} {o['nro_orden']} "
                           f"del {o['fecha']:%d/%m/%Y}, junto con las demás del mes.")
+
+    # Un importe sin pagador identificado que es justo N cuotas sociales del
+    # convenio (30.000, 60.000…) es un afiliado que pagó desde una cuenta que
+    # no lo nombra, no una empresa (pedido del 18/11/2026): no se sugiere como
+    # cuota sindical. Queda «Otro ingreso» y se puede emitir igual de a uno.
+    sin_pagador = [f for f in filas if f["estado"] == "pendiente" and f["emp"]["como"] == "sin"]
+    if sin_pagador:
+        cuotas = cuotas_sociales(cur, cfg)
+        for f in sin_pagador:
+            mes = f["fecham"].strftime("%Y%m")
+            for c in [c for d, c in cuotas if d <= mes]:
+                n = RA.meses_justos(f["importe"], c)
+                if n:
+                    f["estado"] = "otro"
+                    f["regla"] = (f"Es {'una cuota social' if n == 1 else f'{n} cuotas sociales'} del convenio "
+                                  f"({pesos(c)}) y el banco no dice quién pagó: no se sugiere como cuota sindical. "
+                                  "Si es de un afiliado, va por Beneficios con su CUIL.")
+                    break
 
     sal = saldos_de(cur, {f["emp"]["cuit"] for f in filas if f["estado"] == "pendiente"})
     # Un empleador con un acuerdo de pago: su pago puede ser una cuota del acuerdo. Se emite de a uno.

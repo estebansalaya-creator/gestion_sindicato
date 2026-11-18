@@ -9,9 +9,11 @@
 
   Sin proveedor: los que tienen saldo de los dos signos (algo abierto y algo
   con qué cancelarlo) y, abajo, los demás con aplicaciones, que es la puerta
-  para desaplicar. Con proveedor: débitos, créditos, el formulario y las
-  aplicaciones registradas, un bloque debajo del otro. Se elige un débito y un
-  crédito; el importe propuesto es el menor de los dos disponibles. Lo que está
+  para desaplicar. Con proveedor, como en gestion_adm (17/11/2026): débitos y
+  créditos en dos columnas lado a lado (.columnas-2 > .col-comp), un clic en
+  cada una; debajo, lo elegido y el importe; después las aplicaciones
+  registradas. Del otro lado se marca lo del mismo importe y se apaga lo de
+  otro rubro. El importe propuesto es el menor de los dos disponibles. Lo que está
   en una orden de pago sin pagar no se puede aplicar: se pagaría de más.
 #}
 
@@ -103,101 +105,91 @@
 </div>
 
 {% else %}
-{# ══ Con proveedor: débitos, créditos, aplicar, registradas ══ #}
-{% macro filtro_rubro(id) %}
-  {% if rubros | length > 1 %}
-  {% call ui.filtro('Rubro de pasivo') %}<select class="filtro" id="{{ id }}">
-    <option value="">Todos</option>
-    {% for r in rubros %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
-  </select>{% endcall %}
-  {% endif %}
-{% endmacro %}
-
+{# ══ Con proveedor: como la Aplicación de Comprobantes de gestion_adm (pedido
+   del 17/11/2026): débitos y créditos en dos columnas lado a lado, un clic en
+   cada una; debajo, lo elegido y el importe; después las aplicaciones
+   registradas. Elegido uno, del otro lado se marcan los del mismo importe al
+   centavo (la nota de crédito que anula una factura): ayuda, no elige solo. ══ #}
+{% if rubros | length > 1 %}
 <div class="card">
-  {{ ui.card_head('Débitos — facturas con saldo', nota='$ ' ~ ((debitos | sum(attribute='saldo')) | miles) ~ ' · elegí uno') }}
-  {% call ui.barra_filtros('Buscar por número, expediente o rubro…', exportar=True) %}{{ filtro_rubro('f-rubro-deb') }}{% endcall %}
-  <div class="data-table-wrap">
-    <table class="data-table" id="tbl-deb" data-exportar="Débitos con saldo {{ proveedor.razon_social }}">
-      <thead><tr>
-        <th class="col-acciones" data-no-sort>Elegir</th>
-        <th data-orden="asc">Fecha</th><th>Comprobante</th><th>Expediente</th><th>Rubro</th>
-        <th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
-        <th class="th-right" title="Lo que no está en una orden de pago sin pagar">Disponible</th>
-      </tr></thead>
-      <tbody>
-        {% for d in debitos %}
-        <tr data-id="{{ d.id }}" data-saldo="{{ d.disponible }}" data-rubro="{{ d.rubro or '' }}" data-rubro-id="{{ d.id_rubro_pasivo or '' }}"
-            data-ref="{{ d.descripcion }} {{ d.referencia }}" class="{{ 'fila-apagada' if d.disponible <= 0.01 }}">
-          <td>{% if d.disponible > 0.01 %}<input type="radio" name="sel-deb" aria-label="Elegir {{ d.referencia }}" onchange="elegir('deb', this)">{% endif %}</td>
-          <td>{{ d.fecha.strftime('%d/%m/%Y') if d.fecha else '' }}</td>
-          <td class="td-wrap"><span class="td-fuerte">{{ d.descripcion }}</span> <span class="td-mono">{{ d.referencia }}</span>
-            {%- if d.numero_completo %}{{ ui.marcas(d) }}{% endif %}
-            {%- if d.signo_dudoso %}<span class="td-motivo">{{ d.signo_dudoso }}</span>{% endif %}
-            {%- if d.reservado > 0.01 %}<span class="td-motivo">$ {{ d.reservado | miles }} en la orden {{ d.ordenes }}, sin pagar</span>{% endif %}</td>
-          <td>{{ ui.expediente(d.id_expediente, d.nro_expediente) }}</td>
-          <td>{{ d.rubro or '—' }}</td>
-          <td class="td-right" data-num="{{ d.importe_liquidado }}">{{ (d.importe_liquidado or 0) | miles }}</td>
-          <td class="td-right {{ 'td-muted' if not d.aplicado }}" data-num="{{ d.aplicado }}">{{ d.aplicado | miles }}</td>
-          <td class="td-right" data-num="{{ d.saldo }}">{{ d.saldo | miles }}</td>
-          <td class="td-right td-fuerte" data-num="{{ d.disponible }}">{{ d.disponible | miles }}</td>
-        </tr>
-        {% else %}
-        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene comprobantes con saldo.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
+  <div class="card-body fila">
+    {% call ui.filtro('Rubro de pasivo') %}<select class="filtro" id="f-rubro" onchange="filtrarPorRubro(this.value)">
+      <option value="">Todos</option>
+      {% for r in rubros %}<option value="{{ r }}">{{ r }}</option>{% endfor %}
+    </select>{% endcall %}
   </div>
-  {{ ui.paginacion() }}
+</div>
+{% endif %}
+
+<div class="columnas-2">
+  {# ── Débitos ── #}
+  <div class="col-comp">
+    <div class="cab"><span>Débitos — facturas con saldo</span><span class="total">{{ (debitos | sum(attribute='saldo')) | miles }}</span></div>
+    <div class="lista" id="lista-deb" role="listbox" aria-label="Débitos con saldo">
+      {% for d in debitos %}
+      {% set libre = d.disponible > 0.01 %}
+      <div class="item{{ ' incompat' if not libre }}" role="option" tabindex="0" aria-selected="false" data-lado="deb"
+           data-id="{{ d.id }}" data-saldo="{{ d.disponible }}" data-rubro="{{ d.rubro or '' }}" data-rubro-id="{{ d.id_rubro_pasivo or '' }}"
+           data-ref="{{ d.descripcion }} {{ d.referencia }}"{% if not libre %} data-bloqueado="1"{% endif %}>
+        <span class="imp importe-danger">{{ d.saldo | miles }}</span>
+        <div class="ref">{{ d.descripcion }} <span class="mono">{{ d.referencia }}</span>
+          <span class="marca-sugerida">{{ ui.estado('Mismo importe', 'ok') }}</span></div>
+        {% if d.numero_completo %}{{ ui.marcas(d) }}{% endif %}
+        <div class="sub">{{ ui.expediente(d.id_expediente, d.nro_expediente) }} · {{ d.fecha.strftime('%d/%m/%Y') if d.fecha else '' }}
+          {%- if d.aplicado %} · de {{ (d.importe_liquidado or 0) | miles }}, ya aplicado {{ d.aplicado | miles }}{% endif %}
+          {%- if d.rubro and rubros | length > 1 %} · <span class="chip">{{ d.rubro }}</span>{% endif %}</div>
+        {% if d.signo_dudoso %}<div class="sub aviso">{{ d.signo_dudoso }}</div>{% endif %}
+        {% if d.reservado > 0.01 %}<div class="sub aviso">$ {{ d.reservado | miles }} en la orden {{ d.ordenes }}, sin pagar{% if libre %}: se pueden aplicar {{ d.disponible | miles }}{% else %}: no se aplica{% endif %}</div>{% endif %}
+      </div>
+      {% else %}
+      <div class="vacio">No tiene comprobantes con saldo.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ── Créditos: notas de crédito y pagos con saldo a cuenta ── #}
+  <div class="col-comp">
+    <div class="cab"><span>Créditos — notas de crédito y pagos con saldo</span><span class="total">{{ (creditos | sum(attribute='saldo')) | miles }}</span></div>
+    <div class="lista" id="lista-cre" role="listbox" aria-label="Créditos con saldo">
+      {% for c in creditos %}
+      <div class="item" role="option" tabindex="0" aria-selected="false" data-lado="cre"
+           data-id="{{ c.id }}" data-saldo="{{ c.disponible }}" data-rubro="{{ c.rubro or '' }}" data-rubro-id="{{ c.id_rubro_pasivo or '' }}"
+           data-pago="{{ '1' if c.es_pago else '0' }}" data-ref="{{ c.referencia if c.es_pago else c.descripcion ~ ' ' ~ c.referencia }}">
+        <span class="imp importe-ok">{{ c.saldo | miles }}</span>
+        <div class="ref">{% if c.es_pago %}{{ ui.estado(c.descripcion, 'ok') }}{% else %}{{ c.descripcion }}{% endif %}
+          <span class="mono">{{ c.referencia }}</span>
+          <span class="marca-sugerida">{{ ui.estado('Mismo importe', 'ok') }}</span></div>
+        {% if not c.es_pago and c.numero_completo %}{{ ui.marcas(c) }}{% endif %}
+        <div class="sub">{% if c.es_pago %}Orden <span class="mono">{{ c.nro_orden_vis }}</span>{% else %}{{ ui.expediente(c.id_expediente, c.nro_expediente) }}{% endif %}
+          · {{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}
+          {%- set total_c = (c.importe_total if c.es_pago else -(c.importe_liquidado | float)) or 0 %}
+          {%- if c.aplicado %} · de {{ total_c | miles }}, ya aplicado {{ c.aplicado | miles }}{% elif c.es_pago %} · saldo a cuenta{% endif %}
+          {%- if c.rubro and rubros | length > 1 %} · <span class="chip">{{ c.rubro }}</span>{% endif %}</div>
+        {% if c.signo_dudoso %}<div class="sub aviso">{{ c.signo_dudoso }}</div>{% endif %}
+      </div>
+      {% else %}
+      <div class="vacio">No tiene notas de crédito ni pagos con saldo a cuenta.</div>
+      {% endfor %}
+    </div>
+  </div>
 </div>
 
-<div class="card">
-  {{ ui.card_head('Créditos — notas de crédito y pagos con saldo', nota='$ ' ~ ((creditos | sum(attribute='saldo')) | miles) ~ ' · elegí uno') }}
-  {% call ui.barra_filtros('Buscar por número, expediente o rubro…') %}{{ filtro_rubro('f-rubro-cre') }}{% endcall %}
-  <div class="data-table-wrap">
-    <table class="data-table" id="tbl-cre" data-exportar="Créditos con saldo {{ proveedor.razon_social }}">
-      <thead><tr>
-        <th class="col-acciones" data-no-sort>Elegir</th>
-        <th data-orden="asc">Fecha</th><th>Tipo</th><th>Número</th><th>Expediente / orden</th><th>Rubro</th>
-        <th class="th-right">Importe</th><th class="th-right">Ya aplicado</th><th class="th-right">Saldo</th>
-      </tr></thead>
-      <tbody>
-        {% for c in creditos %}
-        <tr data-id="{{ c.id }}" data-saldo="{{ c.disponible }}" data-rubro="{{ c.rubro or '' }}" data-rubro-id="{{ c.id_rubro_pasivo or '' }}"
-            data-pago="{{ '1' if c.es_pago else '0' }}" data-ref="{{ c.referencia if c.es_pago else c.descripcion ~ ' ' ~ c.referencia }}">
-          <td><input type="radio" name="sel-cre" aria-label="Elegir {{ c.referencia }}" onchange="elegir('cre', this)"></td>
-          <td>{{ c.fecha.strftime('%d/%m/%Y') if c.fecha else '' }}</td>
-          <td>{% if c.es_pago %}{{ ui.estado(c.descripcion, 'ok') }}{% else %}{{ c.descripcion }}{% endif %}</td>
-          <td class="td-wrap"><span class="td-mono">{{ c.referencia }}</span>
-            {%- if not c.es_pago and c.numero_completo %}{{ ui.marcas(c) }}{% endif %}
-            {%- if c.signo_dudoso %}<span class="td-motivo">{{ c.signo_dudoso }}</span>{% endif %}</td>
-          <td>{% if c.es_pago %}<span class="td-mono">Orden {{ c.nro_orden_vis }}</span>{% else %}{{ ui.expediente(c.id_expediente, c.nro_expediente) }}{% endif %}</td>
-          <td>{{ c.rubro or '—' }}</td>
-          <td class="td-right" data-num="{{ c.importe_total if c.es_pago else -(c.importe_liquidado|float) }}">{{ ((c.importe_total if c.es_pago else -(c.importe_liquidado|float)) or 0) | miles }}</td>
-          <td class="td-right {{ 'td-muted' if not c.aplicado }}" data-num="{{ c.aplicado }}">{{ c.aplicado | miles }}</td>
-          <td class="td-right td-fuerte" data-num="{{ c.saldo }}">{{ c.saldo | miles }}</td>
-        </tr>
-        {% else %}
-        <tr class="no-data-row"><td colspan="9" class="no-data">No tiene notas de crédito ni pagos con saldo a cuenta.</td></tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {{ ui.paginacion() }}
-</div>
-
+{# ── Lo elegido y el importe ── #}
 <form method="post" action="{{ url_for('cc_prov.aplicar') }}" id="form-aplicar" class="card">
-  {{ ui.card_head('Aplicar', nota='Seleccioná un crédito y un débito. El importe propuesto es el menor de los dos saldos; podés bajarlo para aplicar en forma parcial.') }}
+  {{ ui.card_head('Aplicar', nota='Elegí un débito y un crédito. El importe propuesto es el menor de los dos saldos; podés bajarlo para aplicar una parte.') }}
   <input type="hidden" name="id_proveedor" value="{{ proveedor.id }}">
   <input type="hidden" name="id_debito" id="id_debito">
   <input type="hidden" name="id_credito" id="id_credito">
   <input type="hidden" name="credito_es_pago" id="credito_es_pago" value="0">
   <div class="card-body">
     <div class="campos">
-      <div class="campo" style="--span:4;"><label>Débito seleccionado</label><input type="text" id="lbl-deb" value="—" readonly tabindex="-1"></div>
-      <div class="campo" style="--span:4;"><label>Crédito seleccionado</label><input type="text" id="lbl-cre" value="—" readonly tabindex="-1"></div>
-      <div class="campo" style="--span:4;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
+      <div class="campo" style="--span:5;"><span class="campo-label">Débito elegido</span>
+        <div class="campo-valor" id="lbl-deb">—</div></div>
+      <div class="campo" style="--span:2;"><label for="importe">Importe a aplicar <span class="req">*</span></label>
         <input type="text" name="importe" id="importe" class="inp-importe" inputmode="decimal" autocomplete="off" disabled>
-        <small class="campo-ayuda" id="aviso">Elegí un débito y un crédito para habilitar la aplicación.</small></div>
+        <small class="campo-ayuda" id="aviso">Elegí débito y crédito.</small></div>
+      <div class="campo" style="--span:5;"><span class="campo-label">Crédito elegido</span>
+        <div class="campo-valor" id="lbl-cre">—</div></div>
       <div class="campo" style="--span:12;"><label for="f-obs">Observaciones</label>
         <input type="text" name="observaciones" id="f-obs" maxlength="255"></div>
     </div>
@@ -206,7 +198,6 @@
     {{ ui.boton('Aplicar', submit=True, id='btn-aplicar') }}
   </div>
 </form>
-
 <div class="card">
   {{ ui.card_head('Aplicaciones registradas', nota='el botón de cada fila desaplica: la nota de crédito o el pago vuelven a quedar disponibles') }}
   {% call ui.barra_filtros('Buscar por comprobante, expediente, pago u observación…') %}
@@ -257,64 +248,103 @@
 {% include "proveedores/_desaplicar.html" %}
 
 <script>
-var sel = { deb: null, cre: null };
 function plata(n) { return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-// El rubro de pasivo separa cuentas que no se compensan entre sí: elegido uno
-// de un lado, del otro se apaga lo que es de otro rubro (sin rubro, no se
-// apaga: no hay con qué decidir). El servidor lo controla igual.
-function compatibles(idTabla, rubro) {
-  document.querySelectorAll('#' + idTabla + ' tbody tr[data-id]').forEach(function (tr) {
-    var choca = rubro && tr.dataset.rubroId && tr.dataset.rubroId !== rubro;
-    var r = tr.querySelector('input[type=radio]');
-    if (r) { r.disabled = !!choca; if (choca && r.checked) { r.checked = false; tr.classList.remove('fila-actual'); sel[idTabla === 'tbl-deb' ? 'deb' : 'cre'] = null; } }
-    tr.classList.toggle('fila-apagada', !!choca || (idTabla === 'tbl-deb' && parseFloat(tr.dataset.saldo) <= 0.01));
+// Un débito y un crédito, uno de cada columna. Elegido uno, del otro lado:
+// se apaga (.incompat) lo de otro rubro de pasivo —no se compensan entre sí;
+// sin rubro no se apaga, no hay con qué decidir— y se marca (.sugerida) lo del
+// mismo importe al centavo. El servidor controla todo igual.
+var sel = { deb: null, cre: null };
+var LISTA = { deb: 'lista-deb', cre: 'lista-cre' };
+function soltar(lado) {
+  sel[lado] = null;
+  document.querySelectorAll('#' + LISTA[lado] + ' .item.sel').forEach(function (x) {
+    x.classList.remove('sel'); x.setAttribute('aria-selected', 'false');
   });
 }
-function elegir(lado, radio) {
-  var tr = radio.closest('tr'), tabla = lado === 'deb' ? 'tbl-deb' : 'tbl-cre';
-  document.querySelectorAll('#' + tabla + ' tbody tr').forEach(function (x) { x.classList.remove('fila-actual'); });
-  tr.classList.add('fila-actual');
-  sel[lado] = { id: tr.dataset.id, saldo: parseFloat(tr.dataset.saldo), ref: tr.dataset.ref,
-                esPago: tr.dataset.pago === '1', rubro: tr.dataset.rubroId || '' };
-  compatibles(lado === 'deb' ? 'tbl-cre' : 'tbl-deb', sel[lado].rubro);
+function marcarOtroLado(lado) {
+  var otro = lado === 'deb' ? 'cre' : 'deb', elegido = sel[lado], primero = null;
+  document.querySelectorAll('#' + LISTA[otro] + ' .item').forEach(function (it) {
+    if (it.dataset.bloqueado) return;
+    var choca = !!(elegido && elegido.rubro && it.dataset.rubroId && it.dataset.rubroId !== elegido.rubro);
+    it.classList.toggle('incompat', choca);
+    if (choca && it.classList.contains('sel')) soltar(otro);
+    var mismo = !!elegido && !choca && Math.abs(parseFloat(it.dataset.saldo) - elegido.saldo) < 0.005;
+    it.classList.toggle('sugerida', mismo);
+    if (mismo && !primero && !it.classList.contains('oculto')) primero = it;
+  });
+  if (primero) primero.scrollIntoView({ block: 'nearest' });
+}
+function elegir(it) {
+  if (it.classList.contains('incompat')) return;
+  var lado = it.dataset.lado;
+  soltar(lado);
+  it.classList.add('sel');
+  it.setAttribute('aria-selected', 'true');
+  sel[lado] = { id: it.dataset.id, saldo: parseFloat(it.dataset.saldo), ref: it.dataset.ref,
+                esPago: it.dataset.pago === '1', rubro: it.dataset.rubroId || '' };
+  marcarOtroLado(lado);
   actualizar();
 }
 function actualizar() {
   var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
+  var btn = document.getElementById('btn-aplicar');
   document.getElementById('id_debito').value = sel.deb ? sel.deb.id : '';
   document.getElementById('id_credito').value = sel.cre ? sel.cre.id : '';
   document.getElementById('credito_es_pago').value = sel.cre && sel.cre.esPago ? '1' : '0';
-  document.getElementById('lbl-deb').value = sel.deb ? sel.deb.ref + ' · ' + plata(sel.deb.saldo) : '—';
-  document.getElementById('lbl-cre').value = sel.cre ? sel.cre.ref + ' · ' + plata(sel.cre.saldo) : '—';
+  document.getElementById('lbl-deb').textContent = sel.deb ? sel.deb.ref + ' · saldo ' + plata(sel.deb.saldo) : '—';
+  document.getElementById('lbl-cre').textContent = sel.cre ? (sel.cre.esPago ? 'Pago ' : '') + sel.cre.ref + ' · disponible ' + plata(sel.cre.saldo) : '—';
+  aviso.classList.remove('error');
   if (sel.deb && sel.cre) {
     var tope = Math.min(sel.deb.saldo, sel.cre.saldo);
     inp.disabled = false;
+    btn.disabled = false;
     inp.dataset.tope = tope;
     inp.value = tope.toFixed(2);
     fmtMilesInit(inp);
-    aviso.textContent = 'Máximo aplicable: ' + plata(tope);
+    aviso.textContent = 'Máximo ' + plata(tope);
   } else {
     inp.disabled = true;
+    btn.disabled = true;
     inp.value = '';
-    aviso.textContent = 'Elegí un débito y un crédito para habilitar la aplicación.';
+    aviso.textContent = sel.deb ? 'Falta el crédito.' : (sel.cre ? 'Falta el débito.' : 'Elegí débito y crédito.');
   }
 }
+// Rubro de pasivo: oculta de las dos columnas lo que no es de ese rubro; lo
+// elegido que queda oculto se suelta (aplicar sobre algo que no se ve sería
+// un error difícil de notar).
+function filtrarPorRubro(rubro) {
+  ['deb', 'cre'].forEach(function (lado) {
+    document.querySelectorAll('#' + LISTA[lado] + ' .item').forEach(function (it) {
+      var visible = !rubro || it.dataset.rubro === rubro;
+      it.classList.toggle('oculto', !visible);
+      if (!visible && it.classList.contains('sel')) soltar(lado);
+    });
+  });
+  marcarOtroLado('deb');
+  if (!sel.deb) marcarOtroLado('cre');
+  actualizar();
+}
+document.querySelectorAll('.col-comp .item').forEach(function (it) {
+  it.addEventListener('click', function (e) {
+    if (e.target.closest('a')) return;     // el número de expediente abre la mesa, no elige
+    elegir(it);
+  });
+  it.addEventListener('keydown', function (e) {
+    if (e.target !== it) return;
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); elegir(it); }
+  });
+});
+actualizar();
 document.getElementById('form-aplicar').addEventListener('submit', function (ev) {
   var inp = document.getElementById('importe'), aviso = document.getElementById('aviso');
   var v = parseFloat((inp.value || '').replace(/\./g, '').replace(',', '.'));
   var tope = parseFloat(inp.dataset.tope || '0');
   var error = !(sel.deb && sel.cre) ? 'Elegí un débito y un crédito.'
-            : !(v > 0) ? 'El importe tiene que ser mayor que cero.'
-            : v > tope + 0.01 ? 'El importe no puede superar ' + plata(tope) + '.' : '';
-  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); }
+            : !(v > 0) ? 'Tiene que ser mayor que cero.'
+            : v > tope + 0.01 ? 'No puede superar ' + plata(tope) + '.' : '';
+  if (error) { ev.preventDefault(); aviso.textContent = error; aviso.classList.add('error'); inp.focus(); }
 });
 document.addEventListener('DOMContentLoaded', function () {
-  function porRubro(id) {
-    var s = document.getElementById(id);
-    return function (tr) { return !s || !s.value || tr.dataset.rubro === s.value; };
-  }
-  gestion_admTable('tbl-deb', { pageSize: 20, filtroExtra: porRubro('f-rubro-deb') });
-  gestion_admTable('tbl-cre', { pageSize: 20, filtroExtra: porRubro('f-rubro-cre') });
   var fTipo = document.getElementById('f-tipo'), fOrigen = document.getElementById('f-origen');
   gestion_admTable('tbl-aplic', { pageSize: 20, filtroExtra: function (tr) {
     return (!fTipo.value || tr.dataset.tipo === fTipo.value) && (!fOrigen.value || tr.dataset.origen === fOrigen.value);

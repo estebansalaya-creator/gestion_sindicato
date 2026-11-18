@@ -434,8 +434,11 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   de baja; 124 de los activos no tienen hijos cargados) y `importar_aeda_afiliados.py` lo marca en las altas nuevas.
   Se tilda en la ficha (Atributos) y se filtra en el listado. Los atributos Judicializado, Amparo y Seguimiento
   vinieron de la obra social y siguen activos.
-- **Baja lógica, nunca DELETE**: fecha y motivo (`p_motivo_movimiento`, `es_alta = 0`). La de un
-  titular ofrece arrastrar a su grupo. De `p_afiliados` cuelgan por FK reintegros y comprobantes.
+- **Baja lógica, nunca DELETE**: fecha y motivo (`p_motivo_movimiento`, `es_alta = 0`). **El grupo cae con el
+  titular** (decidido el 17/11/2026): la baja de un titular da de baja a sus familiares activos, siempre, con la
+  misma fecha y motivo. AEDA deja a los familiares sin baja aunque el titular se vaya: `importar_aeda_afiliados.py`
+  los da de alta de baja con la fecha del titular, y `sql/afiliados_baja_grupo_20261117.sql` corrigió los 445 que
+  habían entrado activos (familiares activos: 2.529 → 2.084, como AEDA con el titular activo). De `p_afiliados` cuelgan por FK reintegros y comprobantes.
 - **Auditoría**: todo cambio deja una fila por campo en `p_afiliados_movimientos` (valores legibles:
   «3 · Hijo soltero…», no «3»). Si un campo se agrega a `CAMPOS` de `afiliados.py`, queda auditado;
   si se agrega al formulario y no ahí, se guarda sin rastro.
@@ -815,6 +818,10 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   tiene?» (se puede emitir igual) lo único con esa fecha e importe de los dos lados (así caen los AEDA-OI de
   fiscalización). Con los 56 créditos de la recaudadora del 02 al 05/11/2026: 42 ya tenían su AEDA-RC (los 42 que
   AEDA cobró), 3 «¿ya tiene?» (AEDA-OI).
+- **Cuota social sin pagador** (pedido del 18/11/2026, `cuotas_sociales`): una acreditación sin pagador identificado
+  cuyo importe es justo N cuotas sociales del convenio (`ben_convenio_precio.cuota_afiliado` vigente desde ese mes o
+  antes: 30.000, 60.000, 25.000…) no se sugiere como cuota sindical: queda «Otro ingreso» con la nota (se puede
+  emitir igual de a uno).
 - **Lote**: solo lo «sin recibo» con empleador seguro (mismo CUIT o relacionado), con los períodos que muestra la
   grilla; el servidor lo vuelve a calcular y cada recibo va en su transacción (hasta 500).
 - **Pendiente**: intereses por mora; mandar el recibo por mail.
@@ -1428,6 +1435,9 @@ Corriente» ya estaba (Administrador, Supervisor y Operador).
   el saldo. Cada forma de cancelar corta por su propia fecha (pago directo `fecha_pago`, aplicación
   `c_pasivo_aplicacion.fecha`). Vista por aplicación: un renglón por comprobante y forma de cancelarlo, con
   desaplicar. El botón de reloj abre «con qué se canceló» (JSON `aplicaciones_de`).
+- **Pantalla de aplicación** (17/11/2026): la de gestion_adm, débitos y créditos en dos columnas (`.columnas-2 >
+  .col-comp`), un clic en cada una; elegido uno, del otro lado se marca lo del mismo importe y se apaga lo de otro
+  rubro; lo que está entero en una orden de pago viva se ve apagado con el aviso.
 - **Aplicar** (`c_pasivo_aplicacion`, origen `manual`, fecha de hoy): un crédito —nota de crédito o pago con
   saldo a cuenta (el pago es del proveedor por su orden: expedientes o detalle del anticipo)— contra una
   factura, por hasta el menor de los dos saldos. Se revalida en el servidor con las filas bloqueadas; el

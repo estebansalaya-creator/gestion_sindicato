@@ -125,7 +125,7 @@ SECCIONES = [
    {"tipo": "pasos", "items": [
      "En la ficha, <b>Dar de baja</b>.",
      "Fecha de baja y motivo (los motivos se administran en Tablas Auxiliares).",
-     "Si es un titular, se ofrece dar de baja también a su grupo familiar.",
+     "Si es un titular, se dan de baja también sus familiares activos, con la misma fecha y motivo: un familiar no sigue afiliado sin su titular.",
    ]},
    {"tipo": "texto", "html":
     "<b>Reactivar</b> la deja activa otra vez. De una persona cuelgan reintegros, comprobantes y la "

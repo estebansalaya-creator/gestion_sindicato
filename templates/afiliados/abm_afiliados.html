@@ -771,10 +771,7 @@
       </div>
       {% if es_titular and familiares_activos %}
       <div class="campo" style="--span:12;">
-        <label class="campo-check">
-          <input type="checkbox" name="con_grupo" value="1" checked>
-          Dar de baja también a {{ familiares_activos|length }} familiar(es) activo(s) del grupo
-        </label>
+        {{ ui.aviso('También se dan de baja ' ~ familiares_activos|length ~ ' familiar(es) activo(s) del grupo, con la misma fecha y motivo: un familiar no sigue afiliado sin su titular.', 'info') }}
       </div>
       {% endif %}
     </div>
