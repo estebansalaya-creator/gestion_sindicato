@@ -172,14 +172,24 @@ SECCIONES = [
      "motivo. <b>Quitar del padrón</b> (el tacho): solo a quien no retiró, con el motivo.",
      "<b>Volver a crear</b>: rehace la lista con el padrón de hoy. Solo mientras nadie retiró; se pierden los "
      "agregados y quitados a mano.",
+     "<b>Entregar a alguien fuera del padrón</b> (abajo de la grilla): documento o CUIL y el motivo. Si es "
+     "afiliado, entra al padrón de entrega como agregado y ya con el retiro; si no es afiliado, escribí su "
+     "apellido y nombre. Aparece en la grilla como «Fuera del padrón».",
+   ]},
+   {"tipo": "pasos", "items": [
+     "En la solapa <b>Stock</b> cargá cuántos hay: una cantidad positiva suma (la compra, con el remito en el "
+     "detalle) y una negativa ajusta (rotas, devueltas).",
+     "Arriba, <b>Stock</b> dice cuántos quedan: lo cargado menos lo retirado, contando también los de fuera del "
+     "padrón. Cuando no queda, el sistema no deja registrar más retiros hasta que se cargue más.",
+     "Sin ninguna carga de stock los retiros no se controlan: la pantalla lo avisa.",
    ]},
    {"tipo": "criterio", "html":
     "El padrón de entrega es una <b>foto</b> del grupo al crearlo: lo que cambie después en el padrón de "
     "afiliados no lo toca. Es aparte del correo: se crea con la campaña en borrador o ya enviada. Dos puestos "
     "pueden marcar a la vez: si alguien ya retiró, el segundo ve a qué hora y quién lo marcó."},
    {"tipo": "aviso", "html":
-    "Todo queda en la solapa <b>Movimientos</b>: cada retiro (y quién retiró), cada retiro quitado y cada "
-    "agregado o quitado, con la fecha y el usuario. La grilla se exporta a Excel con los filtros puestos."},
+    "Todo queda en la solapa <b>Movimientos</b>: cada retiro (y quién retiró), cada retiro quitado, cada "
+    "agregado o quitado, cada entrega fuera del padrón y cada carga de stock, con la fecha y el usuario. La grilla se exporta a Excel con los filtros puestos."},
  ]},
 
 ]

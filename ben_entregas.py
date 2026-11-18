@@ -25,7 +25,25 @@ la página. Dos puestos a la vez no se pisan: el UPDATE solo marca a quien no
 retiró y el segundo ve quién y a qué hora. Quitar un retiro pide motivo. Todo
 queda en `ben_entrega_mov`.
 
-Permiso: el de Campañas (/beneficios/campanias). sql/beneficios_entregas_20261118.sql.
+EL STOCK (pedido del 18/11/2026, `ben_entrega_stock`)
+Cuántos beneficios hay para entregar: cada carga suma (la compra de las cajas,
+con el remito en el detalle) y un ajuste resta (rotas, devueltas), con motivo.
+Lo que queda es lo cargado menos lo retirado. Con stock cargado, un retiro que
+lo dejaría en negativo no se registra: la campaña se bloquea al marcar
+(FOR UPDATE), así dos puestos no entregan la última caja dos veces. Sin ninguna
+carga de stock, no se controla (y la pantalla lo avisa). Un ajuste no puede
+dejar lo cargado por debajo de lo ya retirado.
+
+FUERA DEL PADRÓN (pedido del 18/11/2026)
+«Entregar a alguien fuera del padrón» registra el retiro de quien no está en el
+padrón de entrega, con motivo: si el documento o CUIL es de un afiliado, entra
+al padrón como agregado a mano y ya con el retiro; si no es afiliado (un
+invitado, un no afiliado), entra con su nombre y documento, sin afiliado
+(`id_afiliado` NULL, origen «externo»). Descuenta stock igual. Quitarle el
+retiro a uno de afuera lo saca de la lista (no tiene padrón al que volver).
+
+Permiso: el de Campañas (/beneficios/campanias). sql/beneficios_entregas_20261118.sql
+y sql/beneficios_entregas_stock_20261118.sql.
 
   /beneficios/campanias/<id>/entrega               el padrón de entrega; POST acciones
   /beneficios/campanias/<id>/entrega/api_entregar  «Marcar que retiró» (JSON)
@@ -48,6 +66,7 @@ ben_ent_bp = Blueprint("ben_ent", __name__, url_prefix="/beneficios")
 
 URL = camp_mod.URL
 SQL_ESQUEMA = "sql/beneficios_entregas_20261118.sql"
+SQL_ESQUEMA_STOCK = "sql/beneficios_entregas_stock_20261118.sql"
 #: Las personas se piden de a tantas al armar el padrón.
 TANDA = 500
 
@@ -85,14 +104,52 @@ def detalle_retiro(orden, nombre: str | None, doc: str | None) -> str:
     return d
 
 
-def resumen(total: int, entregados: int) -> dict:
-    return {"padron": total, "entregados": entregados, "faltan": total - entregados,
-            "porc": round(entregados * 100 / total, 1) if total else 0.0}
+def resumen(total: int, entregados: int, stock: int | None = None) -> dict:
+    """`stock`: lo cargado (None o 0 sin cargas: no se controla)."""
+    r = {"padron": total, "entregados": entregados, "faltan": total - entregados,
+         "porc": round(entregados * 100 / total, 1) if total else 0.0,
+         "stock": int(stock or 0), "controla_stock": bool(stock)}
+    r["queda"] = r["stock"] - entregados if r["controla_stock"] else None
+    return r
+
+
+def control_stock(camp: dict) -> None:
+    """Antes de un retiro: con stock cargado, que quede al menos uno."""
+    if camp.get("controla_stock") and (camp.get("queda") or 0) <= 0:
+        raise ErrorEntrega(f"No queda stock: se cargaron {camp['stock']} y ya se entregaron {camp['entregados']}. "
+                           "Cargá más stock para seguir entregando.")
+
+
+def leer_stock(cantidad, detalle, entregados: int, stock: int) -> tuple[int, str]:
+    """(cantidad, detalle) de una carga (+) o un ajuste (−) de stock."""
+    try:
+        n = int(str(cantidad or "").strip())
+    except ValueError:
+        raise ErrorEntrega("La cantidad es un número entero: positivo carga, negativo ajusta.") from None
+    detalle = limpio(detalle, 250)
+    if n == 0:
+        raise ErrorEntrega("La cantidad no puede ser cero.")
+    if abs(n) > 1_000_000:
+        raise ErrorEntrega("La cantidad es demasiado grande.")
+    if not detalle:
+        raise ErrorEntrega("Escribí el detalle (la compra, el remito, el motivo del ajuste).")
+    if stock + n < entregados:
+        raise ErrorEntrega(f"Con ese ajuste quedarían {stock + n} cargados y ya se entregaron {entregados}.")
+    if stock + n < 0:
+        raise ErrorEntrega("El stock cargado no puede quedar en negativo.")
+    return n, detalle
 
 
 # =============================================================================
 # Base
 # =============================================================================
+
+def hay_stock(cur) -> bool:
+    """sql/beneficios_entregas_stock_20261118.sql: el stock y los de fuera del padrón."""
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()
+                     AND table_name = 'ben_entrega_stock'""")
+    return bool(cur.fetchone()["n"])
+
 
 def hay_esquema(cur) -> bool:
     cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()
@@ -105,15 +162,45 @@ def hay_esquema(cur) -> bool:
 
 
 def campania(cur, id_camp: int, bloquear=False) -> dict | None:
+    con_stock = hay_stock(cur)
+    stock = ("(SELECT COALESCE(SUM(s.cantidad), 0) FROM ben_entrega_stock s WHERE s.id_campania = c.id)"
+             if con_stock else "0")
+    # «padron»: los del padrón de entrega, sin los de afuera (esos no estaban en la lista).
     cur.execute(f"""SELECT c.*, v.nombre AS convenio,
-                           (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_campania = c.id) AS padron,
-                           (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_campania = c.id AND e.entregado = 1) AS entregados
+                           (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_campania = c.id
+                               {"AND e.origen <> 'externo'" if con_stock else ""}) AS padron,
+                           (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_campania = c.id AND e.entregado = 1) AS entregados,
+                           (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_campania = c.id
+                               AND e.entregado = 1 {"AND e.origen <> 'externo'" if con_stock else ""}) AS entregados_padron,
+                           {stock} AS stock_cargado
                       FROM ben_campania c LEFT JOIN ben_convenio v ON v.id = c.id_convenio
                      WHERE c.id = %s {'FOR UPDATE' if bloquear else ''}""", (id_camp,))
     c = cur.fetchone()
     if c:
-        c.update(resumen(int(c["padron"] or 0), int(c["entregados"] or 0)))
+        c.update(resumen(int(c["padron"] or 0), int(c["entregados"] or 0), int(c["stock_cargado"] or 0)))
+        # Del padrón faltan los que no retiraron; los de afuera no cuentan para eso.
+        c["faltan"] = c["padron"] - int(c["entregados_padron"] or 0)
+        c["porc"] = round(int(c["entregados_padron"] or 0) * 100 / c["padron"], 1) if c["padron"] else 0.0
+        c["externos"] = c["entregados"] - int(c["entregados_padron"] or 0)
+        c["hay_stock"] = con_stock
     return c
+
+
+def stock_movs(cur, id_camp: int) -> list[dict]:
+    if not hay_stock(cur):
+        return []
+    cur.execute("""SELECT s.*, u.nombre AS usuario FROM ben_entrega_stock s
+                     LEFT JOIN s_usuarios u ON u.id = s.id_usuario
+                    WHERE s.id_campania = %s ORDER BY s.fecha DESC, s.id DESC""", (id_camp,))
+    return cur.fetchall()
+
+
+def cargar_stock(cur, camp: dict, cantidad, detalle, uid) -> int:
+    n, detalle = leer_stock(cantidad, detalle, camp["entregados"], camp["stock"])
+    cur.execute("""INSERT INTO ben_entrega_stock (id_campania, cantidad, detalle, id_usuario)
+                   VALUES (%s, %s, %s, %s)""", (camp["id"], n, detalle, uid))
+    _mov(cur, camp["id"], None, "stock", f"{'+' if n > 0 else ''}{n}: {detalle}", uid)
+    return n
 
 
 def padron(cur, id_camp: int) -> list[dict]:
@@ -237,7 +324,12 @@ def quitar(cur, camp: dict, id_fila: int, motivo: str, uid) -> str:
 
 
 def entregar(cur, camp: dict, id_fila: int, nombre: str | None, doc: str | None, uid) -> dict:
-    """Marca que retiró. Si ya retiró (otro puesto), lo dice con la hora y quién."""
+    """Marca que retiró. Si ya retiró (otro puesto), lo dice con la hora y quién.
+    `camp` viene leída con FOR UPDATE: el control de stock no se cruza con otro puesto."""
+    cur.execute("SELECT entregado FROM ben_entrega WHERE id = %s AND id_campania = %s", (id_fila, camp["id"]))
+    ya = cur.fetchone()
+    if ya and not ya["entregado"]:
+        control_stock(camp)
     cur.execute("""UPDATE ben_entrega SET entregado = 1, fecha_entrega = NOW(), id_usuario_entrega = %s,
                                           retiro_nombre = %s, retiro_documento = %s
                     WHERE id = %s AND id_campania = %s AND entregado = 0""", (uid, nombre, doc, id_fila, camp["id"]))
@@ -263,11 +355,71 @@ def quitar_entrega(cur, camp: dict, id_fila: int, motivo: str, uid) -> str:
         raise ErrorEntrega("No está en el padrón de entrega.")
     if not f["entregado"]:
         raise ErrorEntrega(f"{f['apellido_nombres']} no tiene el retiro registrado.")
+    if f["origen"] == "externo":
+        # No estaba en el padrón: sin el retiro no hay nada que dejar en la lista.
+        cur.execute("DELETE FROM ben_entrega WHERE id = %s", (id_fila,))
+        _mov(cur, camp["id"], None, "quita_entrega",
+             f"Fuera del padrón, {f['apellido_nombres']}" + (f" (DNI {f['nro_documento']})" if f["nro_documento"] else "")
+             + f", había retirado {f['fecha_entrega']:%d/%m/%Y %H:%M}: {motivo}", uid)
+        return f["apellido_nombres"]
     cur.execute("""UPDATE ben_entrega SET entregado = 0, fecha_entrega = NULL, id_usuario_entrega = NULL,
                                           retiro_nombre = NULL, retiro_documento = NULL WHERE id = %s""", (id_fila,))
     _mov(cur, camp["id"], f["id_afiliado"], "quita_entrega",
          f"Orden {f['orden']}, había retirado {f['fecha_entrega']:%d/%m/%Y %H:%M}: {motivo}", uid)
     return f["apellido_nombres"]
+
+
+def entregar_fuera(cur, camp: dict, numero, nombre, motivo, retiro_nombre, retiro_doc, uid) -> dict:
+    """El retiro de alguien que no está en el padrón de entrega (ver el docstring)."""
+    if not camp.get("entrega_generada"):
+        raise ErrorEntrega("Primero creá el padrón de entrega.")
+    numero, nombre, motivo = solo_digitos(numero)[:20], limpio(nombre, 100), limpio(motivo, 250)
+    if not numero:
+        raise ErrorEntrega("Escribí el documento o el CUIL de quien recibe.")
+    if not motivo:
+        raise ErrorEntrega("Escribí el motivo: por qué se le entrega estando fuera del padrón.")
+    afi = _afiliado(cur, numero)
+    if afi:
+        cur.execute("SELECT orden, entregado FROM ben_entrega WHERE id_campania = %s AND id_afiliado = %s",
+                    (camp["id"], afi["id_afiliado"]))
+        ya = cur.fetchone()
+        if ya:
+            raise ErrorEntrega(f"{afi['apellido_nombres']} está en el padrón de entrega (orden {ya['orden']}): "
+                               + ("ya retiró." if ya["entregado"] else "marcalo desde la grilla."))
+    else:
+        if not nombre:
+            raise ErrorEntrega(f"{numero} no es afiliado: escribí su apellido y nombre.")
+        cur.execute("""SELECT fecha_entrega FROM ben_entrega WHERE id_campania = %s AND origen = 'externo'
+                          AND nro_documento = %s""", (camp["id"], numero))
+        ya = cur.fetchone()
+        if ya:
+            raise ErrorEntrega(f"{numero} ya retiró fuera del padrón el {ya['fecha_entrega']:%d/%m/%Y %H:%M}.")
+    control_stock(camp)
+    cur.execute("SELECT COALESCE(MAX(orden), 0) + 1 AS n FROM ben_entrega WHERE id_campania = %s", (camp["id"],))
+    orden = cur.fetchone()["n"]
+    if afi:
+        cur.execute("""INSERT INTO ben_entrega (id_campania, id_afiliado, orden, cuil, nro_documento, apellido_nombres,
+                                                cod_parentesco, parentesco, cuil_titular, empleador, origen,
+                                                entregado, fecha_entrega, id_usuario_entrega, retiro_nombre,
+                                                retiro_documento, observaciones)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'manual', 1, NOW(), %s, %s, %s, %s)""",
+                    (camp["id"], afi["id_afiliado"], orden, afi["cuil"], afi["nro_documento"], afi["apellido_nombres"],
+                     afi["cod_parentesco"], afi["parentesco"], afi["cuil_titular"],
+                     (afi["empleador"] or None) and afi["empleador"][:200], uid, retiro_nombre, retiro_doc, motivo))
+        _mov(cur, camp["id"], afi["id_afiliado"], "agregado", f"Fuera del padrón: {motivo}", uid)
+        _mov(cur, camp["id"], afi["id_afiliado"], "entrega", detalle_retiro(orden, retiro_nombre, retiro_doc), uid)
+        quien = afi["apellido_nombres"]
+    else:
+        cur.execute("""INSERT INTO ben_entrega (id_campania, id_afiliado, orden, nro_documento, apellido_nombres, origen,
+                                                entregado, fecha_entrega, id_usuario_entrega, retiro_nombre,
+                                                retiro_documento, observaciones)
+                       VALUES (%s, NULL, %s, %s, %s, 'externo', 1, NOW(), %s, %s, %s, %s)""",
+                    (camp["id"], orden, numero, nombre, uid, retiro_nombre, retiro_doc, motivo))
+        _mov(cur, camp["id"], None, "externo",
+             f"{nombre} (DNI {numero}), no afiliado: {motivo}"
+             + (f"; retiró {retiro_nombre}" + (f" (DNI {retiro_doc})" if retiro_doc else "") if retiro_nombre else ""), uid)
+        quien = nombre
+    return {"nombre": quien, "afiliado": bool(afi), "orden": orden}
 
 
 # =============================================================================
@@ -312,8 +464,9 @@ def entrega(id_camp):
                 return redirect(url_for("ben_camp.lista"))
             filas = padron(cur, id_camp)
             movs = movimientos(cur, id_camp)
+            stock = stock_movs(cur, id_camp)
             grupo = _grupo_txt(cur, camp)
-    return render_template("beneficios/entrega.html", camp=camp, filas=filas, movs=movs, grupo=grupo,
+    return render_template("beneficios/entrega.html", camp=camp, filas=filas, movs=movs, grupo=grupo, stock=stock,
                            solapa=request.args.get("solapa") or "padron")
 
 
@@ -342,6 +495,18 @@ def accion(id_camp):
                 elif acc == "quitar":
                     nombre = quitar(cur, camp, request.form.get("id", type=int), request.form.get("motivo"), _uid())
                     flash(f"{nombre} quitado del padrón de entrega.")
+                elif acc in ("stock", "fuera") and not camp["hay_stock"]:
+                    raise ErrorEntrega(f"Falta correr {SQL_ESQUEMA_STOCK}: sin eso no hay stock ni entregas fuera del padrón.")
+                elif acc == "stock":
+                    n = cargar_stock(cur, camp, request.form.get("cantidad"), request.form.get("detalle"), _uid())
+                    flash(f"Stock {'cargado' if n > 0 else 'ajustado'}: {'+' if n > 0 else ''}{n}. "
+                          f"Quedan {camp['stock'] + n - camp['entregados']} para entregar.")
+                elif acc == "fuera":
+                    rn, rd = leer_retiro(request.form)
+                    r = entregar_fuera(cur, camp, request.form.get("numero"), request.form.get("nombre"),
+                                       request.form.get("motivo"), rn, rd, _uid())
+                    flash(f"{r['nombre']}: retiro registrado fuera del padrón"
+                          + (" (es afiliado: quedó agregado al padrón de entrega)." if r["afiliado"] else " (no afiliado)."))
                 elif acc == "quitar_entrega":
                     nombre = quitar_entrega(cur, camp, request.form.get("id", type=int), request.form.get("motivo"), _uid())
                     flash(f"Se quitó el retiro de {nombre}.")
@@ -375,7 +540,7 @@ def api_entregar(id_camp):
     with get_connection() as conn:
         with conn.cursor() as cur:
             try:
-                camp = campania(cur, id_camp)
+                camp = campania(cur, id_camp, bloquear=True)     # el stock: ver entregar()
                 if not camp:
                     raise ErrorEntrega("No existe esa campaña.")
                 nombre, doc = leer_retiro(datos)
@@ -389,4 +554,5 @@ def api_entregar(id_camp):
                 raise
             c2 = campania(cur, id_camp)
     return jsonify({"marcado": res["marcado"], "fila": _fila_json(res["fila"]),
-                    "estado": {k: c2[k] for k in ("padron", "entregados", "faltan", "porc")}})
+                    "estado": {k: c2[k] for k in ("padron", "entregados", "faltan", "porc", "stock", "queda",
+                                                  "controla_stock")}})

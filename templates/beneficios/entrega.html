@@ -7,8 +7,10 @@
   beneficio de la campaña (una foto del grupo de «A quién va» al crearlo) y quién
   ya lo retiró. Se busca con el filtro de la grilla (documento, CUIL, apellido) y
   «Marcar que retiró» registra el retiro sin recargar la página.
-    Padrón       la lista, marcar o quitar un retiro, agregar o quitar a alguien
-    Movimientos  el rastro: retiros, retiros quitados, agregados, quitados, creado
+    Padrón       la lista, marcar o quitar un retiro, agregar o quitar a alguien,
+                 entregar a alguien fuera del padrón (afiliado o no)
+    Stock        cuántos hay: cargas (+) y ajustes (−); queda = cargado − retirado
+    Movimientos  el rastro: retiros, retiros quitados, agregados, quitados, creado, stock
 #}
 {% set generado = camp.entrega_generada %}
 
@@ -24,6 +26,11 @@
 </div>
 
 {{ ui.mensajes() }}
+{% if not camp.hay_stock %}{{ ui.aviso('Falta correr sql/beneficios_entregas_stock_20261118.sql: sin eso no hay stock ni entregas fuera del padrón.', 'warning') }}
+{% elif camp.controla_stock and camp.queda <= 0 %}{{ ui.aviso('No queda stock: se cargaron ' ~ camp.stock ~ ' y ya se entregaron ' ~ camp.entregados ~ '. Cargá más en la solapa Stock para seguir entregando.', 'danger') }}
+{% elif camp.controla_stock and camp.queda < camp.faltan %}{{ ui.aviso('El stock no alcanza para todos: quedan ' ~ camp.queda ~ ' y en el padrón faltan retirar ' ~ camp.faltan ~ '.', 'warning') }}
+{% elif generado and not camp.controla_stock %}{{ ui.aviso('Sin stock cargado: los retiros no se controlan contra lo que hay. Se carga en la solapa Stock.', 'info') }}
+{% endif %}
 
 <div class="kpi-row">
   <div class="kpi-card"><div class="kpi-ico">{{ ui.icono('grupo', 20) }}</div>
@@ -31,13 +38,16 @@
       <div class="kpi-sub">{{ 'creado' if generado else 'sin crear' }}</div></div></div>
   <div class="kpi-card"><div class="kpi-ico ok">{{ ui.icono('ok', 20) }}</div>
     <div><div class="kpi-lbl">Retiraron</div><div class="kpi-val" id="kpi-entregados">{{ camp.entregados }}</div>
-      <div class="kpi-sub"><span id="kpi-porc">{{ camp.porc }}</span> % del padrón</div></div></div>
+      <div class="kpi-sub"><span id="kpi-porc">{{ camp.porc }}</span> % del padrón{% if camp.externos %} · <span id="kpi-externos">{{ camp.externos }}</span> fuera del padrón{% endif %}</div></div></div>
   <div class="kpi-card"><div class="kpi-ico warn">{{ ui.icono('reloj', 20) }}</div>
     <div><div class="kpi-lbl">Faltan</div><div class="kpi-val" id="kpi-faltan">{{ camp.faltan }}</div>
       <div class="kpi-sub">todavía no retiraron</div></div></div>
+  <div class="kpi-card"><div class="kpi-ico {{ 'danger' if camp.controla_stock and camp.queda <= 0 else '' }}">{{ ui.icono('planilla', 20) }}</div>
+    <div><div class="kpi-lbl">Stock</div><div class="kpi-val" id="kpi-queda">{{ camp.queda if camp.controla_stock else '—' }}</div>
+      <div class="kpi-sub">{% if camp.controla_stock %}quedan de {{ camp.stock }} cargados{% else %}sin cargar{% endif %}</div></div></div>
 </div>
 
-{{ ui.solapas([('padron', 'Padrón de entrega', filas|length), ('movs', 'Movimientos', movs|length)], solapa) }}
+{{ ui.solapas([('padron', 'Padrón de entrega', filas|length), ('stock', 'Stock', stock|length), ('movs', 'Movimientos', movs|length)], solapa) }}
 
 <div class="abm-panel {{ 'oculto' if solapa != 'padron' }}" data-panel="padron">
   <div class="card">
@@ -55,10 +65,10 @@
         <option value="">Todos</option><option value="1">Retiraron</option><option value="0">No retiraron</option>
       </select>{% endcall %}
       {% call ui.filtro('Titular o familiar') %}<select class="filtro" id="f-tipo">
-        <option value="">Titulares y familiares</option><option value="titular">Solo titulares</option><option value="familiar">Solo familiares</option>
+        <option value="">Todos</option><option value="titular">Solo titulares</option><option value="familiar">Solo familiares</option><option value="externo">No afiliados</option>
       </select>{% endcall %}
       {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
-        <option value="">Todos</option><option value="padron">Del grupo de la campaña</option><option value="manual">Agregados a mano</option>
+        <option value="">Todos</option><option value="padron">Del grupo de la campaña</option><option value="manual">Agregados a mano</option><option value="externo">Fuera del padrón, no afiliados</option>
       </select>{% endcall %}
     {% endcall %}
     <div id="msg-entrega"></div>
@@ -72,18 +82,19 @@
         <tbody>
           {% for f in filas %}
           <tr data-id="{{ f.id }}" data-entregado="{{ f.entregado }}" data-origen="{{ f.origen }}"
-              data-tipo="{{ 'titular' if f.cod_parentesco == 0 else 'familiar' }}">
+              data-tipo="{{ 'externo' if f.origen == 'externo' else ('titular' if f.cod_parentesco == 0 else 'familiar') }}">
             <td><div class="acciones">
               {% if not f.entregado %}{{ ui.accion('votar', titulo='Marcar que retiró', onclick="abrirEntrega(this)", datos={'id': f.id, 'nombre': f.apellido_nombres, 'documento': f.nro_documento or '', 'orden': f.orden}) }}{% endif %}
               {% if f.entregado %}{{ ui.accion('desaplicar', titulo='Quitar el retiro', onclick="abrirMotivo(this, 'quitar_entrega')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
               {% if not f.entregado %}{{ ui.accion('borrar', titulo='Quitar del padrón de entrega', onclick="abrirMotivo(this, 'quitar')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
-              {% if puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
+              {% if f.id_afiliado and puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
             </div></td>
             <td class="td-right td-mono" data-num="{{ f.orden }}">{{ f.orden }}</td>
-            <td class="td-fuerte">{{ f.apellido_nombres }}{% if f.origen == 'manual' %} {{ ui.estado('Agregado', 'info') }}{% endif %}</td>
+            <td class="td-fuerte">{{ f.apellido_nombres }}{% if f.origen == 'manual' %} {{ ui.estado('Agregado', 'info') }}{% elif f.origen == 'externo' %} {{ ui.estado('Fuera del padrón', 'warn') }}{% endif %}
+              {% if f.observaciones %}<div class="chico td-muted">{{ f.observaciones }}</div>{% endif %}</td>
             <td class="td-mono">{{ f.nro_documento or '—' }}</td>
             <td class="td-mono">{{ f.cuil or '—' }}</td>
-            <td class="td-muted">{{ 'Titular' if f.cod_parentesco == 0 else (f.parentesco or '—') }}</td>
+            <td class="td-muted">{{ 'No afiliado' if f.origen == 'externo' else ('Titular' if f.cod_parentesco == 0 else (f.parentesco or '—')) }}</td>
             <td>{{ f.empleador or '—' }}</td>
             <td class="td-entrega" data-valor="{{ f.fecha_entrega.isoformat() if f.fecha_entrega else '' }}">{% if f.entregado %}{{ ui.estado('Retiró', 'ok') }} <span class="chico">{{ f.fecha_entrega.strftime('%d/%m/%Y %H:%M') }}</span>{% else %}{{ ui.estado('No retiró', 'neutro') }}{% endif %}</td>
             <td class="td-quien">{% if f.retiro_nombre %}{{ f.retiro_nombre }}{% if f.retiro_documento %} <span class="chico td-mono">DNI {{ f.retiro_documento }}</span>{% endif %}{% elif f.entregado %}<span class="td-muted">El afiliado</span>{% endif %}</td>
@@ -114,7 +125,81 @@
       <div class="form-acciones">{{ ui.boton('Agregar', icono_='agregar', submit=True) }}</div>
     </form>
   </div>
+
+  {% if camp.hay_stock %}
+  <div class="card">
+    {{ ui.card_head('Entregar a alguien fuera del padrón', nota='Registra el retiro de quien no está en la lista, con el motivo. Si el documento es de un afiliado, entra al padrón de entrega como agregado; si no es afiliado, con el nombre que escribas. Descuenta stock.') }}
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}"
+          onsubmit="return confirm('¿Registrar el retiro fuera del padrón?');">
+      <input type="hidden" name="accion" value="fuera">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:3;"><label for="fuera-numero">Documento o CUIL <span class="req">*</span></label>
+            <input type="text" name="numero" id="fuera-numero" required maxlength="13" inputmode="numeric"></div>
+          <div class="campo" style="--span:4;"><label for="fuera-nombre">Apellido y nombre (si no es afiliado)</label>
+            <input type="text" name="nombre" id="fuera-nombre" maxlength="100"></div>
+          <div class="campo" style="--span:5;"><label for="fuera-motivo">Motivo <span class="req">*</span></label>
+            <input type="text" name="motivo" id="fuera-motivo" required maxlength="250" placeholder="Por qué se le entrega"></div>
+          <div class="campo" style="--span:4;"><label for="fuera-rnombre">Si retira otra persona: quién</label>
+            <input type="text" name="retiro_nombre" id="fuera-rnombre" maxlength="150"></div>
+          <div class="campo" style="--span:3;"><label for="fuera-rdoc">Su documento</label>
+            <input type="text" name="retiro_documento" id="fuera-rdoc" maxlength="12" inputmode="numeric"></div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Registrar el retiro', icono_='ok', submit=True) }}</div>
+    </form>
+  </div>
   {% endif %}
+  {% endif %}
+</div>
+
+<div class="abm-panel {{ 'oculto' if solapa != 'stock' }}" data-panel="stock">
+  <div class="card">
+    {{ ui.card_head('Stock del beneficio', nota='Cuántos hay para entregar. Una cantidad positiva carga (la compra, con el remito en el detalle); una negativa ajusta (rotas, devueltas). Queda = lo cargado − lo retirado.') }}
+    <div class="card-body">
+      <div class="datos">
+        <div class="dato"><div class="dato-lbl">Cargado</div><div class="dato-val">{{ camp.stock if camp.controla_stock else '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Entregado</div><div class="dato-val">{{ camp.entregados }}</div></div>
+        <div class="dato"><div class="dato-lbl">Queda</div><div class="dato-val">{{ camp.queda if camp.controla_stock else '—' }}</div></div>
+      </div>
+    </div>
+    {% if camp.hay_stock %}
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}">
+      <input type="hidden" name="accion" value="stock">
+      <div class="bloque">
+        <div class="campos">
+          <div class="campo" style="--span:2;"><label for="stock-cantidad">Cantidad <span class="req">*</span></label>
+            <input type="number" name="cantidad" id="stock-cantidad" required step="1" placeholder="500 ó −3"></div>
+          <div class="campo" style="--span:10;"><label for="stock-detalle">Detalle <span class="req">*</span></label>
+            <input type="text" name="detalle" id="stock-detalle" required maxlength="250" placeholder="Compra a…, remito N°…  /  3 cajas rotas"></div>
+        </div>
+      </div>
+      <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
+    </form>
+    {% endif %}
+  </div>
+  <div class="card">
+    {{ ui.card_head('Cargas y ajustes') }}
+    {% call ui.barra_filtros('Buscar por detalle o usuario…', 50) %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-stock" data-exportar="Stock {{ camp.titulo }}">
+        <thead><tr><th data-orden="desc">Fecha</th><th class="th-right">Cantidad</th><th>Detalle</th><th>Usuario</th></tr></thead>
+        <tbody>
+          {% for m in stock %}
+          <tr>
+            <td data-valor="{{ m.fecha.isoformat() }}">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td class="td-right td-mono" data-num="{{ m.cantidad }}">{{ ('+' if m.cantidad > 0 else '') ~ m.cantidad }}</td>
+            <td class="td-wrap">{{ m.detalle }}</td>
+            <td>{{ m.usuario or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="4" class="no-data">Todavía no se cargó stock: sin cargas, los retiros no se controlan.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
 </div>
 
 <div class="abm-panel {{ 'oculto' if solapa != 'movs' }}" data-panel="movs">
@@ -123,6 +208,7 @@
       {% call ui.filtro('Acción') %}<select class="filtro" id="f-accion">
         <option value="">Todas</option><option value="entrega">Retiró</option><option value="quita_entrega">Retiro quitado</option>
         <option value="agregado">Agregado</option><option value="quitado">Quitado</option><option value="generado">Padrón creado</option>
+        <option value="externo">Fuera del padrón</option><option value="stock">Stock</option>
       </select>{% endcall %}
     {% endcall %}
     <div class="data-table-wrap">
@@ -132,7 +218,8 @@
         </tr></thead>
         <tbody>
           {% set ACC = {'entrega': ('Retiró', 'ok'), 'quita_entrega': ('Retiro quitado', 'warn'), 'agregado': ('Agregado', 'info'),
-                        'quitado': ('Quitado', 'danger'), 'generado': ('Padrón creado', 'neutro')} %}
+                        'quitado': ('Quitado', 'danger'), 'generado': ('Padrón creado', 'neutro'),
+                        'externo': ('Fuera del padrón', 'warn'), 'stock': ('Stock', 'info')} %}
           {% for m in movs %}
           <tr data-accion="{{ m.accion }}">
             <td data-valor="{{ m.fecha.isoformat() }}">{{ m.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
@@ -249,6 +336,7 @@ function confirmarEntrega() {
       document.getElementById('kpi-entregados').textContent = d.estado.entregados;
       document.getElementById('kpi-porc').textContent = d.estado.porc;
       document.getElementById('kpi-faltan').textContent = d.estado.faltan;
+      if (d.estado.controla_stock) document.getElementById('kpi-queda').textContent = d.estado.queda;
       msgEntrega(d.marcado ? f.nombre + ': retiro registrado.'
                            : f.nombre + ' ya había retirado (' + f.fecha + (f.usuario ? ', ' + f.usuario : '') + ').',
                  d.marcado ? 'ok' : 'warning');
@@ -279,6 +367,7 @@ document.addEventListener('DOMContentLoaded', function () {
     if (fo.value && tr.dataset.origen !== fo.value) return false;
     return true;
   } });
+  gestion_admTable('tbl-stock', { pageSize: 50 });
   gestion_admTable('tbl-movs', { pageSize: 50, filtroExtra: function (tr) {
     return !fa.value || tr.dataset.accion === fa.value;
   } });

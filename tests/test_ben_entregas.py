@@ -43,9 +43,35 @@ ok(E.detalle_retiro(12, "GOMEZ ANA", "28123456") == "Orden 12: retiró GOMEZ ANA
 ok(E.detalle_retiro(3, "GOMEZ ANA", None) == "Orden 3: retiró GOMEZ ANA", "otra persona, sin DNI")
 
 print("Resumen")
-ok(E.resumen(400, 100) == {"padron": 400, "entregados": 100, "faltan": 300, "porc": 25.0}, "cuántos retiraron")
+r = E.resumen(400, 100)
+ok({k: r[k] for k in ("padron", "entregados", "faltan", "porc")} == {"padron": 400, "entregados": 100, "faltan": 300, "porc": 25.0},
+   "cuántos retiraron")
 ok(E.resumen(0, 0)["porc"] == 0.0, "padrón vacío")
 ok(E.solo_digitos("20-28123456-3") == "20281234563", "CUIL con guiones")
+
+print("Stock")
+r = E.resumen(400, 120, 500)
+ok(r["controla_stock"] and r["queda"] == 380, "500 cargados, 120 entregados: quedan 380")
+r = E.resumen(400, 120, 0)
+ok(not r["controla_stock"] and r["queda"] is None, "sin cargas: no se controla")
+E.control_stock({"controla_stock": False, "queda": None})
+ok(True, "sin cargas: se entrega igual")
+try:
+    E.control_stock({"controla_stock": True, "queda": 0, "stock": 500, "entregados": 500})
+    ok(False, "sin stock: no se entrega")
+except E.ErrorEntrega as e:
+    ok("No queda stock" in str(e), "sin stock: no se entrega")
+E.control_stock({"controla_stock": True, "queda": 1, "stock": 500, "entregados": 499})
+ok(True, "queda uno: se entrega")
+ok(E.leer_stock("500", " compra  remito 12 ", 0, 0) == (500, "compra remito 12"), "carga")
+ok(E.leer_stock("-3", "rotas", 100, 500) == (-3, "rotas"), "ajuste")
+for args, txt in ((("0", "x", 0, 0), "cero"), (("abc", "x", 0, 0), "no es número"), (("5", "", 0, 0), "sin detalle"),
+                  (("-450", "x", 100, 500), "ajuste por debajo de lo entregado"), (("-1", "x", 0, 0), "negativo sin stock")):
+    try:
+        E.leer_stock(*args)
+        ok(False, "se rechaza: " + txt)
+    except E.ErrorEntrega:
+        ok(True, "se rechaza: " + txt)
 
 if fallos:
     print(f"{len(fallos)} FALLAS")
