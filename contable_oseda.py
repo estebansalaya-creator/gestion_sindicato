@@ -216,6 +216,38 @@ def padron_oseda_aeda(rotulo: str = "AEDA") -> list[dict]:
         cn.close()
 
 
+def padron_oseda_por_cuil(cuiles) -> dict[str, dict]:
+    """
+    Si cada CUIL está en el padrón de OSEDA (`p_afiliados` de contable), hoy:
+    {cuil: {"vigente": bool, "titular": bool, "fecha_baja": date | None}}.
+    Vigente = activo y sin baja o con la baja de hoy en adelante. El CUIL es
+    único en ese padrón; el que no figura no está en el diccionario.
+
+    De a 500 CUIL, como las DDJJ.
+    """
+    cuiles = sorted({str(c) for c in cuiles if c})
+    salida: dict[str, dict] = {}
+    if not cuiles:
+        return salida
+    cn = _conexion()
+    try:
+        with cn.cursor() as cur:
+            for i in range(0, len(cuiles), 500):
+                tanda = cuiles[i:i + 500]
+                marcas = ",".join(["%s"] * len(tanda))
+                cur.execute(f"""SELECT cuil, cod_parentesco, fecha_baja,
+                                       (activo = 1 AND (fecha_baja IS NULL OR fecha_baja >= CURDATE())) AS vigente
+                                  FROM p_afiliados WHERE cuil IN ({marcas})""", tanda)
+                for f in cur.fetchall():
+                    salida[f["cuil"]] = {"vigente": bool(f["vigente"]), "titular": f["cod_parentesco"] == 0,
+                                         "fecha_baja": f["fecha_baja"]}
+        return salida
+    except pymysql.MySQLError as e:
+        raise ContableNoDisponible(f"Error al leer el padrón de OSEDA en contable: {e}") from e
+    finally:
+        cn.close()
+
+
 def aportes_de_cuiles(cuiles) -> dict:
     """
     Todo lo que hace falta para la solapa «Aportes OSEDA» de la ficha del

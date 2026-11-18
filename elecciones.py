@@ -30,6 +30,11 @@ votación; fuera de ese día solo el Administrador (la carga posterior de un
 acta en papel), con el aviso. Quien no está en el padrón electoral sale con el
 porqué (familiar, de baja, alta posterior al corte, sin la antigüedad).
 
+OSEDA (pedido del 18/11/2026): el padrón electoral dice de cada afiliado si
+tiene OSEDA HOY (titular o familiar vigente en el padrón de OSEDA, en vivo de
+contable en Railway, `contable_oseda.padron_oseda_por_cuil`); no es parte de
+la foto. Si Railway no responde, la columna sale con «—» y el aviso.
+
 Pantallas (blueprint `elecciones`, /elecciones; sql/elecciones_20261118.sql,
 menú 130-132):
   /elecciones                       listado (Administrador y Supervisor)
@@ -48,6 +53,7 @@ import re
 
 from flask import Blueprint, flash, jsonify, redirect, render_template, request, url_for
 
+import contable_oseda
 from db import get_connection, puede, tiene_rol, usuario_actual, validasesion
 
 log = logging.getLogger(__name__)
@@ -194,6 +200,43 @@ def padron(cur, id_el: int) -> list[dict]:
                      LEFT JOIN s_usuarios u ON u.id = p.id_usuario_voto
                     WHERE p.id_eleccion = %s ORDER BY p.orden""", (id_el,))
     return cur.fetchall()
+
+
+#: Lo que muestra la columna OSEDA: texto, tipo de estado y valor del filtro.
+OSEDA_ESTADOS = {
+    "titular": ("Sí", "ok", "si"),
+    "familiar": ("Sí, familiar", "ok", "si"),
+    "baja": ("De baja", "warn", "no"),
+    "no": ("No", "neutro", "no"),
+}
+
+
+def marcar_oseda(filas: list[dict], oseda: dict[str, dict] | None) -> None:
+    """Pone en cada fila `oseda` (clave de OSEDA_ESTADOS, None sin consulta) y `oseda_baja`."""
+    for f in filas:
+        f["oseda_baja"] = None
+        if oseda is None:
+            f["oseda"] = None
+            continue
+        o = oseda.get(str(f.get("cuil") or ""))
+        if not o:
+            f["oseda"] = "no"
+        elif o["vigente"]:
+            f["oseda"] = "titular" if o["titular"] else "familiar"
+        else:
+            f["oseda"], f["oseda_baja"] = "baja", o["fecha_baja"]
+
+
+def con_oseda(filas: list[dict]) -> str | None:
+    """Consulta OSEDA para el padrón electoral; devuelve el aviso si Railway no responde."""
+    try:
+        oseda = contable_oseda.padron_oseda_por_cuil(f["cuil"] for f in filas if f.get("cuil"))
+    except contable_oseda.ContableNoDisponible as e:
+        log.warning("Elecciones: sin OSEDA: %s", e)
+        marcar_oseda(filas, None)
+        return f"No se pudo consultar el padrón de OSEDA: la columna OSEDA sale sin datos. ({e})"
+    marcar_oseda(filas, oseda)
+    return None
 
 
 def movimientos(cur, id_el: int, limite: int | None = None) -> list[dict]:
@@ -529,12 +572,14 @@ def ficha(id_el):
                 return redirect(url_for("elecciones.listado"))
             filas = padron(cur, id_el)
             movs = movimientos(cur, id_el, 1000)
+    aviso_oseda = con_oseda(filas) if filas else None
     hoy = datetime.date.today()
     marcar, aviso_marcar = puede_marcar(el, hoy, tiene_rol("Administrador"))
     return render_template("elecciones/eleccion.html", el=el, filas=filas, movs=movs, ESTADOS=ESTADOS, puede=puede,
                            hoy=hoy, marcar=marcar, aviso_marcar=aviso_marcar, es_admin=tiene_rol("Administrador"),
                            solapa=request.args.get("solapa") or "padron", corte=corte_antiguedad(el),
-                           editar=request.args.get("editar") == "1")
+                           editar=request.args.get("editar") == "1", aviso_oseda=aviso_oseda,
+                           OSEDA_ESTADOS=OSEDA_ESTADOS)
 
 
 @elecciones_bp.route("/<int:id_el>", methods=["POST"])
@@ -560,8 +605,10 @@ def accion(id_el):
                         conn.rollback()
                         hoy = datetime.date.today()
                         marcar, aviso_marcar = puede_marcar(el, hoy, tiene_rol("Administrador"))
+                        filas = padron(cur, id_el)
+                        aviso_oseda = con_oseda(filas) if filas else None
                         return render_template("elecciones/eleccion.html", el={**el, **r, "hora_desde_txt": r["hora_desde"], "hora_hasta_txt": r["hora_hasta"]},
-                                               filas=padron(cur, id_el),
+                                               filas=filas, aviso_oseda=aviso_oseda, OSEDA_ESTADOS=OSEDA_ESTADOS,
                                                movs=movimientos(cur, id_el, 1000), ESTADOS=ESTADOS, puede=puede,
                                                hoy=hoy, marcar=marcar, aviso_marcar=aviso_marcar,
                                                es_admin=tiene_rol("Administrador"), solapa="datos",

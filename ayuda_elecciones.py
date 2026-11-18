@@ -53,8 +53,12 @@ SECCIONES = [
    {"tipo": "texto", "html":
     "El padrón es una <b>foto</b> del padrón de afiliados del momento en que se generó: lo que cambie después en "
     "el padrón de afiliados no lo toca. La solapa <b>Padrón electoral</b> muestra cada afiliado con su orden, "
-    "documento, empleador y si votó (hora y quién lo registró); se filtra por «Votaron» / «No votaron» y se "
-    "exporta a Excel."},
+    "documento, empleador, si tiene <b>OSEDA</b> y si votó (hora y quién lo registró); se filtra por «Votaron» / "
+    "«No votaron» y por «Con OSEDA» / «Sin OSEDA», y se exporta a Excel con los filtros puestos."},
+   {"tipo": "criterio", "html":
+    "La columna <b>OSEDA</b> dice si el afiliado está <b>hoy</b> en el padrón de la obra social OSEDA: «Sí» (titular), «Sí, familiar» "
+    "(está como familiar de otro titular), «De baja» (con la fecha) o «No». Se consulta cada vez que se abre la "
+    "ficha, no es parte de la foto del padrón. Si la consulta no responde, la columna sale con «—» y un aviso."},
    {"tipo": "pasos", "items": [
      "<b>Volver a generar</b>: rehace el padrón con el padrón de afiliados de hoy. Solo mientras nadie votó, y se "
      "pierden los agregados y quitados a mano.",

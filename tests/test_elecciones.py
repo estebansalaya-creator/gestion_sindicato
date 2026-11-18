@@ -81,6 +81,17 @@ ok(E.resumen(200, 37) == {"padron": 200, "votaron": 37, "faltan": 163, "porc": 1
 ok(E.resumen(0, 0)["porc"] == 0.0, "padrón vacío")
 
 print()
+print("OSEDA en el padrón electoral")
+fs = [{"cuil": "20111111112"}, {"cuil": "27222222223"}, {"cuil": "20333333334"}, {"cuil": "20444444445"}, {"cuil": None}]
+E.marcar_oseda(fs, {"20111111112": {"vigente": True, "titular": True, "fecha_baja": None},
+                    "27222222223": {"vigente": True, "titular": False, "fecha_baja": None},
+                    "20333333334": {"vigente": False, "titular": True, "fecha_baja": D(2025, 3, 31)}})
+ok([f["oseda"] for f in fs] == ["titular", "familiar", "baja", "no", "no"], "titular, familiar, de baja, no está, sin CUIL")
+ok(fs[2]["oseda_baja"] == D(2025, 3, 31) and fs[0]["oseda_baja"] is None, "la fecha de baja solo en el de baja")
+ok(all(E.OSEDA_ESTADOS[f["oseda"]][2] in ("si", "no") for f in fs), "cada estado tiene su valor de filtro")
+E.marcar_oseda(fs, None)
+ok(all(f["oseda"] is None for f in fs), "sin consulta (Railway caído): sin dato, no «No»")
+
 if fallos:
     print(f"{len(fallos)} FALLAS")
     sys.exit(1)

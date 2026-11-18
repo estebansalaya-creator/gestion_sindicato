@@ -5,7 +5,8 @@
 
 {#
   Elecciones › ficha de una elección (elecciones.ficha):
-    Padrón       el padrón electoral (foto al generarlo), quién votó, a qué hora y quién lo marcó;
+    Padrón       el padrón electoral (foto al generarlo), si tiene OSEDA hoy (en vivo de Railway),
+                 quién votó, a qué hora y quién lo marcó;
                  agregar o quitar a alguien con motivo; quitar un voto con motivo
     Datos        motivo, día, lugar y horario, corte y antigüedad (cambiar el corte rehace el padrón)
     Movimientos  el rastro: votos, votos quitados, agregados y quitados
@@ -58,20 +59,25 @@
       {% call ui.filtro('Votó') %}<select class="filtro" id="f-voto">
         <option value="">Todos</option><option value="1">Votaron</option><option value="0">No votaron</option>
       </select>{% endcall %}
+      {% call ui.filtro('OSEDA') %}<select class="filtro" id="f-oseda">
+        <option value="">Todos</option><option value="si">Con OSEDA</option><option value="no">Sin OSEDA</option>
+      </select>{% endcall %}
       {% call ui.filtro('Origen') %}<select class="filtro" id="f-origen">
         <option value="">Todos</option><option value="padron">Del padrón</option><option value="manual">Agregados a mano</option>
       </select>{% endcall %}
     {% endcall %}
+    {% if aviso_oseda %}{{ ui.aviso(aviso_oseda, 'warning') }}{% endif %}
     <div class="data-table-wrap">
       <table class="data-table" id="tbl-padron" data-exportar="Padron electoral {{ el.fecha_votacion.strftime('%Y-%m-%d') }}">
         <thead><tr>
           <th class="col-acciones" data-no-sort>Acciones</th>
           <th class="th-right" data-orden="asc">Orden</th><th>Apellido y nombres</th><th>Documento</th><th>CUIL</th>
-          <th>Empleador</th><th class="th-center">Alta</th><th>Votó</th><th>Registró</th>
+          <th>Empleador</th><th class="th-center">Alta</th><th>OSEDA</th><th>Votó</th><th>Registró</th>
         </tr></thead>
         <tbody>
           {% for p in filas %}
-          <tr data-voto="{{ p.voto }}" data-origen="{{ p.origen }}">
+          {% set os = OSEDA_ESTADOS.get(p.oseda) %}
+          <tr data-voto="{{ p.voto }}" data-origen="{{ p.origen }}" data-oseda="{{ os[2] if os else '' }}">
             <td><div class="acciones">
               {% if vigente and p.voto %}{{ ui.accion('desaplicar', titulo='Quitar el voto', onclick="abrirMotivo(this, 'quitar_voto')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
               {% if vigente and not p.voto %}{{ ui.accion('borrar', titulo='Quitar del padrón electoral', onclick="abrirMotivo(this, 'quitar')", datos={'id': p.id, 'nombre': p.apellido_nombres}) }}{% endif %}
@@ -83,11 +89,12 @@
             <td class="td-mono">{{ p.cuil or '—' }}</td>
             <td>{{ p.empleador or (p.cuit_empleador or '—') }}</td>
             <td class="td-center" data-valor="{{ p.fecha_alta.isoformat() if p.fecha_alta else '' }}">{{ p.fecha_alta.strftime('%d/%m/%Y') if p.fecha_alta else '—' }}</td>
+            <td>{% if os %}{{ ui.estado(os[0], os[1]) }}{% if p.oseda_baja %} <span class="chico">{{ p.oseda_baja.strftime('%d/%m/%Y') }}</span>{% endif %}{% else %}—{% endif %}</td>
             <td data-valor="{{ p.fecha_voto.isoformat() if p.fecha_voto else '' }}">{% if p.voto %}{{ ui.estado('Votó ' ~ p.fecha_voto.strftime('%H:%M'), 'ok') }}{% if p.fecha_voto.date() != el.fecha_votacion %} <span class="chico">{{ p.fecha_voto.strftime('%d/%m/%Y') }}</span>{% endif %}{% else %}{{ ui.estado('No votó', 'neutro') }}{% endif %}</td>
             <td>{{ p.usuario_voto or '' }}</td>
           </tr>
           {% else %}
-          <tr class="no-data-row"><td colspan="9" class="no-data">El padrón está vacío: generalo con el botón de arriba.</td></tr>
+          <tr class="no-data-row"><td colspan="10" class="no-data">El padrón está vacío: generalo con el botón de arriba.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -225,10 +232,12 @@ function abrirMotivo(b, accion) {
   abrirModal('modal-motivo');
 }
 document.addEventListener('DOMContentLoaded', function () {
-  var fv = document.getElementById('f-voto'), fo = document.getElementById('f-origen'), fa = document.getElementById('f-accion');
+  var fv = document.getElementById('f-voto'), fo = document.getElementById('f-origen'), fa = document.getElementById('f-accion'),
+      fs = document.getElementById('f-oseda');
   gestion_admTable('tbl-padron', { pageSize: 50, filtroExtra: function (tr) {
     if (fv.value && tr.dataset.voto !== fv.value) return false;
     if (fo.value && tr.dataset.origen !== fo.value) return false;
+    if (fs.value && tr.dataset.oseda !== fs.value) return false;
     return true;
   } });
   gestion_admTable('tbl-movs', { pageSize: 50, filtroExtra: function (tr) {

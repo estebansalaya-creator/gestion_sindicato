@@ -1001,6 +1001,10 @@ marcando el afiliado si vino a votar».
   Varias mesas a la vez: el UPDATE marca solo `voto = 0`, así la segunda marca avisa quién y a qué hora; las cifras
   y los últimos votos se refrescan cada 15 s (`api_estado`). Quitar un voto pide motivo. Si el documento no está en
   el padrón electoral, dice por qué (`por_que_no_esta`: familiar, de baja al corte, alta posterior, sin antigüedad).
+- **OSEDA** (pedido del 18/11/2026): la grilla del padrón electoral (y su Excel) dice si cada afiliado tiene OSEDA
+  HOY —Sí (titular), Sí, familiar, De baja (con la fecha) o No— por su CUIL en `p_afiliados` de contable
+  (`contable_oseda.padron_oseda_por_cuil`, vigente = activo y sin baja o con baja de hoy en adelante), en vivo al
+  abrir la ficha: no es parte de la foto. Filtro «Con OSEDA / Sin OSEDA». Sin Railway, «—» y el aviso.
 - **Se marca el día de la votación** (`puede_marcar`); otro día solo el Administrador, con el aviso (la carga
   posterior de un acta en papel).
 - **Rastro**: `el_padron_mov` (voto, quita_voto, agregado, quitado), con usuario, fecha y motivo; solapa Movimientos.
