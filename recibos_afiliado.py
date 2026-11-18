@@ -267,14 +267,22 @@ def transferencias_sin_recibo(cur, cuil: str, cfg: dict | None) -> list[dict]:
     vigente, con lo que AEDA ya registró en su orden del mes («aeda»)."""
     if not cuil or not cfg:
         return []
-    cur.execute("""SELECT e.id, e.fecham, e.credito, e.ref_nro, e.concepto, e.c_cuentas_de_fondos_id AS id_cuenta,
+    # También lo que transfirieron los que pagan por él (fisca_cuit_afiliado, 18/11/2026).
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables
+                    WHERE table_schema = DATABASE() AND table_name = 'fisca_cuit_afiliado'""")
+    otros = []
+    if cur.fetchone()["n"]:
+        cur.execute("SELECT cuit_pagador FROM fisca_cuit_afiliado WHERE activo = 1 AND cuil_afiliado = %s", (cuil,))
+        otros = [f["cuit_pagador"] for f in cur.fetchall()]
+    pagadores = ", ".join(["%s"] * (1 + len(otros)))
+    cur.execute(f"""SELECT e.id, e.fecham, e.credito, e.ref_nro, e.concepto, e.c_cuentas_de_fondos_id AS id_cuenta,
                           cf.nombre AS cuenta
                      FROM c_extractos_bancarios e
                      JOIN c_cuentas_de_fondos cf ON cf.id = e.c_cuentas_de_fondos_id
-                    WHERE e.cuit = %s AND e.credito > 0
+                    WHERE e.cuit IN ({pagadores}) AND e.credito > 0
                       AND NOT EXISTS (SELECT 1 FROM ingreso_ordenes_detalle d JOIN ingreso_ordenes o ON o.id = d.id_orden
                                        WHERE d.id_extracto_origen = e.id AND o.estado <> 'anulado')
-                    ORDER BY e.fecham DESC, e.id DESC LIMIT 200""", (cuil,))
+                    ORDER BY e.fecham DESC, e.id DESC LIMIT 200""", [cuil] + otros)
     filas = cur.fetchall()
     por_cuenta: dict[int, list] = {}
     for f in filas:

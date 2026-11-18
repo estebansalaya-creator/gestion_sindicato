@@ -62,6 +62,13 @@ ok(r["como"] == "relacionado" and r["cuit"] == "30696906420", "un afiliado carga
 ok(R.resolver_empleador("27000000006", emp, rel)["como"] == "sin", "sin padrón, sin identificar")
 ok(R.resolver_empleador("", emp, rel, afi)["como"] == "sin", "sin CUIT")
 ok(R.resolver_empleador("33707651259", emp, rel, afi)["como"] == "sin", "CUIT desconocido")
+pag = {"23238151694": "27000000006", "30709404047": "20000000001", "20999999995": "20888888886"}
+r = R.resolver_empleador("23238151694", emp, rel, afi, pag)
+ok(r["como"] == "afiliado" and r["cuil"] == "27000000006" and r["nombre"] == "PEREZ JUAN" and r.get("por_otro"),
+   "paga por un afiliado (fisca_cuit_afiliado): el CUIL es el del afiliado")
+ok(R.resolver_empleador("27000000006", emp, rel, afi, pag)["cuil"] == "27000000006", "el afiliado mismo: su CUIL")
+ok(R.resolver_empleador("30709404047", emp, rel, afi, pag)["como"] == "mismo", "una empresa no pasa a ser de un afiliado")
+ok(R.resolver_empleador("20999999995", emp, rel, afi, pag)["como"] == "sin", "paga por alguien que no está en el padrón: sin identificar")
 ok(R.resolver_empleador("20081898201", emp, {"20081898201": ["30999999990"]}, {})["como"] == "sin",
    "relacionado con un CUIT que no está en Empleadores")
 

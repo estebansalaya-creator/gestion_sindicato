@@ -177,7 +177,8 @@ repetiría en la URL lo que dice el dominio.
 /fiscalizacion/fiscalizadores  ABM, ?edit=ID, ?nuevo=1; POST accion=guardar|borrar|baja|reactivar
 /fiscalizacion/recibos       acreditaciones de una cuenta: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto> (?cuit=,
                              ?acuerdo= como recibo de fiscalización);
-                             /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST
+                             /emitir_lote POST; /<id_orden> recibo, /<id_orden>/pdf; /relacion POST, /relacion/<id>/baja POST;
+                             /asociar POST (de quién es un pago), /afiliado/<id>/baja POST
 /beneficios/ymca/adheridos   nómina (?edit=ID, ?cuil=&desde= alta precargada); POST accion=guardar|baja|borrar
 /beneficios/ymca/recibos     transferencias de afiliados: ?cuenta, ?desde, ?hasta; /emitir/<id_extracto>, /emitir_lote POST
 /beneficios/ymca/cuotas      cuenta por grupo familiar: ?desde, ?hasta (AAAAMM); /<cuil_titular> la de un grupo
@@ -818,6 +819,15 @@ relaciona con su empleador por el CUIT. Para probar sin bajar los archivos del b
   tiene?» (se puede emitir igual) lo único con esa fecha e importe de los dos lados (así caen los AEDA-OI de
   fiscalización). Con los 56 créditos de la recaudadora del 02 al 05/11/2026: 42 ya tenían su AEDA-RC (los 42 que
   AEDA cobró), 3 «¿ya tiene?» (AEDA-OI).
+- **Quién pagó** (pedido del 18/11/2026, `sql/recibos_pagadores_20261118.sql`, se corre a mano): en la grilla, lo «Sin
+  identificar» tiene **Asociar**: si el banco no trajo el CUIT (TRANSF.INT.DIST.TITULAR sin CUIT: AEDA tampoco lo
+  tiene), se carga en el renglón (`c_extractos_bancarios.cuit_manual` = 1, usuario y fecha; la grilla lo marca «a
+  mano»; el que trajo el banco no se pisa); y si el que pagó no es la misma empresa o el mismo afiliado, se lo
+  relaciona: con una empresa (`fisca_cuit_relacionado`, como siempre) o con un afiliado (**`fisca_cuit_afiliado`**,
+  pagador → CUIL; el cónyuge, la cuenta de otro). Un pagador va a una empresa o a un afiliado, no a los dos.
+  `resolver_empleador(..., pagadores)` devuelve `como = afiliado` con `cuil` = el del afiliado (no el del banco), y
+  Beneficios, el lote y `recibos_afiliado.transferencias_sin_recibo` usan ese CUIL. Sin el script la pantalla
+  funciona igual, sin poder cargar el CUIT ni asociar a un afiliado.
 - **Cuota social sin pagador** (pedido del 18/11/2026, `cuotas_sociales`): una acreditación sin pagador identificado
   cuyo importe es justo N cuotas sociales del convenio (`ben_convenio_precio.cuota_afiliado` vigente desde ese mes o
   antes: 30.000, 60.000, 25.000…) no se sugiere como cuota sindical: queda «Otro ingreso» con la nota (se puede

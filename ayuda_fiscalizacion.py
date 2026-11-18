@@ -229,6 +229,7 @@ SECCIONES = [
       "se carga como CUIT relacionado; y al emitir de a uno se puede emitir como cuota sindical de un "
       "empleador."),
      ("Varios posibles · Sin identificar", "Hay que elegir el empleador al emitir. Sin identificar y justo una o más cuotas sociales del convenio (30.000, 60.000…): queda «Otro ingreso», porque casi seguro es un afiliado; se puede emitir igual de a uno."),
+     ("Asociar (la persona)", "En lo sin identificar: dice de quién es el pago. Si el banco no trajo el CUIT, se escribe (queda «a mano»; vacío, es el mismo de la empresa o el afiliado). Si el que pagó es otro (el estudio, el cónyuge), sus próximos pagos se reconocen solos: los de una empresa, acá; los de un afiliado, en Beneficios."),
    ]},
    {"tipo": "campos", "items": [
      ("Sin recibo", "Hay que emitirlo."),

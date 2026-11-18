@@ -509,6 +509,11 @@ def _ctx_estado_cuenta(cur, id_proveedor, f) -> dict | None:
             # El concepto de la vista repite el comprobante; sin comprobante
             # (solo expediente) dice el asunto, y ese sí se muestra.
             m["detalle"] = "" if m.get("id_comprobante") else (m["concepto"] or "")
+            # Sin el número de expediente (pedido del 18/11/2026): la vista dice
+            # «Factura C 00001-00000096 — 000001874/26»; queda el comprobante. El
+            # expediente se abre con el ojo; buscar por él sigue andando (_where_comprobante).
+            if m.get("id_comprobante") and m.get("nro_referencia"):
+                m["concepto"] = m["nro_referencia"]
             continue
         dato = saldo_pago.get(m["id_pago"]) if m["id_pago"] else None
         if not dato:

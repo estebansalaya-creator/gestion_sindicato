@@ -713,13 +713,13 @@ def acreditaciones(cur, conv, id_cuenta, desde, hasta) -> tuple[list[dict], bool
     cfg = config_recibo(cur, conv)
     nomina, pre = adheridos(cur, conv["id"]), precios(cur, conv["id"])
     if filas:
-        cuils = list({FR.digitos(f["cuit"]) for f in filas})
+        cuils = list({f["emp"]["cuil"] for f in filas})
         cur.execute(f"""SELECT cuil, COALESCE(NULLIF(cuil_titular, ''), cuil) AS cuil_titular FROM p_afiliados
                          WHERE cuil IN ({','.join(['%s'] * len(cuils))})""", cuils)
         grupo_de = {r["cuil"]: r["cuil_titular"] for r in cur.fetchall()}
     for f in filas:
         mes = f["fecham"].strftime("%Y%m")
-        tit = grupo_de.get(FR.digitos(f["cuit"]))
+        tit = grupo_de.get(f["emp"]["cuil"])
         f["cuil_titular"] = tit
         f["cuota_grupo"], f["adheridos"] = cuota_del_grupo(nomina, pre, tit, mes)
         f["al_afiliado"] = True
@@ -790,7 +790,9 @@ def emitir_uno(id_extracto):
                 flash(f"!Esa acreditación ya tiene el recibo {ya['nro_recibo'] or ya['nro_orden']}.")
                 return redirect(url_for("fisca_rec.recibo", id_orden=ya["id_orden"]))
             pagador = FR.digitos(e["cuit"])
-            afi = RA.afiliado(cur, pagador)
+            # El que pagó puede pagar por un afiliado (fisca_cuit_afiliado, 18/11/2026).
+            cuil = FR.cuil_afiliado_de(cur, pagador) if pagador else ""
+            afi = RA.afiliado(cur, cuil)
             if not afi:
                 flash(f"!El CUIT {pagador or '—'} no es de un afiliado del padrón: se emite en Fiscalización › Emisión de Recibos.")
                 return redirect(volver)
@@ -824,7 +826,7 @@ def emitir_uno(id_extracto):
             try:
                 conn.begin()
                 with conn.cursor() as cur:
-                    r = RA.emitir(cur, FR._extracto_bloqueado(cur, id_extracto), pagador, renglones, _uid(), cfg,
+                    r = RA.emitir(cur, FR._extracto_bloqueado(cur, id_extracto), cuil, renglones, _uid(), cfg,
                                   obs or None, fecha_valida=FR._fecha_valida)
                 conn.commit()
             except FR.ERRORES as ex:
@@ -892,7 +894,7 @@ def emitir_lote():
         try:
             conn.begin()
             with conn.cursor() as cur:
-                RA.emitir(cur, FR._extracto_bloqueado(cur, f["id"]), FR.digitos(f["cuit"]), f["sugerido"], uid, cfg,
+                RA.emitir(cur, FR._extracto_bloqueado(cur, f["id"]), f["emp"]["cuil"], f["sugerido"], uid, cfg,
                           fecha_valida=FR._fecha_valida)
             conn.commit()
             hechos += 1

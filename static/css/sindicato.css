@@ -396,6 +396,7 @@ code, kbd { font-family: var(--mono); font-size: .9em; }
 .btn-accion.auditar                     { --c: var(--warn-texto); --c-borde: var(--warn-borde); }
 .btn-accion.aplicaciones                { --c: var(--blue);   --c-borde: var(--info-borde); }
 .btn-accion.desaplicar                  { --c: var(--danger); --c-borde: var(--danger-borde); }
+.btn-accion.asociar                     { --c: var(--navy);   --c-borde: var(--info-borde); }
 .btn-accion[disabled], .btn-accion.deshabilitado {
   opacity: .4; cursor: default; pointer-events: none;
 }
