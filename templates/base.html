@@ -335,7 +335,12 @@ function mascaraImporte(inp, idOculto) {
 }
 </script>
 </head>
-<body>
+{# El inicio —el panel de accesos (app.menu) o, para quien no fijó ninguno,
+   el Panel de Fiscalización al que redirige— arranca con el menú lateral
+   todo cerrado (20/11/2026). Antes el Panel desplegaba Fiscalización por ser
+   la rama de la opción activa, y se restauraba lo que hubiera quedado
+   abierto. #}
+<body{% if request.endpoint in ('menu', 'sindicato.fisca_dashboard') %} data-inicio{% endif %}>
 
 <header class="app-header">
   {# Nombre y logo de «Datos del sindicato»; sin cargar, como antes. #}
@@ -877,6 +882,13 @@ function toggleSubmenu(el, id) {
 }
 
 function _initMenu() {
+  // En el inicio no se abre ninguna rama: ni las guardadas ni la de la opción
+  // activa. Es lo mismo que hace el botón Inicio (menuCollapseAll), que hasta
+  // ahora quedaba anulado al cargar el Panel de Fiscalización.
+  if (document.body.hasAttribute('data-inicio')) {
+    try { localStorage.removeItem(MENU_KEY); } catch(e) {}
+    return;
+  }
   var openIds = _menuGetOpen();
   var curPath  = window.location.pathname;
 
