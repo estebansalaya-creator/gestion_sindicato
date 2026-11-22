@@ -741,11 +741,7 @@ def usuarios(cur) -> list[dict]:
          WHERE u.activo = 1 AND u.id <> %s
            AND EXISTS (SELECT 1 FROM s_menu m
                         WHERE m.url = %s AND m.activo = 1
-                          AND (m.id IN (SELECT mr.menu_id FROM s_menu_rol mr
-                                          JOIN s_usuario_rol x ON x.rol_id = mr.rol_id
-                                          JOIN s_roles xr ON xr.id = x.rol_id AND xr.activo = 1
-                                         WHERE x.usuario_id = u.id)
-                               OR m.id IN (SELECT mu.menu_id FROM s_menu_usuario mu WHERE mu.usuario_id = u.id)))
+                          AND m.id IN (SELECT mu.menu_id FROM s_menu_usuario mu WHERE mu.usuario_id = u.id))
          GROUP BY u.id, u.nombre
          ORDER BY u.nombre""", (_yo(), URL_MENU))
     filas = cur.fetchall()

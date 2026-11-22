@@ -315,8 +315,8 @@ de gestion_adm (`C:\web`), donde quedan los commits anteriores y la carpeta est�
 
 ### Qué falta
 
-- **Menú**: `s_menu` y `s_roles` se cargan con `sql/menu_y_roles_20260826.sql` y se administran desde
-  Administración del Sistema → Menú. Las opciones sin pantalla dan el 404 de «pantalla pendiente», no
+- **Menú**: `s_menu` y `s_roles` se cargaron con `sql/menu_y_roles_20260826.sql` y se administran desde
+  Administración del Sistema → Menú (las opciones de cada persona, en Permisos por Usuario). Las opciones sin pantalla dan el 404 de «pantalla pendiente», no
   el de IIS; el ABM del menú las marca «Pendiente».
 - **Logo**: `static/imagenes/LOGO.GIF` no existe todavía. El `onerror` del template lo oculta.
 
@@ -1173,17 +1173,24 @@ Correo Saliente, Procesos Desatendidos, Talonarios y lo del Asistente.
   usuario activo con el rol Administrador (nadie se da de baja ni se quita ese rol a sí mismo); el rol
   Administrador no se desactiva ni pierde Usuarios, Roles y Menú; y esas tres opciones
   (`admin.MENU_PROTEGIDO`) no se desactivan, no se eliminan y no cambian de URL.
-- **Permisos = roles + sueltos** (`db.roles_y_menu`, que antes era `_roles_y_menu` de app.py). Permisos
-  por Usuario solo agrega (`s_menu_usuario`); lo que da un rol se ve tildado y no se toca. En gestion_adm
-  esa pantalla copiaba lo del rol y después un cambio en el rol no le llegaba a nadie.
+- **Los roles NO dan opciones de menú** (22/11/2026, pedido: «los roles están mejor definidos en el proyecto
+  financiera… que no tenga asociación con las opciones de menú, para eso está Permisos por Usuario»). Lo que
+  ve cada persona es SOLO `s_menu_usuario` (`db.roles_y_menu`), que se arma en Permisos por Usuario (con
+  «Copiar los permisos de» otro usuario) o en el alta del usuario («Copiar los permisos de», se graba con el
+  alta y abre Permisos por Usuario). `s_menu_rol` quedó vacía y sin uso (`sql/roles_sin_menu_20261122.sql`
+  copió a cada usuario lo que le daban sus roles). **Un script que agrega una opción de menú la asigna en
+  `s_menu_usuario`**, no en `s_menu_rol`. Quien tiene el rol Administrador ve siempre Usuarios, Roles y Menú
+  con sus ramas (`db.MENU_ADMIN_SIEMPRE` = `admin.MENU_PROTEGIDO`), tenga tildado lo que tenga.
 - **Ramas**: tildar una opción tilda su rama, en pantalla y en el servidor (`_con_ancestros`): el menú
   lateral descarta una opción cuya rama no está permitida.
 - **Los permisos de la sesión se vuelven a leer cada minuto** (`app._permisos_al_dia`, desde el 15/11/2026):
   roles y opciones de menú (`sind_menu_ids`) salen de la cookie del login, y antes quedaban fijos hasta salir y
   volver a entrar (las opciones nuevas cargadas por script no aparecían). El de quien hace el cambio se refresca
   en el momento (`_refrescar_sesion`).
-- **Roles fijos**: el nombre es la clave del código (`tiene_rol`); se editan descripción, estado y
-  opciones. `db_usuario` se ve y no se cambia (necesita la variable `SIND_DB_PASS_<USUARIO>`).
+- **Roles = nivel de la persona**, como en financiera: se crean, se renombran, se ordenan por prioridad y se
+  eliminan si nadie los tiene (con usuarios, se desactivan). El código pregunta solo por **Administrador**
+  (`tiene_rol`: anular pagos, reabrir conciliaciones, marcar votos fuera del día), que no se renombra, no se
+  desactiva ni se elimina. `db_usuario` no se toca desde la pantalla (necesita `SIND_DB_PASS_<USUARIO>`).
 - **Usuarios**: alta con contraseña obligatoria (no hay ingreso con Google), mínimo 8, email en
   minúsculas y único. **Uno que operó no se elimina**: se da de baja. Dónde figura sale de las FK de la
   base (`_referencias` / `_usos`: toda FK a `s_usuarios` que no sea CASCADE), no de una lista a mano como

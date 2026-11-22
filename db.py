@@ -171,11 +171,11 @@ def puede(url: str) -> bool:
     """
     Si el usuario logueado tiene la opción de menú con esa URL.
 
-    El permiso ES la opción de menú: lo que se asigna en `s_menu_rol` o
+    El permiso ES la opción de menú: lo que se asigna a la persona en
     `s_menu_usuario`, que el login deja en `sind_menu_ids`. Así no hay una
     segunda tabla de permisos que se desincronice de lo que la persona ve en
-    el menú. Para dar o quitar el ABM de afiliados a un rol, se le da o se le
-    quita la opción «ABM de Afiliados».
+    el menú. Para dar o quitar el ABM de afiliados a una persona, se le da o se
+    le quita la opción «ABM de Afiliados» en Permisos por Usuario.
 
     Como sale de la sesión, un cambio de permisos rige desde el próximo login.
 
@@ -194,19 +194,23 @@ def puede(url: str) -> bool:
     return cache[url]
 
 
+# Las pantallas que quien tiene el rol Administrador ve siempre, tenga tildado lo que tenga:
+# sin ellas nadie podría volver a dar permisos. Las usa también admin.py (MENU_PROTEGIDO).
+ROL_ADMIN = "Administrador"
+MENU_ADMIN_SIEMPRE = ("/admin/usuarios", "/admin/roles", "/admin/menu")
+
+
 def roles_y_menu(id_usuario: int) -> tuple[list[str], list[int]]:
     """
     Los roles del usuario y los ids de menú que tiene permitidos.
 
-    Los permisos salen de dos lados y se suman:
+    Desde el 22/11/2026 los roles NO dan opciones de menú (pedido: «que no tenga asociación con
+    las opciones de menú», como el nivel de usuario de financiera). Lo que ve cada persona es lo que
+    tiene en `s_menu_usuario` (Administración › Permisos por Usuario), y nada más. El rol dice qué
+    puede autorizar: el código pregunta solo por Administrador (`tiene_rol`).
 
-    - `s_menu_rol`, lo que corresponde a cada rol. Es el caso normal.
-    - `s_menu_usuario`, excepciones para una persona puntual.
-
-    `gestion_adm` mira solo `s_menu_usuario` y copia ahí lo del rol desde su
-    ABM de permisos. Acá se toma la unión: alcanza con asignar un rol para que
-    la persona vea su menú, y «Permisos por Usuario» (admin.permisos) suma
-    opciones sueltas a una persona. Una excepción solo agrega, no quita.
+    Única excepción: con el rol Administrador activo se suman siempre Usuarios, Roles y Menú
+    (`MENU_ADMIN_SIEMPRE`) con sus ramas, para que nunca quede nadie sin forma de administrar.
 
     Vive acá y no en app.py porque la usan el login y las pantallas de
     administración (refrescan la sesión de quien cambia sus propios permisos).
@@ -226,20 +230,22 @@ def roles_y_menu(id_usuario: int) -> tuple[list[str], list[int]]:
             roles = [fila["nombre"] for fila in cur.fetchall()]
 
             cur.execute("""
-                SELECT DISTINCT m.id
+                SELECT m.id
                 FROM s_menu m
+                JOIN s_menu_usuario mu ON mu.menu_id = m.id AND mu.usuario_id = %s
                 WHERE m.activo = 1
-                  AND (
-                        m.id IN (SELECT mr.menu_id
-                                 FROM s_menu_rol mr
-                                 JOIN s_usuario_rol ur ON ur.rol_id = mr.rol_id
-                                 JOIN s_roles r        ON r.id = ur.rol_id AND r.activo = 1
-                                 WHERE ur.usuario_id = %s)
-                     OR m.id IN (SELECT mu.menu_id
-                                 FROM s_menu_usuario mu
-                                 WHERE mu.usuario_id = %s)
-                  )
-            """, (id_usuario, id_usuario))
-            menu_ids = [fila["id"] for fila in cur.fetchall()]
+            """, (id_usuario,))
+            menu_ids = {fila["id"] for fila in cur.fetchall()}
 
-    return roles, menu_ids
+            if ROL_ADMIN in roles:
+                cur.execute("SELECT id, padre_id, url FROM s_menu WHERE activo = 1")
+                filas = cur.fetchall()
+                padre = {f["id"]: f["padre_id"] for f in filas}
+                for f in filas:
+                    if f["url"] in MENU_ADMIN_SIEMPRE:
+                        i = f["id"]
+                        while i is not None and i in padre:
+                            menu_ids.add(i)
+                            i = padre[i]
+
+    return roles, sorted(menu_ids)

@@ -4,16 +4,16 @@
 {% block title %}Permisos por usuario{% endblock %}
 
 {#
-  Permisos por usuario (admin.permisos): opciones sueltas para una persona,
-  además de las de sus roles (s_menu_usuario). Las de los roles se ven
-  tildadas y no se tocan: un permiso suelto suma, no quita. Para sacarle algo
-  que le da un rol, se cambia el rol o se le asigna otro.
+  Permisos por usuario (admin.permisos): TODAS las pantallas que ve una persona (s_menu_usuario).
+  Desde el 22/11/2026 los roles no dan opciones de menú. «Copiar de» trae las de otro usuario
+  (?copiar=ID) para no tildar de cero; se graban recién con «Guardar permisos». Con el rol
+  Administrador, Usuarios, Roles y Menú se ven tildadas y no se tocan.
 #}
 {% block content %}
 <div class="page-header">
   <div>
     <h1>Permisos por usuario</h1>
-    <p>Opciones del menú para una persona, además de las que le dan sus roles.</p>
+    <p>Las pantallas que ve cada persona. El rol no da pantallas: se eligen acá.</p>
   </div>
 </div>
 
@@ -22,9 +22,9 @@
 <div class="card" data-sin-solapas>
   <form method="get" action="{{ url_for('admin.permisos') }}" class="bloque">
     <div class="campos">
-      <div class="campo" style="--span:6;">
+      <div class="campo" style="--span:5;">
         <label>Usuario</label>
-        <select name="usuario" onchange="this.form.submit()">
+        <select name="usuario" onchange="this.form.copiar.value=''; this.form.submit()">
           <option value="">— Elegí a quién —</option>
           {% for u in usuarios %}
           <option value="{{ u.id }}" {{ 'selected' if usuario and u.id == usuario.id }}>
@@ -34,32 +34,39 @@
         </select>
       </div>
       {% if usuario %}
-      <div class="campo" style="--span:6;">
-        <label>Roles</label>
+      <div class="campo" style="--span:3;">
+        <label>Rol</label>
         <input type="text" value="{{ usuario.roles or 'sin rol' }}" readonly>
-        <small class="campo-ayuda">
-          {% if puede(url_for('admin.usuarios')) %}<a href="{{ url_for('admin.usuarios', edit=usuario.id) }}">Cambiar sus roles</a> ·{% endif %}
-          {{ por_rol|length }} opciones por rol, {{ extras|length }} sueltas.
-        </small>
+        {% if puede(url_for('admin.usuarios')) %}<small class="campo-ayuda"><a href="{{ url_for('admin.usuarios', edit=usuario.id) }}">Cambiar su rol</a></small>{% endif %}
       </div>
-      {% endif %}
+      <div class="campo" style="--span:4;">
+        <label>Copiar los permisos de</label>
+        <select name="copiar" onchange="this.form.submit()">
+          <option value="">— Nadie: sus permisos actuales —</option>
+          {% for u in usuarios if u.id != usuario.id %}
+          <option value="{{ u.id }}" {{ 'selected' if copia and u.id == copia.id }}>{{ u.nombre }}{% if u.roles %} · {{ u.roles }}{% endif %}</option>
+          {% endfor %}
+        </select>
+        <small class="campo-ayuda">Trae lo de otra persona para empezar; no se graba hasta «Guardar permisos».</small>
+      </div>
+      {% else %}<input type="hidden" name="copiar" value="">{% endif %}
     </div>
   </form>
 </div>
 
 {% if usuario %}
   {% if not usuario.activo %}{{ ui.aviso('Está dado de baja: no puede entrar, tenga los permisos que tenga.', 'warning') }}{% endif %}
+  {% if copia %}{{ ui.aviso('Estás viendo los permisos de ' ~ copia.nombre ~ '. Revisalos y guardá para dárselos a ' ~ usuario.nombre ~ '.', 'warning') }}{% endif %}
   <form method="post" action="{{ url_for('admin.permisos') }}">
     <input type="hidden" name="usuario" value="{{ usuario.id }}">
-    {% set fijas = {} %}
-    {% for k, v in por_rol.items() %}{% set _ = fijas.update({k: v|join(', ')}) %}{% endfor %}
-    {{ am.tabla(arbol, extras, fijas=fijas, id='tbl-menu', exportar='Permisos de ' ~ usuario.nombre, col_fijas='Por rol') }}
+    {{ am.tabla(arbol, marcadas, fijas=fijas, id='tbl-menu', exportar='Permisos de ' ~ usuario.nombre,
+                col_fijas='Fija' if fijas else None) }}
     <div class="form-acciones">
       {{ ui.boton('Guardar permisos', icono_='guardar', submit=True) }}
     </div>
   </form>
   {{ am.script('tbl-menu') }}
 {% else %}
-  {{ ui.aviso('Elegí un usuario para ver qué tiene por sus roles y darle opciones sueltas.', 'info') }}
+  {{ ui.aviso('Elegí un usuario para ver y cambiar las pantallas que tiene.', 'info') }}
 {% endif %}
 {% endblock %}

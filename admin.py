@@ -49,7 +49,7 @@ from flask import (Blueprint, current_app, flash, redirect, render_template, req
 from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.security import generate_password_hash
 
-from db import get_connection, puede, roles_y_menu, validasesion
+from db import MENU_ADMIN_SIEMPRE, get_connection, puede, roles_y_menu, validasesion
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
@@ -63,7 +63,7 @@ MENU_NIVELES = 4
 AREA_NIVELES = 5
 
 #: Sin estas tres nadie podría volver a dar permisos ni arreglar el menú.
-MENU_PROTEGIDO = ("/admin/usuarios", "/admin/roles", "/admin/menu")
+MENU_PROTEGIDO = MENU_ADMIN_SIEMPRE
 
 #: Cómo se nombra cada tabla que referencia a un usuario o a un área.
 ETIQUETAS = {
@@ -339,7 +339,7 @@ def usuarios():
 
                 reg = {"id": uid, "email": _texto("email", 150).lower().replace(" ", ""),
                        "nombre": _texto("nombre", 150), "activo": 1 if request.form.get("activo") else 0,
-                       "rol_ids": _ids("rol_ids")}
+                       "rol_ids": _ids("rol_ids"), "copiar_de": _id("copiar_de")}
                 clave, clave2 = request.form.get("password") or "", request.form.get("password2") or ""
 
                 if not reg["email"]:
@@ -396,6 +396,18 @@ def usuarios():
                                     WHERE ur.usuario_id = %s AND r.activo = 1""", (uid,))
                     for rid in sorted(reg["rol_ids"]):
                         cur.execute("INSERT INTO s_usuario_rol (usuario_id, rol_id) VALUES (%s, %s)", (uid, rid))
+                    # Alta: las pantallas de otro usuario (los roles no dan pantallas; ver `roles`).
+                    copiadas = 0
+                    if not reg["id"] and reg["copiar_de"]:
+                        cur.execute("""INSERT IGNORE INTO s_menu_usuario (usuario_id, menu_id)
+                                       SELECT %s, menu_id FROM s_menu_usuario WHERE usuario_id = %s""",
+                                    (uid, reg["copiar_de"]))
+                        copiadas = cur.rowcount
+                    if not reg["id"]:
+                        flash(f"«{reg['nombre']}» dado de alta"
+                              + (f" con las {copiadas} opciones de menú de la persona elegida." if copiadas else
+                                 " sin pantallas: elegíselas acá en Permisos por Usuario."))
+                        return redirect(url_for("admin.permisos", usuario=uid))
                     if uid == yo:
                         _refrescar_sesion()
                     flash(f"«{reg['nombre']}» " + ("actualizado." if reg["id"] else "dado de alta.")
@@ -462,51 +474,80 @@ def usuarios():
 @admin_bp.route("/roles", methods=["GET", "POST"])
 def roles():
     """
-    Los roles son fijos, como en gestion_adm: el nombre es la clave que usa el
-    código (`db.tiene_rol`), así que no se crean, no se borran y no se
-    renombran desde acá. Se edita la descripción, si está activo y qué
-    opciones del menú tiene. `db_usuario` (con qué usuario de MySQL conecta el
-    rol) se ve pero no se cambia: necesita la variable de entorno con la
-    contraseña, y eso es del servidor.
+    Roles = el nivel o perfil de la persona (como en el proyecto financiera), SIN opciones de menú
+    (decidido el 22/11/2026: lo que ve cada uno se arma en Permisos por Usuario). El rol dice qué
+    puede autorizar: el código pregunta solo por Administrador (`db.tiene_rol`: anular pagos,
+    reabrir conciliaciones, marcar votos fuera del día…), que además ve siempre Usuarios, Roles y
+    Menú (`db.MENU_ADMIN_SIEMPRE`).
+
+    Administrador no se renombra, no se desactiva y no se elimina. Los demás se crean, se renombran,
+    se ordenan por prioridad y se eliminan si nadie los tiene (con usuarios, se desactivan).
+    `db_usuario` no se toca desde acá.
     """
     salida = _guardia("admin.roles")
     if salida:
         return salida
-    errores, rol, marcadas = [], None, None
+    errores, rol = [], None
 
     if request.method == "POST":
+        accion = request.form.get("accion")
         rid = _id("id")
         with get_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT * FROM s_roles WHERE id = %s", (rid or 0,))
-                rol = cur.fetchone()
-                if request.form.get("accion") != "guardar" or not rol:
-                    flash("!Los roles son fijos: no se crean ni se eliminan desde esta pantalla.")
-                    return redirect(url_for("admin.roles"))
-                menu = _menu_completo(cur)
-                por_id = {m["id"]: m for m in menu}
-                marcadas = _con_ancestros(_ids("menu_ids") & set(por_id), por_id)
-                rol.update(descripcion=_texto("descripcion", 250) or None,
-                           activo=1 if request.form.get("activo") else 0)
+                actual = None
+                if rid:
+                    cur.execute("SELECT * FROM s_roles WHERE id = %s", (rid,))
+                    actual = cur.fetchone()
+                    if not actual:
+                        flash("!El rol ya no existe.")
+                        return redirect(url_for("admin.roles"))
 
-                if rol["nombre"] == ROL_ADMIN:
-                    if not rol["activo"]:
-                        errores.append("El rol Administrador no se desactiva: el sistema quedaría sin "
-                                       "nadie que pueda administrarlo.")
-                    faltan = [m["nombre"] for m in menu if m["url"] in MENU_PROTEGIDO and m["id"] not in marcadas]
-                    if faltan:
-                        errores.append("El rol Administrador tiene que conservar " + ", ".join(faltan)
-                                       + ": sin esas pantallas nadie podría volver a dar permisos.")
+                if accion == "borrar" and actual:
+                    cur.execute("SELECT COUNT(*) AS n FROM s_usuario_rol WHERE rol_id = %s", (rid,))
+                    n = cur.fetchone()["n"]
+                    if actual["nombre"] == ROL_ADMIN:
+                        flash("!El rol Administrador no se elimina.")
+                    elif n:
+                        flash(f"!No se puede eliminar «{actual['nombre']}»: lo tienen {n} usuario(s). "
+                              "Sacáselo antes o desactivalo.")
+                    else:
+                        cur.execute("DELETE FROM s_menu_rol WHERE rol_id = %s", (rid,))
+                        cur.execute("DELETE FROM s_roles WHERE id = %s", (rid,))
+                        flash(f"Rol «{actual['nombre']}» eliminado.")
+                    return redirect(url_for("admin.roles"))
+
+                if accion != "guardar":
+                    return redirect(url_for("admin.roles"))
+
+                es_admin = bool(actual and actual["nombre"] == ROL_ADMIN)
+                nombre = ROL_ADMIN if es_admin else _texto("nombre", 50)
+                prioridad_txt = (request.form.get("prioridad") or "0").strip()
+                prioridad_ok = bool(re.fullmatch(r"-?\d{1,4}", prioridad_txt))
+                rol = dict(actual or {}, id=rid, nombre=nombre, descripcion=_texto("descripcion", 250) or None,
+                           prioridad=int(prioridad_txt) if prioridad_ok else 0,
+                           activo=1 if (es_admin or request.form.get("activo")) else 0)
+
+                if not nombre:
+                    errores.append("El nombre es obligatorio.")
+                else:
+                    cur.execute("SELECT id FROM s_roles WHERE nombre = %s AND id <> %s", (nombre, rid or 0))
+                    if cur.fetchone():
+                        errores.append(f"Ya hay un rol «{nombre}».")
+                    elif not es_admin and nombre.lower() == ROL_ADMIN.lower():
+                        errores.append("Ya existe el rol Administrador.")
+                if not prioridad_ok:
+                    errores.append("La prioridad es un número entero (los de mayor prioridad van primero).")
+
                 if not errores:
-                    cur.execute("UPDATE s_roles SET descripcion = %s, activo = %s WHERE id = %s",
-                                (rol["descripcion"], rol["activo"], rid))
-                    cur.execute("DELETE FROM s_menu_rol WHERE rol_id = %s", (rid,))
-                    if marcadas:
-                        cur.executemany("INSERT INTO s_menu_rol (menu_id, rol_id) VALUES (%s, %s)",
-                                        [(m, rid) for m in sorted(marcadas)])
+                    if rid:
+                        cur.execute("UPDATE s_roles SET nombre = %s, descripcion = %s, prioridad = %s, activo = %s "
+                                    "WHERE id = %s",
+                                    (rol["nombre"], rol["descripcion"], rol["prioridad"], rol["activo"], rid))
+                    else:
+                        cur.execute("INSERT INTO s_roles (nombre, descripcion, prioridad, activo) VALUES (%s, %s, %s, %s)",
+                                    (rol["nombre"], rol["descripcion"], rol["prioridad"], rol["activo"]))
                     _refrescar_sesion()
-                    flash(f"Rol «{rol['nombre']}» guardado con {len(marcadas)} opciones de menú. Quienes lo "
-                          "tienen ven el cambio desde su próximo ingreso.")
+                    flash(f"Rol «{rol['nombre']}» guardado.")
                     return redirect(url_for("admin.roles"))
 
     with get_connection() as conn:
@@ -518,22 +559,21 @@ def roles():
                 if not rol:
                     flash("!El rol no existe.")
                     return redirect(url_for("admin.roles"))
-            if rol and marcadas is None:
-                cur.execute("SELECT menu_id FROM s_menu_rol WHERE rol_id = %s", (rol["id"],))
-                marcadas = {f["menu_id"] for f in cur.fetchall()}
+            elif rol is None and request.args.get("nuevo"):
+                rol = {"id": None, "nombre": "", "descripcion": "", "prioridad": 20, "activo": 1}
             cur.execute("""
                 SELECT r.*,
                        (SELECT COUNT(*) FROM s_usuario_rol ur JOIN s_usuarios u ON u.id = ur.usuario_id
                          WHERE ur.rol_id = r.id AND u.activo = 1) AS usuarios,
-                       (SELECT COUNT(*) FROM s_menu_rol mr JOIN s_menu m ON m.id = mr.menu_id
-                         WHERE mr.rol_id = r.id AND m.activo = 1 AND m.url IS NOT NULL) AS pantallas
+                       (SELECT COUNT(*) FROM s_usuario_rol ur WHERE ur.rol_id = r.id) AS usuarios_todos,
+                       (SELECT GROUP_CONCAT(u.nombre ORDER BY u.nombre SEPARATOR ', ')
+                          FROM s_usuario_rol ur JOIN s_usuarios u ON u.id = ur.usuario_id
+                         WHERE ur.rol_id = r.id AND u.activo = 1) AS quienes
                   FROM s_roles r ORDER BY r.prioridad DESC, r.nombre
             """)
             lista = cur.fetchall()
-            arbol = _arbol(_menu_completo(cur)) if rol else []
-    protegidas = {n["id"] for n in arbol if n["url"] in MENU_PROTEGIDO} if rol and rol["nombre"] == ROL_ADMIN else set()
-    return render_template("admin/roles.html", roles=lista, rol=rol, arbol=arbol, marcadas=marcadas or set(),
-                           protegidas=protegidas, errores=errores, abrir_ficha=bool(rol))
+    return render_template("admin/roles.html", roles=lista, rol=rol, errores=errores,
+                           abrir_ficha=bool(rol), rol_admin=ROL_ADMIN)
 
 
 # =============================================================================
@@ -543,12 +583,10 @@ def roles():
 @admin_bp.route("/permisos", methods=["GET", "POST"])
 def permisos():
     """
-    Opciones sueltas para una persona, además de las de sus roles
-    (`s_menu_usuario`). Lo que dan los roles se ve tildado y sin poder tocarse:
-    para quitarlo hay que cambiar el rol, porque el permiso es la suma
-    (`db.roles_y_menu`). En gestion_adm esta pantalla era la lista completa
-    —copiaba lo del rol—, y un cambio en el rol no le llegaba a quien ya tenía
-    sus permisos copiados.
+    Lo que ve cada persona: TODAS sus opciones de menú están acá (`s_menu_usuario`). Desde el
+    22/11/2026 los roles no dan opciones (ver `roles`). Para no tildar de cero, «Copiar de» trae las
+    de otro usuario (?copiar=ID) y se guardan recién al confirmar. Con el rol Administrador,
+    Usuarios, Roles y Menú se ven tildadas y no se tocan (`db.MENU_ADMIN_SIEMPRE`).
     """
     salida = _guardia("admin.permisos")
     if salida:
@@ -562,39 +600,39 @@ def permisos():
             usuario = next((u for u in usuarios_ if u["id"] == uid), None)
             menu = _menu_completo(cur)
             por_id = {m["id"]: m for m in menu}
-            por_rol: dict[int, list[str]] = {}
-            extras: set[int] = set()
-            if usuario:
-                cur.execute("""SELECT mr.menu_id, r.nombre
-                                 FROM s_menu_rol mr
-                                 JOIN s_usuario_rol ur ON ur.rol_id = mr.rol_id
-                                 JOIN s_roles r ON r.id = mr.rol_id AND r.activo = 1
-                                WHERE ur.usuario_id = %s ORDER BY r.prioridad DESC""", (uid,))
-                for f in cur.fetchall():
-                    por_rol.setdefault(f["menu_id"], []).append(f["nombre"])
+            fijas: dict[int, str] = {}
+            if usuario and _es_admin(cur, uid):
+                fijas = {i: "por ser Administrador" for i in _con_ancestros(
+                    {m["id"] for m in menu if m["url"] in MENU_PROTEGIDO}, por_id)}
 
             if request.method == "POST":
                 if not usuario:
                     flash("!Elegí un usuario.")
                     return redirect(url_for("admin.permisos"))
-                nuevas = _con_ancestros(_ids("menu_ids") & set(por_id), por_id) - set(por_rol)
+                nuevas = _con_ancestros(_ids("menu_ids") & set(por_id), por_id)
                 cur.execute("DELETE FROM s_menu_usuario WHERE usuario_id = %s", (uid,))
                 if nuevas:
                     cur.executemany("INSERT INTO s_menu_usuario (usuario_id, menu_id) VALUES (%s, %s)",
                                     [(uid, m) for m in sorted(nuevas)])
+                pantallas = sum(1 for m in nuevas if por_id[m]["url"])
                 if uid == session.get("sind_usuario_id"):
                     _refrescar_sesion()
-                    flash(f"Tus permisos quedaron guardados: {len(nuevas)} opciones además de las de tus roles.")
+                    flash(f"Tus permisos quedaron guardados: {pantallas} pantallas.")
                 else:
-                    flash(f"Permisos de «{usuario['nombre']}» guardados: {len(nuevas)} opciones además de las "
-                          "de sus roles. Los ve desde su próximo ingreso.")
+                    flash(f"Permisos de «{usuario['nombre']}» guardados: {pantallas} pantallas. "
+                          "Los ve en menos de un minuto.")
                 return redirect(url_for("admin.permisos", usuario=uid))
 
+            marcadas: set[int] = set()
+            copia = None
             if usuario:
-                cur.execute("SELECT menu_id FROM s_menu_usuario WHERE usuario_id = %s", (uid,))
-                extras = {f["menu_id"] for f in cur.fetchall()}
-    return render_template("admin/permisos.html", usuarios=usuarios_, usuario=usuario,
-                           arbol=_arbol(menu) if usuario else [], por_rol=por_rol, extras=extras)
+                copiar = request.args.get("copiar", type=int)
+                copia = next((u for u in usuarios_ if u["id"] == copiar and copiar != uid), None)
+                cur.execute("SELECT menu_id FROM s_menu_usuario WHERE usuario_id = %s",
+                            (copia["id"] if copia else uid,))
+                marcadas = {f["menu_id"] for f in cur.fetchall()}
+    return render_template("admin/permisos.html", usuarios=usuarios_, usuario=usuario, copia=copia,
+                           arbol=_arbol(menu) if usuario else [], fijas=fijas, marcadas=marcadas)
 
 
 # =============================================================================
@@ -716,20 +754,16 @@ def menu():
                         mid = cur.lastrowid
                     _rearmar_niveles(cur, "s_menu")
                     flash(f"«{item['nombre']}» " + ("guardada." if item["id"] else
-                          "agregada. Todavía no la tiene nadie: asignala en Roles."))
+                          "agregada. Todavía no la tiene nadie: asignala en Permisos por Usuario."))
                     return redirect(url_for("admin.menu", _anchor=f"m{mid}"))
 
     with get_connection() as conn:
         with conn.cursor() as cur:
             menu_ = _menu_completo(cur)
-            cur.execute("""SELECT mr.menu_id, GROUP_CONCAT(r.nombre ORDER BY r.prioridad DESC SEPARATOR ', ') AS roles
-                             FROM s_menu_rol mr JOIN s_roles r ON r.id = mr.rol_id GROUP BY mr.menu_id""")
-            roles_de = {f["menu_id"]: f["roles"] for f in cur.fetchall()}
             cur.execute("SELECT menu_id, COUNT(*) AS n FROM s_menu_usuario GROUP BY menu_id")
             extras_de = {f["menu_id"]: f["n"] for f in cur.fetchall()}
     arbol = _arbol(menu_)
     for n in arbol:
-        n["roles"] = roles_de.get(n["id"])
         n["extras"] = extras_de.get(n["id"], 0)
         n["pantalla"] = _ruta_existe(n["url"]) if n["url"] else None
         n["protegida"] = n["url"] in MENU_PROTEGIDO

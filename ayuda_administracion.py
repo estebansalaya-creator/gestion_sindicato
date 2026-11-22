@@ -4,17 +4,18 @@ CLAVE = "administracion"
 MODULO = "Administración del Sistema"
 
 INTRO = """
-<p>Quién entra al sistema y qué puede hacer: usuarios, roles, permisos sueltos y el menú. Además,
+<p>Quién entra al sistema y qué puede hacer: usuarios, roles, permisos por usuario y el menú. Además,
 las áreas (para la mesa de entradas), los talonarios de comprobantes y los datos del sindicato
 que salen en los documentos.</p>
-<p><b>El permiso es la opción de menú</b>: a un rol o a un usuario se le dan opciones del menú,
-y con eso ve la pantalla y puede usarla. No hay otra tabla de permisos.</p>
+<p><b>El permiso es la opción de menú</b>: a cada usuario se le dan opciones del menú, y con eso ve la
+pantalla y puede usarla. No hay otra tabla de permisos. <b>El rol no da pantallas</b>: dice el nivel de la
+persona (el Administrador puede anular pagos, reabrir conciliaciones, etc.).</p>
 """
 
 CIRCUITO = [
-    ("Usuario", "Alta con correo y contraseña, y sus roles."),
-    ("Roles", "Qué opciones del menú tiene cada rol."),
-    ("Permisos sueltos", "Opciones de más para una persona puntual."),
+    ("Usuario", "Alta con correo, contraseña y rol; puede copiar las pantallas de otro usuario."),
+    ("Permisos por usuario", "Las pantallas que ve cada persona."),
+    ("Roles", "El nivel de cada persona: qué puede autorizar."),
     ("Vigencia", "Los permisos se vuelven a leer cada minuto."),
 ]
 
@@ -26,13 +27,15 @@ SECCIONES = [
  "titulo": "Usuarios",
  "url": "/admin/usuarios",
  "endpoints": ["admin.usuarios"],
- "resumen": "Alta de usuarios, contraseña y roles.",
+ "resumen": "Alta de usuarios, contraseña, rol y de quién copia las pantallas.",
  "bloques": [
    {"tipo": "campos", "items": [
      ("Correo", "Es el usuario para entrar. En minúsculas y único."),
      ("Contraseña", "Obligatoria en el alta, de 8 caracteres como mínimo. Para cambiarla se escribe una nueva."),
-     ("Roles", "Los que tiene. Un rol inactivo que ya tenía se conserva."),
-     ("Permisos sueltos · Áreas", "Llevan a esas pantallas para este usuario."),
+     ("Roles", "Los que tiene. Un rol inactivo que ya tenía se conserva. El rol no da pantallas."),
+     ("Copiar los permisos de", "Solo en el alta: el usuario nuevo arranca con las mismas pantallas que la "
+      "persona elegida. Al dar de alta se abre Permisos por Usuario para ajustarlas."),
+     ("Opciones de menú · Áreas", "Cuántas pantallas tiene y a qué áreas pertenece."),
    ]},
    {"tipo": "criterio", "html":
     "Un usuario que <b>operó</b> (cargó, aprobó, pagó) no se elimina: se da de baja. Siempre queda al "
@@ -45,15 +48,15 @@ SECCIONES = [
  "titulo": "Roles",
  "url": "/admin/roles",
  "endpoints": ["admin.roles"],
- "resumen": "Qué opciones del menú tiene cada rol.",
+ "resumen": "El nivel de cada persona en el sistema; no da pantallas.",
  "bloques": [
    {"tipo": "texto", "html":
-    "Los roles son fijos (Administrador, Supervisor, Operador…): se editan la descripción, el estado y "
-    "las opciones, en un árbol con casillas (<b>Tildar todas</b>, <b>Destildar todas</b>, y filtros para "
-    "ver solo lo tildado)."},
+    "Un rol dice el <b>nivel</b> de la persona, no qué pantallas ve: eso se elige en Permisos por Usuario. "
+    "Se pueden crear, renombrar y ordenar por prioridad (solo ordena los listados)."},
    {"tipo": "criterio", "html":
-    "Tildar una opción tilda su rama: el menú no muestra una pantalla cuya rama no está permitida. El "
-    "rol Administrador no se desactiva ni pierde Usuarios, Roles y Menú."},
+    "<b>Administrador</b> es el único que el sistema reconoce por el nombre: anula pagos, reabre "
+    "conciliaciones y marca votos fuera del día, y ve siempre Usuarios, Roles y Menú tenga tildado lo que "
+    "tenga. No se renombra, no se desactiva ni se elimina. Un rol que alguien tiene no se elimina: se desactiva."},
  ]},
 
 {
@@ -62,11 +65,20 @@ SECCIONES = [
  "titulo": "Permisos por Usuario",
  "url": "/admin/permisos",
  "endpoints": ["admin.permisos"],
- "resumen": "Opciones de menú sueltas para una persona, además de las de sus roles.",
+ "resumen": "Las pantallas que ve cada persona.",
  "bloques": [
    {"tipo": "texto", "html":
-    "Se elige el usuario: lo que le dan sus roles se ve tildado y no se toca acá; lo que se tilde "
-    "<b>se suma</b>. Así, un cambio en el rol le sigue llegando a todos los que lo tienen."},
+    "Se elige el usuario y se tildan sus pantallas: es todo lo que ve, el rol no suma nada. Tildar una "
+    "pantalla tilda su rama."},
+   {"tipo": "pasos", "items": [
+    "Elegí el usuario.",
+    "Para no tildar de cero, en <b>Copiar los permisos de</b> elegí a alguien que hace lo mismo: se ven sus "
+    "pantallas tildadas.",
+    "Ajustá lo que haga falta y <b>Guardar permisos</b>. Hasta guardar no cambia nada.",
+   ]},
+   {"tipo": "criterio", "html":
+    "A quien tiene el rol Administrador, Usuarios, Roles y Menú se le ven tildadas y no se pueden sacar: "
+    "sin ellas nadie podría volver a dar permisos."},
    {"tipo": "aviso", "html":
     "Los permisos se vuelven a leer cada minuto: un cambio rige al rato, sin que la persona tenga que "
     "salir y volver a entrar."},

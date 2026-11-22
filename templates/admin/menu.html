@@ -15,7 +15,7 @@
 <div class="page-header">
   <div>
     <h1>Menú</h1>
-    <p>Las opciones del menú lateral. Cada pantalla es también un permiso: se asigna en Roles o en Permisos por Usuario.</p>
+    <p>Las opciones del menú lateral. Cada pantalla es también un permiso: se asigna a cada persona en Permisos por Usuario.</p>
   </div>
   <div class="page-header-acciones">{{ ui.boton('Nueva opción', href=url_for('admin.menu', nuevo=1), icono_='agregar') }}</div>
 </div>
@@ -39,7 +39,7 @@
         <option value="P">Pantallas</option>
         <option value="X">Pantallas pendientes</option>
       </select>{% endcall %}
-      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-sinrol"> Sin ningún rol</label>
+      <label class="filtro-check"><input type="checkbox" class="filtro" id="f-sinrol"> Sin nadie</label>
     {% endcall %}
     <div class="data-table-wrap">
       <table class="data-table" id="tbl-menu" data-exportar="Menú">
@@ -52,15 +52,14 @@
             <th>Pantalla</th>
             <th class="th-right">Orden</th>
             <th class="th-right">Nivel</th>
-            <th>Roles</th>
-            <th class="th-right">Sueltos</th>
+            <th class="th-right">Usuarios</th>
             <th>Estado</th>
           </tr>
         </thead>
         <tbody>
           {% for n in arbol %}
           <tr id="m{{ n.id }}" class="{{ 'fila-baja' if not n.activo }}" data-activo="{{ n.activo }}"
-              data-tipo="{{ ('X' if not n.pantalla else 'P') if n.url else 'R' }}" data-sinrol="{{ 0 if n.roles else 1 }}">
+              data-tipo="{{ ('X' if not n.pantalla else 'P') if n.url else 'R' }}" data-sinrol="{{ 0 if n.extras else 1 }}">
             <td><div class="acciones">
               {{ ui.accion('editar', href=url_for('admin.menu', edit=n.id)) }}
               {% if not n.url and n.prof < niveles - 1 %}
@@ -88,12 +87,11 @@
             </td>
             <td class="td-right td-muted" data-num="{{ n.orden }}">{{ n.orden }}</td>
             <td class="td-right td-muted" data-num="{{ n.prof + 1 }}">{{ n.prof + 1 }}</td>
-            <td>{{ n.roles or '—' }}</td>
             <td class="td-right {{ 'td-muted' if not n.extras }}" data-num="{{ n.extras }}">{{ n.extras }}</td>
             <td>{{ ui.estado('Activa', 'ok') if n.activo else ui.estado('Inactiva', 'neutro') }}</td>
           </tr>
           {% else %}
-          <tr class="no-data-row"><td colspan="10" class="no-data">El menú está vacío.</td></tr>
+          <tr class="no-data-row"><td colspan="9" class="no-data">El menú está vacío.</td></tr>
           {% endfor %}
         </tbody>
       </table>
@@ -105,7 +103,7 @@
 <div class="abm-panel {{ 'oculto' if inicial != 'datos' }}" data-panel="datos">
   <div class="card">
     {% call ui.card_head('Editar opción' if it.get('id') else 'Nueva opción',
-                         nota='Una nueva no la tiene nadie: después se asigna en Roles.' if not it.get('id') else None) %}
+                         nota='Una nueva no la tiene nadie: después se asigna en Permisos por Usuario.' if not it.get('id') else None) %}
       {{ ui.boton('Cancelar', 'secondary', href=url_for('admin.menu'), chico=True) }}
     {% endcall %}
     <form method="post" action="{{ url_for('admin.menu') }}">
@@ -168,7 +166,7 @@
 <div class="modal" id="modal-borrar">
   <div class="modal-caja">
     <div class="modal-titulo">¿Eliminar la opción?</div>
-    <div class="modal-texto"><span id="modal-nombre"></span>. Se quita también de los roles y usuarios que la tienen.</div>
+    <div class="modal-texto"><span id="modal-nombre"></span>. Se quita también a los usuarios que la tienen.</div>
     <form method="post" action="{{ url_for('admin.menu') }}" class="modal-acciones">
       <input type="hidden" name="accion" value="borrar">
       <input type="hidden" name="id" id="modal-id">

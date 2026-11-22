@@ -14,7 +14,7 @@
 <div class="page-header">
   <div>
     <h1>Usuarios</h1>
-    <p>Quiénes entran al sistema y con qué roles. Lo que ve cada uno sale de sus roles y de sus permisos sueltos.</p>
+    <p>Quiénes entran al sistema y con qué rol. Las pantallas que ve cada uno se eligen en Permisos por Usuario.</p>
   </div>
   {% if reg %}
   <div class="page-header-acciones">{{ ui.boton('Nuevo usuario', href=url_for('admin.usuarios', nuevo=1), icono_='agregar') }}</div>
@@ -48,7 +48,7 @@
             <th>Nombre</th>
             <th>Email</th>
             <th>Roles</th>
-            <th class="th-right">Permisos sueltos</th>
+            <th class="th-right">Opciones de menú</th>
             <th>Áreas</th>
             <th>Último ingreso</th>
             <th>Alta</th>
@@ -164,6 +164,24 @@
           {% endfor %}
         </div>
       </div>
+      {% if not r.get('id') %}
+      <div class="bloque">
+        <div class="bloque-titulo">Pantallas</div>
+        <div class="campos">
+          <div class="campo" style="--span:6;">
+            <label for="copiar_de">Copiar los permisos de</label>
+            <select id="copiar_de" name="copiar_de">
+              <option value="">— Nadie: las elijo después —</option>
+              {% for u in usuarios if u.activo and u.extras %}
+              <option value="{{ u.id }}" {{ 'selected' if r.get('copiar_de') == u.id }}>{{ u.nombre }}{% if u.roles %} · {{ u.roles }}{% endif %} ({{ u.extras }} opciones)</option>
+              {% endfor %}
+            </select>
+            <small class="campo-ayuda">El rol no da pantallas: arrancá con las de alguien que hace lo mismo. Al dar de
+              alta se abre Permisos por Usuario para ajustarlas.</small>
+          </div>
+        </div>
+      </div>
+      {% endif %}
       <div class="form-acciones">
         {{ ui.boton('Guardar cambios' if r.get('id') else 'Dar de alta', icono_='guardar', submit=True) }}
       </div>
