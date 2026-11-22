@@ -117,6 +117,15 @@ if os.getenv("RAILWAY_ENVIRONMENT"):
 # desloguea de la otra.
 app.config["SESSION_COOKIE_NAME"] = "sindicato_session"
 
+# El log de errores (el de gestion_adm): cada error de una pantalla —la
+# excepción que termina en el 500, la respuesta 500 armada a mano, el flash
+# dentro de un except— queda en s_log_errores con el usuario, la URL y la
+# hora, y se consulta en Administración del Sistema › Log de Errores. Se
+# engancha antes que los blueprints. Ver log_errores.py.
+import log_errores                                              # noqa: E402
+log_errores.instalar(app)
+app.register_blueprint(log_errores.errores_bp)
+
 
 # ── Filtros de plantilla ─────────────────────────────────────────────────────
 
@@ -421,6 +430,27 @@ def pantalla_no_encontrada(_e):
     return render_template("404.html", destino=destino, opcion=opcion), 404
 
 
+@app.errorhandler(500)
+def error_500(_e):
+    """
+    El detalle va al log; en pantalla, un aviso corto con el código del error.
+
+    Sin esto salía el 500 pelado de Flask (o, con WSGI_LOG en IIS, el
+    traceback entero en el navegador, con rutas y consultas adentro). El
+    error ya quedó anotado en s_log_errores (log_errores.py, que dejó el
+    número en `g.log_error_id`) y en el log de la aplicación.
+    """
+    app.logger.exception("Error 500 en %s %s", request.method, request.path)
+    try:
+        return render_template("500.html"), 500
+    except Exception:
+        # La plantilla hereda de base.html, que arma el menú contra la base: si
+        # lo que falló ES la base, dibujar el aviso falla también.
+        app.logger.exception("Y además no se pudo dibujar la pantalla de error")
+        return ("Hubo un error del lado del servidor. Quedó registrado; "
+                "si vuelve a pasar, avisá."), 500
+
+
 @app.route("/estilos")
 def estilos():
     """
@@ -512,6 +542,11 @@ app.register_blueprint(ayuda_bp)
 ayuda.cargar()
 # Los accesos directos del panel de inicio (/accesos-directos/alternar, /quitar, /ordenar).
 app.register_blueprint(accesos_bp)
+# Mensajes internos entre usuarios (el chat de gestion_adm): /mensajes, su API
+# y los adjuntos. El botón de la barra lo arma su propio context processor
+# (`chat_encabezado`); ver mensajes.py.
+from mensajes import mensajes_bp                                # noqa: E402
+app.register_blueprint(mensajes_bp, url_prefix="/mensajes")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Error{% endblock %}
+
+{# Lo que ve el usuario cuando algo revienta (app.error_500). El detalle no
+   va en pantalla —rutas del servidor, consultas SQL—: quedó en el Log de
+   Errores (log_errores.py) y en el log de la aplicación. La pantalla dice qué
+   hacer: reintentar arregla los cortes de conexión, y para el resto lo que
+   hace falta es que la persona avise con el código. #}
+{% block content %}
+<div class="pantalla-aviso">
+  <div class="pantalla-aviso-icono">{{ ui.icono('alerta', 44) }}</div>
+  <h1>La pantalla no se pudo abrir</h1>
+  <p>Hubo un error del lado del servidor. Quedó registrado con la fecha y la dirección: si vuelve a pasar, avisá para que alguien lo mire.</p>
+  {% if g.log_error_id %}
+  <p>Código del error: <strong class="mono">#{{ g.log_error_id }}</strong></p>
+  {% endif %}
+  <p class="mono chico">{{ request.path }}</p>
+  <div class="acciones" style="justify-content:center;">
+    {{ ui.boton('Reintentar', onclick='location.reload()', icono_='reactivar') }}
+    {{ ui.boton('Volver al inicio', 'secondary', href=url_for('menu'), icono_='inicio') }}
+  </div>
+</div>
+{% endblock %}

@@ -12,10 +12,14 @@ salvo `f_comprobantes_arca`), Mecanismo de Integración, SSSalud, débito autom�
 
 ## Módulos creados
 
-### Sistema / seguridad (18)
+### Sistema / seguridad (19)
 `s_usuarios` `s_roles` `s_usuario_rol` `s_areas` `s_area_usuario` `s_menu` `s_menu_prefijos`
 `s_menu_rol` `s_menu_usuario` `s_menu_tablas` `s_accesos_directos` `s_accesos_denegados`
 `s_configuracion` `s_contactos` `s_atributos` `s_atributos_def` `s_atributos_val` `s_log_procesos`
+`s_log_errores` (22/11/2026, sql/s_log_errores_20261122.sql)
+
+### Mensajes internos (4) — 22/11/2026, sql/chat_mensajes_20261122.sql
+`chat_conversaciones` `chat_participantes` `chat_mensajes` `chat_presencia`
 
 ### Procesos desatendidos y mail (9)
 `proc_procesos` `proc_corridas` `proc_corridas_log` `proc_solicitudes`

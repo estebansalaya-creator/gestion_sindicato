@@ -373,6 +373,24 @@ function mascaraImporte(inp, idOculto) {
     </svg>
     Volver
   </a>
+
+  {# Mensajes internos (mensajes.py), el chat de gestion_adm. Va en la barra
+     porque se usa desde cualquier pantalla. `chat_encabezado` lo arma el
+     context processor de mensajes.py sólo para quien tiene el menú /mensajes,
+     y no en la propia pantalla de Mensajes. El número lo actualiza
+     static/js/chat.js cada 20 segundos. #}
+  {% if chat_encabezado %}
+  <a href="{{ chat_encabezado.href }}" id="btn-mensajes" class="header-boton"
+     data-chat-contador="{{ chat_encabezado.no_leidos }}" data-chat-ultimo="{{ chat_encabezado.ultimo }}"
+     title="Mensajes">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 3 11.5 8.5 8.5 0 0 1 12 3a8.5 8.5 0 0 1 9 8.5z"/>
+    </svg>
+    <span class="hb-texto">Mensajes</span>
+    <span class="chat-badge"{% if not chat_encabezado.no_leidos %} hidden{% endif %}>{{ '99+' if chat_encabezado.no_leidos > 99 else chat_encabezado.no_leidos }}</span>
+  </a>
+  {% endif %}
   {% endif %}
 
   <div class="header-spacer"></div>
@@ -1911,6 +1929,9 @@ function abmSolapasAutomaticas() {
     if (e.key !== 'Escape' || e.ctrlKey || e.altKey || e.metaKey) return;
     if (esEditable(document.activeElement)) return;
     if (hayModalAbierto()) return;
+    // En Mensajes, Escape lo maneja chat.js: cierra la conversación abierta y,
+    // sin conversación, sale por su botón Cerrar.
+    if (document.querySelector('[data-chat-app]')) return;
     volver();
   });
 
@@ -1921,5 +1942,10 @@ function abmSolapasAutomaticas() {
 })();
 </script>
 
+{# Mensajes: el contador de la barra y la pantalla /mensajes (static/js/chat.js). #}
+{% if chat_encabezado or request.blueprint == 'mensajes' %}
+<meta name="chat-api" content="{{ url_for('mensajes.api') }}">
+<script src="{{ url_for('static', filename='js/chat.js') }}?v={{ chat_v }}"></script>
+{% endif %}
 </body>
 </html>

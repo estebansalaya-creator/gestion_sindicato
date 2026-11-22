@@ -117,6 +117,10 @@ gestion_sindicato/
   ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
   ayuda_pantallas.py      /ayuda (índice) y /ayuda/<clave> (un manual); url_ayuda() para el botón Ayuda
   accesos_directos.py     los accesos directos del panel de inicio (/menu): la chincheta del menú, quitar y ordenar
+  log_errores.py          el log de errores (el de gestion_adm): cada error de una pantalla queda en s_log_errores;
+                          la pantalla /admin/errores. Se engancha en app.py antes que los blueprints
+  mensajes.py             Mensajes internos entre usuarios (el chat de gestion_adm): conversaciones y grupos,
+                          adjuntos en SIND_ADJUNTOS/chat/, el botón de la barra (`chat_encabezado`)
   ayuda_<módulo>.py       el texto de cada manual, SOLO DATOS: general, mesa, fiscalizacion, empleadores, padron,
                           proveedores, tesoreria, pagos, reintegros, contabilidad, administracion
   paginar.py              grillas paginadas en el servidor: tamaño, página y los enlaces de ui.paginacion_srv
@@ -147,6 +151,7 @@ gestion_sindicato/
   sql/                    scripts de esquema y permisos, se corren a mano
   docs/instructivo_empresa.md  el texto del instructivo de las empresas (Markdown simple; ver instructivo_empresa.py)
   static/css/sindicato.css    LA hoja de estilos: no hay otra
+  static/js/chat.js       el chat (Mensajes): el contador de la barra y la pantalla /mensajes (copia del de gestion_adm)
   templates/
     base.html             estructura, menú, JS común (grillas, solapas, diálogos)
     _ui.html              macros de interfaz: íconos, acciones, filtros, mensajes, estados
@@ -227,6 +232,12 @@ repetiría en la URL lo que dice el dominio.
 /reintegros/auditoria   bandeja; /<id> auditar, /<id>/resolver POST
 /reintegros/ordenes     reintegros con saldo → órdenes de pago; /generar POST
 /admin/institucion      datos del sindicato; /logo sirve el logo
+/admin/errores          log de errores: ?q, ?estado=pendientes|revisados|todos, ?usuario, ?origen, ?desde, ?hasta,
+                        ?orden, ?dir, ?tam, ?pagina; POST id[], revisado (marcar revisado / volver a pendiente);
+                        /admin/errores/exportar (.xlsx con los mismos filtros)
+/mensajes               Mensajes (?c=conversación, ?para=usuario, ?volver=); /mensajes/api (GET contador|lista|
+                        usuarios|mensajes, POST con encabezado X-Chat: enviar|abrir|grupo|editar|salir|silenciar|
+                        retirar|leido); /mensajes/adjunto/<id> (sólo para quien participa)
 /admin/usuarios         ABM, ?edit=ID, ?nuevo=1        /admin/roles   ?edit=ID (fijos: no se crean ni se borran)
 /admin/permisos         ?usuario=ID (opciones sueltas)  /admin/menu    ?edit=ID, ?nuevo=1, ?padre=ID
 /admin/areas            ?edit=ID, ?nuevo=1, ?padre=ID   /admin/areas_usuario  ?usuario=ID

@@ -189,6 +189,31 @@ SECCIONES = [
 
 {
  "grupo": "Organización",
+ "id": "adm_errores",
+ "titulo": "Log de Errores",
+ "url": "/admin/errores",
+ "endpoints": ["errores.errores"],
+ "resumen": "Lo que falló en el sistema: el error, la pantalla, quién estaba y cuándo.",
+ "bloques": [
+   {"tipo": "texto", "html":
+    "Cada vez que una pantalla falla, el sistema lo anota solo: la fecha y hora, el usuario, la dirección, "
+    "el error y el detalle técnico (traceback). Quien vio «La pantalla no se pudo abrir» recibe un "
+    "<b>código</b> (#123): es el número de la fila acá."},
+   {"tipo": "campos", "items": [
+     ("Excepción", "La pantalla se cayó: el usuario vio «La pantalla no se pudo abrir»."),
+     ("Respuesta 500", "Una consulta de la pantalla (una búsqueda, un botón) respondió con error."),
+     ("Atajado", "La pantalla atajó el error y le mostró un aviso al usuario («No se pudo…»)."),
+     ("Veces", "El mismo error del mismo usuario en menos de 5 minutos se cuenta en una sola fila."),
+     ("Marcar revisado", "Saca el error de los pendientes, con quién y cuándo. «Volver a pendiente» lo "
+      "deshace."),
+   ]},
+   {"tipo": "aviso", "html":
+    "No se anotan los avisos de validación (un dato que falta), los «no tenés permiso» ni las páginas "
+    "inexistentes: no son fallas. Se guarda 180 días."},
+ ]},
+
+{
+ "grupo": "Organización",
  "id": "adm_estilos",
  "titulo": "Guía de estilos",
  "url": "/estilos",

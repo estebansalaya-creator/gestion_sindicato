@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Mensajes{% endblock %}
+{% block content %}
+{#  Mensajes: conversaciones directas y grupos (mensajes.py). Todo lo
+    dinámico lo arma static/js/chat.js contra /mensajes/api; esta página
+    sólo dibuja el marco.
+      /mensajes?c=N       abre esa conversación
+      /mensajes?para=N    abre (o empieza) la conversación con ese usuario
+      &volver=pantalla    adónde lleva Cerrar (lo pone el botón de la barra)
+    Es la de gestion_adm (22/11/2026). #}
+{% if error %}
+<div class="page-header"><div><h1>Mensajes</h1></div></div>
+{{ ui.mensajes([error]) }}
+{% else %}
+<div class="chat card" data-chat-app>
+  <aside class="chat-lado">
+    <div class="chat-lado-head">
+      <strong>Mensajes</strong>
+      <div class="chat-lado-acc">
+        {{ ui.boton('Nuevo', 'primary', icono_='agregar', chico=True, datos={'nuevo': '1'}) }}
+        {{ ui.boton('Grupo', 'ghost', icono_='grupo', chico=True, datos={'nuevo-grupo': '1'}) }}
+        <button type="button" class="btn-accion chat-sonido" data-chat-sonido aria-pressed="true">🔔</button>
+        <a class="btn-accion chat-cerrar" href="{{ volver }}" data-chat-salir
+           title="Cerrar Mensajes y volver" aria-label="Cerrar Mensajes y volver">{{ ui.icono('cerrar') }}</a>
+      </div>
+    </div>
+    <div class="menu-buscar chat-buscar">
+      {{ ui.icono('buscar', 13) }}
+      <input type="search" data-buscar placeholder="Buscar conversación…" autocomplete="off" aria-label="Buscar conversación">
+    </div>
+    <ul class="chat-convs" data-convs><li class="chat-lista-vacia">Cargando…</li></ul>
+  </aside>
+  <section class="chat-panel" data-panel hidden>
+    <div class="chat-cab" data-cabecera></div>
+    <div class="chat-zona" data-zona-hilo></div>
+  </section>
+  <div class="chat-sin" data-sin-conv>
+    {{ ui.icono('mail', 40) }}
+    <p>Elegí una conversación o empezá una nueva.</p>
+    <p class="campo-ayuda">Podés mandar PDF, imágenes, Word, Excel, texto o un mensaje de voz (hasta {{ max_peso }}): con el clip, arrastrándolos o pegando una captura.</p>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

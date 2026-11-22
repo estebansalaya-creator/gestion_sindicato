@@ -1,0 +1,196 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Log de Errores{% endblock %}
+
+{#
+  Administración del Sistema › Log de Errores (log_errores.py): lo que falló en
+  el sistema. Por defecto, los pendientes de revisar. El mismo error del mismo
+  usuario dentro de 5 minutos es una sola fila con «veces».
+  Grilla paginada en el servidor (paginar.py): filtros, orden y página van en
+  la URL. Las casillas para marcar revisados van en otro form (frm-revisar),
+  asociadas con form="…": la tabla queda fuera de los dos.
+#}
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Log de Errores</h1>
+    <p>Lo que falló en el sistema: el error, la pantalla, quién estaba y cuándo. Lo revisado se marca para que quede sólo lo pendiente.</p>
+  </div>
+</div>
+
+{{ ui.mensajes([error] if error else None) }}
+
+{% if not error %}
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-ico {{ 'warn' if resumen.pendientes else 'ok' }}">{{ ui.icono('alerta' if resumen.pendientes else 'ok', 20) }}</div>
+    <div><div class="kpi-lbl">Pendientes de revisar</div>
+      <div class="kpi-val">{{ resumen.pendientes or 0 }}</div>
+      <div class="kpi-sub">{{ resumen.distintos or 0 }} error(es) distintos</div></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-ico">{{ ui.icono('calendario', 20) }}</div>
+    <div><div class="kpi-lbl">Hoy</div>
+      <div class="kpi-val">{{ resumen.hoy or 0 }}</div>
+      <div class="kpi-sub"><a href="{{ url_for('errores.errores', estado='todos', desde=hoy_iso) }}">ver los de hoy</a></div></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-ico">{{ ui.icono('historial', 20) }}</div>
+    <div><div class="kpi-lbl">Últimos 7 días</div>
+      <div class="kpi-val">{{ resumen.semana or 0 }}</div>
+      <div class="kpi-sub">se guardan 180 días</div></div>
+  </div>
+</div>
+
+{% set hay_filtros = f.q or f.usuario or f.origen or f.desde or f.hasta or f.estado != 'pendientes' %}
+<div class="card">
+  <form method="get" action="{{ url_for('errores.errores') }}" class="filter-bar" id="frm-errores">
+    <input type="hidden" name="orden" value="{{ f.orden }}">
+    <input type="hidden" name="dir" value="{{ f.dir }}">
+    <label class="filtro-campo filtro-buscar"><span class="filtro-lbl">Buscar</span>
+      <input type="search" name="q" value="{{ f.q }}" class="filter-input" placeholder="Error, pantalla o lugar del código…"></label>
+    {% call ui.filtro('Estado') %}<select name="estado" class="filtro-srv">
+      <option value="pendientes" {{ 'selected' if f.estado == 'pendientes' }}>Pendientes</option>
+      <option value="revisados"  {{ 'selected' if f.estado == 'revisados' }}>Revisados</option>
+      <option value="todos"      {{ 'selected' if f.estado not in ('pendientes', 'revisados') }}>Todos</option>
+    </select>{% endcall %}
+    {% call ui.filtro('Usuario') %}<select name="usuario" class="filtro-srv">
+      <option value="">Todos</option>
+      {% for u in usuarios %}
+      <option value="{{ u.id_usuario }}" {{ 'selected' if f.usuario == u.id_usuario|string }}>{{ u.usuario }}</option>
+      {% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Tipo') %}<select name="origen" class="filtro-srv">
+      <option value="">Todos</option>
+      {% for k, o in origenes.items() %}
+      <option value="{{ k }}" {{ 'selected' if f.origen == k }}>{{ o[0] }}</option>
+      {% endfor %}
+    </select>{% endcall %}
+    {% call ui.filtro('Desde') %}<input type="date" name="desde" value="{{ f.desde }}" class="filtro-srv">{% endcall %}
+    {% call ui.filtro('Hasta') %}<input type="date" name="hasta" value="{{ f.hasta }}" class="filtro-srv">{% endcall %}
+    <button type="submit" class="btn btn-primary btn-sm">{{ ui.icono('filtro') }}Filtrar</button>
+    {% if hay_filtros %}
+    <a href="{{ url_for('errores.errores') }}" class="btn btn-secondary btn-sm">{{ ui.icono('quitar_filtro') }}Quitar filtro</a>
+    {% else %}
+    <button type="button" class="btn btn-secondary btn-sm" disabled title="No hay filtros aplicados">{{ ui.icono('quitar_filtro') }}Quitar filtro</button>
+    {% endif %}
+    <div class="filter-bar-fin">
+      <span class="filter-count">Mostrando {{ pag.desde }}–{{ pag.hasta }} de {{ pag.total }} errores</span>
+      {% if pag.total %}
+      <a href="{{ url_for('errores.exportar', q=f.q or None, estado=f.estado, usuario=f.usuario or None, origen=f.origen or None, desde=f.desde or None, hasta=f.hasta or None, orden=f.orden or None, dir=f.dir if f.orden else None) }}"
+         class="btn btn-excel btn-sm">{{ ui.icono('planilla') }}Exportar a Excel</a>
+      {% else %}
+      <button type="button" class="btn btn-excel btn-sm" disabled>{{ ui.icono('planilla') }}Exportar a Excel</button>
+      {% endif %}
+      <select name="tam" class="page-size-select filtro-srv" aria-label="Filas por página">
+        {% for n in [20, 50, 100] %}<option value="{{ n }}"{{ ' selected' if n == pag.tam }}>{{ n }} por pág.</option>{% endfor %}
+      </select>
+    </div>
+  </form>
+
+  {% if filas and f.estado != 'revisados' %}
+  <form method="post" action="{{ url_for('errores.errores') }}" id="frm-revisar" class="acciones" style="padding:10px 16px;">
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <input type="hidden" name="revisado" value="1">
+    {{ ui.boton('Marcar revisados los tildados', 'ok', icono_='guardar', submit=True, chico=True) }}
+  </form>
+  {% endif %}
+
+  {% macro th(clave, texto, clase='') -%}
+  <th data-col="{{ clave }}" class="{{ clase }} {{ ('sort-' ~ f.dir) if f.orden == clave }}">{{ texto }}</th>
+  {%- endmacro %}
+  <div class="data-table-wrap">
+    <table class="data-table" id="tbl-errores" data-servidor="frm-errores">
+      <thead>
+        <tr>
+          <th class="col-acciones" data-no-sort>Acciones</th>
+          <th data-no-sort class="th-center">{% if filas and f.estado != 'revisados' %}<input type="checkbox" title="Tildar todos" aria-label="Tildar todos"
+              onclick="var t=this.checked;document.querySelectorAll('input[form=frm-revisar][name=id]').forEach(function(c){c.checked=t;})">{% endif %}</th>
+          {{ th('fecha', 'Fecha y hora', 'th-center') }}
+          {{ th('usuario', 'Usuario') }}
+          {{ th('url', 'Pantalla') }}
+          {{ th('error', 'Error') }}
+          {{ th('estado', 'Estado') }}
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in filas %}
+        {% set o = origenes.get(e.origen, (e.origen, 'neutro')) %}
+        <tr>
+          <td><div class="acciones">{{ ui.accion('ver', titulo='Ver el detalle', onclick='verError(this)', datos={'id': e.id}) }}</div></td>
+          <td class="td-center">{% if not e.revisado %}<input type="checkbox" name="id" value="{{ e.id }}" form="frm-revisar" aria-label="Tildar el error {{ e.id }}">{% endif %}</td>
+          <td class="td-center">
+            {{ e.ultima.strftime('%d/%m/%Y %H:%M:%S') }}
+            {% if e.veces > 1 %}<div class="campo-ayuda" title="La misma falla, del mismo usuario, en menos de 5 minutos">{{ e.veces }} veces desde las {{ e.fecha.strftime('%H:%M') if e.fecha.date() == e.ultima.date() else e.fecha.strftime('%d/%m %H:%M') }}</div>{% endif %}
+          </td>
+          <td>{{ e.usuario or '—' }}</td>
+          <td><span class="mono">{{ e.metodo }} {{ e.url|truncate(80, True, '…') }}</span>
+            {% if e.endpoint %}<div class="campo-ayuda">{{ e.endpoint }}</div>{% endif %}</td>
+          <td>
+            {{ ui.estado(o[0], o[1]) }}
+            {% if e.tipo %}<span class="mono"><b>{{ e.tipo }}</b></span>{% endif %}
+            <div>{{ e.mensaje|truncate(160, True, '…') }}</div>
+            {% if e.lugar %}<div class="campo-ayuda mono">{{ e.lugar }}</div>{% endif %}
+          </td>
+          <td>{% if e.revisado %}{{ ui.estado('Revisado', 'ok') }}
+                <div class="campo-ayuda">{{ e.revisado_por or '' }}{% if e.revisado_el %} · {{ e.revisado_el.strftime('%d/%m %H:%M') }}{% endif %}</div>
+              {% else %}{{ ui.estado('Pendiente', 'warn') }}{% endif %}</td>
+        </tr>
+        {% else %}
+        <tr class="no-data-row"><td colspan="7" class="no-data">No hay errores con esos filtros.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ ui.paginacion_srv(pag) }}
+</div>
+
+{# El detalle de cada fila, para el diálogo. En <template>: no se dibuja hasta
+   que se abre. #}
+{% for e in filas %}
+<template id="det-{{ e.id }}">
+  <div class="datos">
+    <div class="dato"><div class="dato-lbl">Primera vez</div><div class="dato-val">{{ e.fecha.strftime('%d/%m/%Y %H:%M:%S') }}</div></div>
+    <div class="dato"><div class="dato-lbl">Última vez</div><div class="dato-val">{{ e.ultima.strftime('%d/%m/%Y %H:%M:%S') }}</div></div>
+    <div class="dato"><div class="dato-lbl">Veces</div><div class="dato-val">{{ e.veces }}</div></div>
+    <div class="dato"><div class="dato-lbl">Usuario</div><div class="dato-val">{{ e.usuario or '—' }}</div></div>
+    <div class="dato ancho"><div class="dato-lbl">Dirección</div><div class="dato-val mono">{{ e.metodo }} {{ e.url }}</div></div>
+    {% if e.referer %}<div class="dato ancho"><div class="dato-lbl">Venía de</div><div class="dato-val mono">{{ e.referer }}</div></div>{% endif %}
+    <div class="dato ancho"><div class="dato-lbl">Error</div><div class="dato-val">{{ e.tipo or '' }}{{ ': ' if e.tipo }}{{ e.mensaje }}</div></div>
+    {% if e.lugar %}<div class="dato ancho"><div class="dato-lbl">Lugar del código</div><div class="dato-val mono">{{ e.lugar }}</div></div>{% endif %}
+    <div class="dato ancho"><div class="dato-lbl">Equipo</div><div class="campo-ayuda">{{ e.ip or '—' }} · {{ e.navegador or '—' }}</div></div>
+  </div>
+  {% if e.detalle %}<div class="dato-lbl" style="margin-top:14px;">Traceback</div><pre class="error-traza">{{ e.detalle }}</pre>{% endif %}
+  <form method="post" action="{{ url_for('errores.errores') }}" class="modal-acciones">
+    <input type="hidden" name="volver" value="{{ request.full_path }}">
+    <input type="hidden" name="id" value="{{ e.id }}">
+    {{ ui.boton('Cerrar', 'secondary', onclick="cerrarModal('modal-error')") }}
+    {% if not e.revisado %}
+    <input type="hidden" name="revisado" value="1">
+    {{ ui.boton('Marcar revisado', 'ok', icono_='guardar', submit=True) }}
+    {% else %}
+    <input type="hidden" name="revisado" value="0">
+    {{ ui.boton('Volver a pendiente', 'secondary', icono_='reactivar', submit=True) }}
+    {% endif %}
+  </form>
+</template>
+{% endfor %}
+
+<div class="modal" id="modal-error">
+  <div class="modal-caja pantalla">
+    <div class="modal-titulo">Error <span id="modal-error-id"></span></div>
+    <div class="modal-cuerpo alto" id="modal-error-cuerpo"></div>
+  </div>
+</div>
+<script>
+function verError(b) {
+  var id = b.dataset.id;
+  document.getElementById('modal-error-id').textContent = '#' + id;
+  var c = document.getElementById('modal-error-cuerpo');
+  c.innerHTML = '';
+  c.appendChild(document.getElementById('det-' + id).content.cloneNode(true));
+  abrirModal('modal-error');
+}
+</script>
+{% endif %}
+{% endblock %}

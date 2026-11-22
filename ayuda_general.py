@@ -212,4 +212,36 @@ SECCIONES = [
     "recargar ni apretar dos veces: el sistema ya está trabajando."},
  ]},
 
+{
+ "grupo": "Pantallas",
+ "id": "gen_mensajes",
+ "titulo": "Mensajes",
+ "url": "/mensajes",
+ "endpoints": ["mensajes.index"],
+ "resumen": "Mensajes internos entre los usuarios del sistema: conversaciones de a dos y grupos.",
+ "bloques": [
+   {"tipo": "texto", "html":
+    "El botón <b>Mensajes</b> de la barra de arriba abre las conversaciones. El número rojo dice cuántas "
+    "tienen algo sin leer; se actualiza solo, y suena cuando llega algo nuevo (la campanita lo apaga). "
+    "Se le puede escribir a cualquier usuario activo que también tenga Mensajes."},
+   {"tipo": "pasos", "items": [
+     "<b>Nuevo</b>: elegí a la persona y escribí. Si ya tenían una conversación, se abre esa.",
+     "<b>Grupo</b>: ponele un nombre y elegí a los integrantes. Quien lo arma lo administra: agrega, saca "
+     "y le cambia el nombre.",
+     "<b>Enter</b> manda el mensaje; <b>Shift+Enter</b> baja de renglón.",
+   ]},
+   {"tipo": "campos", "items": [
+     ("Clip", "Adjunta un PDF, una imagen, un Word, un Excel, un CSV o un texto (hasta 20 MB). También se "
+      "puede arrastrar el archivo o pegar una captura."),
+     ("Micrófono", "Graba un mensaje de voz (hasta 5 minutos)."),
+     ("✓✓", "El mensaje ya lo leyeron."),
+     ("En línea / Últ. vez", "Si la otra persona está usando el sistema, o cuándo se la vio por última vez."),
+     ("Silenciar", "La conversación deja de sumar al número de la barra y de sonar."),
+     ("Eliminar", "Quien mandó un mensaje lo puede retirar: queda «Mensaje eliminado» y el archivo deja de verse."),
+   ]},
+   {"tipo": "aviso", "html":
+    "Es para el trabajo interno: lo que hace falta dejar asentado (una autorización, un expediente) va "
+    "en su pantalla, no en un mensaje."},
+ ]},
+
 ]
