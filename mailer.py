@@ -413,8 +413,9 @@ def enviar(conn, codigo: str, entidad_id: int, datos: dict = None,
     msg.set_content(cuerpo)
 
     nombres_adj = []
+    import almacenamiento
     for ruta in (adjuntos or []):
-        p = Path(ruta)
+        p = almacenamiento.local(ruta)
         if not p.is_file():
             raise MailError(f"No se encuentra el adjunto {p.name}.")
         msg.add_attachment(p.read_bytes(), maintype="application",

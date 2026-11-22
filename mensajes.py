@@ -11,7 +11,7 @@ DE DONDE VIENE
 --------------
 Es el chat de gestion_adm (mensajes.py, 21 y 22/11/2026), copiado el
 22/11/2026 con la sesión (`sind_`), el permiso (`db.puede`) y la carpeta de
-adjuntos (SIND_ADJUNTOS) de acá. Las tablas son las mismas, en `sindicato`.
+adjuntos (SIND_ADJUNTOS y el bucket, almacenamiento.py) de acá. Las tablas son las mismas, en `sindicato`.
 
 gestion_adm lo había copiado del chat de la financiera (PHP, inc/chat.php +
 chat_api.php + chat_adjunto.php) SIN dos cosas:
@@ -47,9 +47,8 @@ Los mensajes no se borran: el autor lo retira (`borrado_el`) y queda
 
 ADJUNTOS
 --------
-El archivo no va a la base: `SIND_ADJUNTOS / chat / <conv> / <32 hex>.<ext>`
-(en Railway, el volumen de /data: sobrevive al deploy, no hace falta el bucket
-de gestion_adm). Se sirve por /mensajes/adjunto/<id>, que controla que quien lo pide
+El archivo no va a la base: `SIND_ADJUNTOS / chat / <conv> / <32 hex>.<ext>`,
+con su copia al bucket si hay (almacenamiento.py). Se sirve por /mensajes/adjunto/<id>, que controla que quien lo pide
 participe de la conversación. El tipo se reconoce por el contenido, no por la
 extensión que trae.
 
@@ -91,6 +90,7 @@ from pathlib import Path
 from flask import (Blueprint, abort, g, jsonify, redirect, render_template,
                    request, send_file, session, url_for)
 
+import almacenamiento
 from db import get_connection, puede, validasesion
 
 log = logging.getLogger(__name__)
@@ -108,14 +108,11 @@ VOZ_MAX_SEG = 300           # un mensaje de voz dura hasta 5 minutos (chat.js co
 MAX_BYTES = 20 * 1024 * 1024   # IIS corta en 30 MB (maxAllowedContentLength)
 #: Dónde van los adjuntos: la carpeta de los comprobantes, el logo y la documentación.
 def _adjuntos() -> Path:
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
 
 
 def _borrar(ruta: Path) -> None:
-    try:
-        Path(ruta).unlink(missing_ok=True)
-    except OSError as e:
-        log.warning("Mensajes: no se pudo borrar %s: %s", ruta, e)
+    almacenamiento.borrar(ruta)               # disco y bucket
 
 
 #: «En línea» si se lo vio hace menos que esto. El contador de la barra consulta
@@ -424,6 +421,7 @@ def guardar_adjunto(id_conv: int, archivo) -> dict:
         destino.write_bytes(datos)
     except OSError as e:
         raise ChatError(f"{nombre}: no se pudo guardar ({e}).", 500)
+    almacenamiento.respaldar(destino, datos, TIPOS[ext][0])
     return {"archivo": rel, "ruta": destino, "nombre": nombre, "mime": TIPOS[ext][0],
             "bytes": len(datos), "ext": ext}
 
@@ -1005,8 +1003,9 @@ def adjunto(id_mensaje: int):
         abort(404)
     mime, en_linea = TIPOS[ext]
     como_descarga = not en_linea or request.args.get("bajar") == "1"
+    ruta = almacenamiento.local(ruta)          # después de un deploy, lo trae del bucket
     if not ruta.is_file():
-        return "El archivo no está en la carpeta de adjuntos.", 404
+        return "El archivo no está en el disco ni en el bucket.", 404
     r = send_file(ruta, mimetype=mime, as_attachment=como_descarga,
                   download_name=m["adjunto_nombre"], conditional=True, max_age=0)
     r.headers["X-Content-Type-Options"] = "nosniff"

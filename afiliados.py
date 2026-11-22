@@ -49,6 +49,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file)
 
 import afiliado_aportes as _aportes
+import almacenamiento
 import arca_padron
 import contactos as _contactos
 import contable_oseda
@@ -846,11 +847,11 @@ def documentacion(id_af):
         except Exception:
             conn.rollback()
             if nuevo_archivo:
-                nuevo_archivo.unlink(missing_ok=True)
+                almacenamiento.borrar(nuevo_archivo)
             raise
     # Recién con la fila borrada de verdad se borra el archivo.
     if a_borrar:
-        a_borrar.unlink(missing_ok=True)
+        almacenamiento.borrar(a_borrar)
     return redirect(volver)
 
 

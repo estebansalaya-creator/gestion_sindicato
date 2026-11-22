@@ -55,6 +55,7 @@ from pathlib import Path
 from flask import (Blueprint, abort, current_app, flash, jsonify, redirect, render_template, request, send_file,
                    url_for)
 
+import almacenamiento
 import exportar
 import mailer
 from db import get_connection, puede, usuario_actual, validasesion
@@ -295,7 +296,7 @@ def destinatarios(cur, destino: str, id_convenio: int | None = None,
 # =============================================================================
 
 def _base() -> Path:
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
 
 
 def ruta_flyer(camp: dict) -> Path | None:
@@ -304,7 +305,10 @@ def ruta_flyer(camp: dict) -> Path | None:
         return None
     base = _base().resolve()
     real = (base / rel).resolve()
-    return real if base in real.parents and real.exists() else None
+    if base not in real.parents:
+        return None
+    real = almacenamiento.local(real)      # el envío en segundo plano también lo encuentra
+    return real if real.exists() else None
 
 
 def _guardar_flyer(archivo) -> tuple[str, str, str]:
@@ -321,6 +325,7 @@ def _guardar_flyer(archivo) -> tuple[str, str, str]:
     if not tam or tam > MAX_MB * 1024 * 1024:
         destino.unlink(missing_ok=True)
         raise ErrorCampania(f"{original}: " + ("está vacío." if not tam else f"supera los {MAX_MB} MB."))
+    almacenamiento.respaldar(destino, tipo_mime=EXTENSIONES[ext])
     return f"campanias/{nombre}", original[:200], EXTENSIONES[ext]
 
 
@@ -550,14 +555,14 @@ def editar(id_camp=None):
                     except Exception:
                         conn.rollback()
                         if nuevo:
-                            (_base() / nuevo[0]).unlink(missing_ok=True)
+                            almacenamiento.borrar(_base() / nuevo[0])
                         raise
                     if nuevo and anterior:
-                        anterior.unlink(missing_ok=True)
+                        almacenamiento.borrar(anterior)
                     flash("Campaña guardada. Mirá cómo queda y mandate una prueba antes de enviarla.")
                     return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
                 if nuevo:
-                    (_base() / nuevo[0]).unlink(missing_ok=True)
+                    almacenamiento.borrar(_base() / nuevo[0])
             atributos = atributos_activos(cur)
     if request.method == "GET":
         if not id_camp and request.args.get("destino") in DESTINOS:
@@ -728,9 +733,8 @@ def cambiar(id_camp, accion):
             elif accion == "borrar" and camp["estado"] == "borrador":
                 cur.execute("DELETE FROM ben_campania WHERE id = %s", (id_camp,))
                 conn.commit()
-                ruta = ruta_flyer(camp)
-                if ruta:
-                    ruta.unlink(missing_ok=True)
+                if camp.get("flyer_archivo"):
+                    almacenamiento.borrar(_base() / camp["flyer_archivo"])
                 flash("Borrador eliminado.")
                 return redirect(url_for("ben_camp.lista"))
             else:

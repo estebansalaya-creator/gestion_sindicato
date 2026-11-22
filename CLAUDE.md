@@ -117,6 +117,10 @@ gestion_sindicato/
   ayuda.py                registro de los manuales de uso (sin Flask): cargar, verificar, qué sección es de qué pantalla
   ayuda_pantallas.py      /ayuda (índice) y /ayuda/<clave> (un manual); url_ayuda() para el botón Ayuda
   accesos_directos.py     los accesos directos del panel de inicio (/menu): la chincheta del menú, quitar y ordenar
+  almacenamiento.py       los archivos que sube la gente: SIND_ADJUNTOS en disco + copia en el bucket (si hay).
+                          guardar/respaldar al escribir, local() antes de leer, borrar() los dos.
+                          `python almacenamiento.py --subir [--aplicar]` sube lo que ya hay
+  objetos.py              el cliente S3 del bucket (el de gestion_adm, con variables SIND_BUCKET_*)
   log_errores.py          el log de errores (el de gestion_adm): cada error de una pantalla queda en s_log_errores;
                           la pantalla /admin/errores. Se engancha en app.py antes que los blueprints
   mensajes.py             Mensajes internos entre usuarios (el chat de gestion_adm): conversaciones y grupos,
@@ -336,6 +340,23 @@ y pide `DB_USER`, el servicio está apuntando al repositorio equivocado.
   Railway. La base viva es la de Railway.
 - **OCR** (opcional): `RAILPACK_DEPLOY_APT_PACKAGES="tesseract-ocr tesseract-ocr-spa"`.
 
+### Archivos: disco y bucket (22/11/2026)
+
+Todo archivo que sube la gente (reintegros, documentación, comprobantes y su PDF de paso, logo,
+flyers, fichas de las empresas, adjuntos de Mensajes) pasa por `almacenamiento.py`: se escribe en
+`SIND_ADJUNTOS` y, si hay `SIND_BUCKET`, se sube la copia con la ruta relativa como clave. Antes de
+servirlo o leerlo se llama `almacenamiento.local(ruta)`: si el archivo no está en ese disco (después
+de un deploy, o en otra instancia) lo trae del bucket. Al borrar, `almacenamiento.borrar` se lleva los
+dos. Es lo que permite correr sin disco permanente (DigitalOcean App Platform) o con dos instancias.
+
+- **Código nuevo que guarde un archivo**: `almacenamiento.guardar(ruta, bytes)` o, después de un
+  `save()`, `almacenamiento.respaldar(ruta)`; para leerlo, `almacenamiento.local(ruta)`; para borrarlo,
+  `almacenamiento.borrar(ruta)`. Nunca `unlink()` suelto: dejaría la copia en el bucket.
+- `arca/` (los tickets de acceso de ARCA) no va al bucket: es caché.
+- **Pasar a un bucket**: crearlo, cargar las `SIND_BUCKET_*` en el entorno (y en el `.env` local) y
+  correr `python almacenamiento.py --subir` (simula) y `--subir --aplicar` desde donde estén hoy los
+  archivos (el volumen de Railway). Prueba: `tests/test_almacenamiento.py` (con `moto`).
+
 ## IIS
 
 El sitio corre con wfastcgi. **El sitio se llama `aeda` en la consola de IIS**, no `sindicato`:
@@ -378,6 +399,9 @@ SIND_DB_HOST  SIND_DB_PORT  SIND_DB_USER  SIND_DB_PASS
 SIND_SECRET_KEY  SIND_PORT
 SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AEDA (importar_aeda.py)
 [SIND_ADJUNTOS]                                   comprobantes, PDF y logo (por defecto adjuntos/)
+[SIND_BUCKET  SIND_BUCKET_ENDPOINT  SIND_BUCKET_KEY_ID  SIND_BUCKET_SECRET  SIND_BUCKET_REGION]
+                                                  el bucket S3 de los adjuntos (almacenamiento.py): DigitalOcean
+                                                  Spaces o un bucket de Railway. Sin SIND_BUCKET, sólo el disco
 [SIND_ARCA_CERT  SIND_ARCA_KEY  SIND_ARCA_CUIT]   ARCA (opcional): constatación, padrón A13, constancia
 [SIND_ARCA_CERT_B64  SIND_ARCA_KEY_B64]           ídem en base64, para Railway (sin archivos)
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)

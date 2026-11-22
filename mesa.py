@@ -33,6 +33,7 @@ import pymysql
 from flask import (Blueprint, flash, redirect, render_template, request, send_file,
                    session, url_for)
 
+import almacenamiento
 import comprobantes_datos as cd
 import paginar
 from exportar import xlsx
@@ -396,7 +397,7 @@ def subir_pdf(exp_id):
                 rel = cd.archivar_pdf(tmp, c["fecha_emision"], cd.nombre_pdf(
                     c["cuit_emisor"], c["tipo_comprobante"], c["punto_de_venta"], c["numero"]))
             finally:
-                tmp.unlink(missing_ok=True)
+                almacenamiento.borrar(tmp)
             leido, obs = cd.cotejar(cd.ruta_real(rel), c)
             conn.begin()
             cur.execute("""UPDATE f_comprobantes_arca SET nombre_archivo = %s, ruta_local = %s,

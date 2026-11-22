@@ -76,6 +76,7 @@ from urllib.parse import quote
 from flask import (Blueprint, abort, flash, redirect, render_template, request, send_file, session,
                    url_for)
 
+import almacenamiento
 import contable_oseda
 import fisca_intereses as FI
 import fisca_liquidacion as FL
@@ -858,12 +859,12 @@ def alta(token):
     except NOV.ErrorNovedad as e:
         conn.rollback()
         if ficha:
-            ficha["ruta"].unlink(missing_ok=True)
+            almacenamiento.borrar(ficha["ruta"])
         return _pagina_empresa(token, [str(e)], 422, form=request.form, error_en="alta")
     except Exception:
         conn.rollback()
         if ficha:
-            ficha["ruta"].unlink(missing_ok=True)
+            almacenamiento.borrar(ficha["ruta"])
         raise
     finally:
         conn.close()

@@ -33,6 +33,7 @@ import pymysql
 from flask import (Blueprint, abort, flash, jsonify, redirect, render_template, request,
                    send_file, session, url_for)
 
+import almacenamiento
 import arca_wscdc
 import comprobantes_datos as cd
 import lector_comprobante
@@ -383,10 +384,7 @@ def _guardar():
             except (pymysql.MySQLError, ValueError, OSError) as e:
                 conn.rollback()
                 if archivo_nuevo:
-                    try:
-                        archivo_nuevo.unlink()
-                    except OSError:
-                        pass
+                    almacenamiento.borrar(archivo_nuevo)
                 log.exception("Guardando el comprobante %s", v)
                 return render_template("comprobantes/carga.html", paso="confirmar", modo=modo,
                                        id_mis=id_mis, cst=cst, pdf_ficha=ficha, pdf_nombre=pdf_nombre,
@@ -394,10 +392,7 @@ def _guardar():
                                        elegido_rubro=id_rubro, elegido_concepto=id_concepto,
                                        **_contexto(cur, _completar(d)))
     if ruta_pdf:
-        try:
-            ruta_pdf.unlink()
-        except OSError:
-            pass
+        almacenamiento.borrar(ruta_pdf)
 
     est = {"A": " Constatado en ARCA.", "E": " Sin constatar (ARCA no respondió).",
            None: " Sin constatar."}.get(cst["resultado"] if cst else None, "")

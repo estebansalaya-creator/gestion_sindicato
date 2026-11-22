@@ -29,6 +29,10 @@ Pillow
 # Firma del pedido a ARCA (constatación WSCDC, opcional).
 cryptography
 
+# El bucket de los adjuntos (objetos.py, S3: DigitalOcean Spaces o Railway).
+# Se importa recién al usarlo: sin SIND_BUCKET no hace falta.
+boto3
+
 # NO va pyodbc: lo usan solo los importadores de AEDA, que se corren desde la
 # máquina de la red local (Railway no llega al SQL Server de AEDA). En Linux
 # además necesita unixODBC y el driver de Microsoft. En Windows:

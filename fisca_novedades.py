@@ -38,6 +38,7 @@ import re
 import uuid
 from pathlib import Path
 
+import almacenamiento
 import documentacion as DOC
 
 SQL_ESQUEMA = "sql/fisca_novedades_empresa_20261115.sql"
@@ -205,13 +206,17 @@ def guardar_ficha(archivo) -> dict | None:
     if tam == 0 or tam > DOC.MAX_MB * 1024 * 1024:
         destino.unlink(missing_ok=True)
         raise ErrorNovedad(f"La ficha de afiliación {'está vacía' if tam == 0 else f'pesa más de {DOC.MAX_MB} MB'}.")
+    # Al bucket: la empresa la sube desde su enlace y alguien del sindicato la
+    # abre días después, en otro contenedor. Si la novedad no se graba, quien
+    # llama la borra con almacenamiento.borrar().
+    almacenamiento.respaldar(destino, tipo_mime=DOC.MIME.get(ext, ""))
     return {"ficha_nombre": original[:255], "ficha_archivo": nombre, "ficha_bytes": tam, "ruta": destino}
 
 
 def ruta_ficha(nov: dict) -> Path | None:
     if not nov or not nov.get("ficha_archivo") or "/" in nov["ficha_archivo"] or "\\" in nov["ficha_archivo"]:
         return None
-    p = _carpeta() / nov["ficha_archivo"]
+    p = almacenamiento.local(_carpeta() / nov["ficha_archivo"])
     return p if p.is_file() else None
 
 

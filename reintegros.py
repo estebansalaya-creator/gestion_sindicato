@@ -39,6 +39,7 @@ from flask import (Blueprint, flash, jsonify, redirect, render_template, request
                    send_file, session, url_for)
 from werkzeug.utils import secure_filename
 
+import almacenamiento
 import institucion
 import reintegros_datos as svc
 from db import puede, validasesion
@@ -87,9 +88,10 @@ def _pesos(valor) -> str:
 def base_adjuntos() -> Path:
     """
     Dónde se guardan los comprobantes. SIND_ADJUNTOS en el .env, o la carpeta
-    `adjuntos` del proyecto. El pool de IIS necesita permiso de escritura ahí.
+    `adjuntos` del proyecto (almacenamiento.py, que además los sube al bucket).
+    El pool de IIS necesita permiso de escritura ahí.
     """
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
 
 
 def _ruta_real(ruta: str) -> Path | None:
@@ -168,17 +170,15 @@ def _guardar_archivos(id_reintegro, mapa_uid: dict, archivos) -> tuple[int, list
             except Exception:
                 destino.unlink(missing_ok=True)
                 raise
+            almacenamiento.respaldar(destino)
             guardados += 1
     return guardados, errores
 
 
 def _borrar_archivo(ruta: str | None) -> None:
     real = _ruta_real(ruta) if ruta else None
-    if real and real.exists():
-        try:
-            real.unlink()
-        except OSError:
-            pass    # el registro ya no está; un archivo huérfano no rompe nada
+    if real:
+        almacenamiento.borrar(real)   # disco y bucket; un huérfano no rompe nada
 
 
 # =============================================================================
@@ -727,6 +727,8 @@ def ver_adjunto(id_adjunto):
         return _sin_permiso("No tenés permiso para los reintegros.")
     a = svc.adjunto(id_adjunto)
     real = _ruta_real(a["ruta_archivo"]) if a else None
+    if real:
+        real = almacenamiento.local(real)     # después de un deploy, lo trae del bucket
     if not real or not real.exists():
         flash("!El archivo no está en el servidor.")
         return redirect(request.referrer or url_for("reintegros.solicitud"))

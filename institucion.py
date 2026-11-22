@@ -32,6 +32,7 @@ import pymysql
 from flask import (Blueprint, flash, redirect, render_template, request, send_file,
                    session, url_for)
 
+import almacenamiento
 from db import get_connection, puede, validasesion
 from empleadores import cuit_valido
 
@@ -63,7 +64,14 @@ LOGO_MAX_MB = 2
 
 def _base_archivos() -> Path:
     """La misma carpeta escribible que los comprobantes de reintegros."""
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
+
+
+def _borrar_logos() -> None:
+    """Todos los logo.* de la carpeta, en el disco y en el bucket."""
+    carpeta = _base_archivos() / "institucion"
+    for ext in LOGO_EXT:
+        almacenamiento.borrar(carpeta / f"logo{ext}")
 
 
 # =============================================================================
@@ -94,7 +102,10 @@ def ruta_logo(datos: dict | None = None) -> Path | None:
         return None
     base = _base_archivos().resolve()
     real = (base / rel).resolve()
-    return real if base in real.parents and real.exists() else None
+    if base not in real.parents:
+        return None
+    real = almacenamiento.local(real)
+    return real if real.exists() else None
 
 
 _CACHE = {"hasta": 0.0, "valor": None}
@@ -341,13 +352,13 @@ def _guardar_logo(archivo) -> tuple[str | None, str | None]:
         return None, "El logo tiene que ser PNG, JPG o SVG."
     carpeta = _base_archivos() / "institucion"
     carpeta.mkdir(parents=True, exist_ok=True)
-    for viejo in carpeta.glob("logo.*"):
-        viejo.unlink(missing_ok=True)
+    _borrar_logos()
     destino = carpeta / f"logo{ext}"
     archivo.save(destino)
     if destino.stat().st_size > LOGO_MAX_MB * 1024 * 1024:
         destino.unlink()
         return None, f"El logo supera los {LOGO_MAX_MB} MB."
+    almacenamiento.respaldar(destino)
     return f"institucion/logo{ext}", None
 
 
@@ -368,8 +379,7 @@ def datos():
         logo = request.files.get("logo")
         if not errores:
             if request.form.get("borrar_logo"):
-                for viejo in (_base_archivos() / "institucion").glob("logo.*"):
-                    viejo.unlink(missing_ok=True)
+                _borrar_logos()
                 valores["logo_path"] = None
             elif logo and logo.filename:
                 ruta, error = _guardar_logo(logo)

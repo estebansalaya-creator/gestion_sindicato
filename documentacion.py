@@ -22,6 +22,8 @@ import os
 import uuid
 from pathlib import Path
 
+import almacenamiento
+
 #: Lo mismo que aceptan los reintegros: PDF o imagen.
 EXTENSIONES = {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"}
 MAX_MB = 10
@@ -35,7 +37,7 @@ class DocumentoError(Exception):
 
 
 def base() -> Path:
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
 
 
 def _carpeta(entidad: str, entidad_id: int) -> Path:
@@ -120,6 +122,9 @@ def guardar(cur, entidad: str, entidad_id: int, id_tipo_doc, archivo, observacio
     except Exception:
         destino.unlink(missing_ok=True)
         raise
+    # La copia al bucket. Si después la transacción se deshace, quien llama lo
+    # borra con almacenamiento.borrar(), que se lleva los dos.
+    almacenamiento.respaldar(destino, tipo_mime=MIME.get(ext, ""))
     # `archivo`: para que quien llama lo borre si después la transacción se deshace.
     return {"id_documento": cur.lastrowid, "tipo": validos[int(id_tipo_doc)],
             "nombre_original": original, "archivo": destino}
@@ -139,7 +144,7 @@ def guardar_copia(cur, entidad: str, entidad_id: int, id_tipo_doc: int, origen: 
     carpeta.mkdir(parents=True, exist_ok=True)
     nombre = uuid.uuid4().hex + ext
     destino = carpeta / nombre
-    shutil.copyfile(origen, destino)
+    shutil.copyfile(almacenamiento.local(origen), destino)
     tam = destino.stat().st_size
     try:
         cur.execute("""INSERT INTO p_documentacion
@@ -151,6 +156,7 @@ def guardar_copia(cur, entidad: str, entidad_id: int, id_tipo_doc: int, origen: 
     except Exception:
         destino.unlink(missing_ok=True)
         raise
+    almacenamiento.respaldar(destino, tipo_mime=MIME.get(ext, ""))
     return {"id_documento": cur.lastrowid, "nombre_original": original, "archivo": destino}
 
 
@@ -163,19 +169,27 @@ def uno(cur, entidad: str, entidad_id: int, id_documento: int) -> dict | None:
     return cur.fetchone()
 
 
-def ruta(doc: dict) -> Path | None:
-    """El archivo en disco, o None si no está. Nunca afuera de su carpeta."""
+def _ruta_dentro(doc: dict) -> Path | None:
+    """Dónde va el archivo, esté o no. Nunca afuera de su carpeta."""
     carpeta = _carpeta(doc["entidad_tipo"], doc["entidad_id"]).resolve()
     real = (carpeta / doc["nombre_archivo"]).resolve()
-    if carpeta not in real.parents or not real.is_file():
+    return real if carpeta in real.parents else None
+
+
+def ruta(doc: dict) -> Path | None:
+    """El archivo en disco (traído del bucket si hace falta), o None si no está."""
+    real = _ruta_dentro(doc)
+    if not real:
         return None
-    return real
+    real = almacenamiento.local(real)
+    return real if real.is_file() else None
 
 
 def borrar(cur, doc: dict) -> Path | None:
     """
-    Borra la fila y devuelve el archivo, que se borra DESPUÉS del commit: si la
-    transacción se deshace, el documento sigue entero, fila y archivo.
+    Borra la fila y devuelve el archivo, que se borra DESPUÉS del commit (con
+    almacenamiento.borrar: disco y bucket): si la transacción se deshace, el
+    documento sigue entero, fila y archivo.
     """
     cur.execute("DELETE FROM p_documentacion WHERE id_documento = %s", (doc["id_documento"],))
-    return ruta(doc)
+    return _ruta_dentro(doc)

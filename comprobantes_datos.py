@@ -37,6 +37,7 @@ import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+import almacenamiento
 import lector_pdf_ocr
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -550,7 +551,7 @@ RE_TOKEN = re.compile(r"^[0-9a-f]{32}$")
 
 
 def base_adjuntos() -> Path:
-    return Path(os.getenv("SIND_ADJUNTOS") or Path(__file__).with_name("adjuntos"))
+    return almacenamiento.base()
 
 
 def _tmp() -> Path:
@@ -567,18 +568,22 @@ def guardar_tmp(contenido: bytes) -> str:
     for viejo in d.glob("*.pdf"):          # los que quedaron de cargas abandonadas
         try:
             if viejo.stat().st_mtime < limite:
-                viejo.unlink()
+                almacenamiento.borrar(viejo)
         except OSError:
             pass
+    if secrets.randbelow(50) == 0:           # de vez en cuando, lo abandonado que quedó sólo en el bucket
+        almacenamiento.limpiar_viejos("tmp_comprobantes", 2)
     ficha = secrets.token_hex(16)
-    (d / f"{ficha}.pdf").write_bytes(contenido)
+    # También al bucket: se sube en una pantalla y se confirma en otra, que
+    # puede atender otra instancia.
+    almacenamiento.guardar(d / f"{ficha}.pdf", contenido, "application/pdf")
     return ficha
 
 
 def ruta_tmp(ficha: str) -> Path | None:
     if not ficha or not RE_TOKEN.match(ficha):
         return None
-    p = _tmp() / f"{ficha}.pdf"
+    p = almacenamiento.local(_tmp() / f"{ficha}.pdf")
     return p if p.is_file() else None
 
 
@@ -587,7 +592,8 @@ def archivar_pdf(origen: Path, fecha_emision: datetime.date, nombre: str) -> str
     rel = Path("comprobantes") / fecha_emision.strftime("%Y%m") / nombre
     destino = base_adjuntos() / rel
     destino.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(origen, destino)
+    shutil.copyfile(almacenamiento.local(origen), destino)
+    almacenamiento.respaldar(destino, tipo_mime="application/pdf")
     return rel.as_posix()
 
 
@@ -602,6 +608,7 @@ def ruta_real(ruta: str | None) -> Path | None:
         p = (base / p).resolve()
         if base not in p.parents:
             return None
+    p = almacenamiento.local(p)
     return p if p.is_file() else None
 
 
