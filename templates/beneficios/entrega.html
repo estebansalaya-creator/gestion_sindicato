@@ -9,6 +9,10 @@
   «Marcar que retiró» registra el retiro sin recargar la página.
     Padrón       la lista, marcar o quitar un retiro, agregar o quitar a alguien,
                  entregar a alguien fuera del padrón (afiliado o no)
+                 «Retira por la empresa»: con la grilla filtrada a una sola empresa,
+                 el retiro de todos sus afiliados que faltan, a nombre de quien viene
+                 (nombre y DNI), con la constancia en PDF por duplicado
+    Retiros por empresa  las constancias, para volver a imprimirlas
     Stock        cuántos hay: cargas (+) y ajustes (−); queda = cargado − retirado
     Movimientos  el rastro: retiros, retiros quitados, agregados, quitados, creado, stock
 #}
@@ -29,7 +33,16 @@
 {% if not camp.hay_stock %}{{ ui.aviso('Falta correr sql/beneficios_entregas_stock_20261118.sql: sin eso no hay stock ni entregas fuera del padrón.', 'warning') }}
 {% elif camp.controla_stock and camp.queda <= 0 %}{{ ui.aviso('No queda stock: se cargaron ' ~ camp.stock ~ ' y ya se entregaron ' ~ camp.entregados ~ '. Cargá más en la solapa Stock para seguir entregando.', 'danger') }}
 {% elif camp.controla_stock and camp.queda < camp.faltan %}{{ ui.aviso('El stock no alcanza para todos: quedan ' ~ camp.queda ~ ' y en el padrón faltan retirar ' ~ camp.faltan ~ '.', 'warning') }}
-{% elif generado and not camp.controla_stock %}{{ ui.aviso('Sin stock cargado: los retiros no se controlan contra lo que hay. Se carga en la solapa Stock.', 'info') }}
+{% elif generado and not camp.controla_stock and not retiro_nuevo %}{{ ui.aviso('Sin stock cargado: los retiros no se controlan contra lo que hay. Se carga en la solapa Stock.', 'info') }}
+{% endif %}
+{% if generado and not camp.hay_empresa %}{{ ui.aviso('Falta correr sql/beneficios_entregas_empresa_20261124.sql: sin eso no está «Retira por la empresa».', 'warning') }}{% endif %}
+{% if retiro_nuevo %}
+<div class="alert alert-ok">{{ ui.icono('ok', 16) }}<div class="alert-texto">
+  <b>Constancia N° {{ '%06d' % retiro_nuevo.id }}</b> · {{ retiro_nuevo.empleador }}: retiró {{ retiro_nuevo.retiro_nombre }}
+  (DNI {{ retiro_nuevo.retiro_documento }}), {{ retiro_nuevo.cantidad }} {{ 'beneficio' if retiro_nuevo.cantidad == 1 else 'beneficios' }}.
+  Imprimila (original y duplicado) para que firme.
+  <div class="alert-acciones">{{ ui.boton('Imprimir constancia por duplicado', 'primary', href=url_for('ben_ent.retiro_pdf', id_camp=camp.id, id_retiro=retiro_nuevo.id), icono_='pdf', blank=True, chico=True, id='btn-constancia') }}</div>
+</div></div>
 {% endif %}
 
 <div class="kpi-row">
@@ -47,7 +60,9 @@
       <div class="kpi-sub">{% if camp.controla_stock %}quedan de {{ camp.stock }} cargados{% else %}sin cargar{% endif %}</div></div></div>
 </div>
 
-{{ ui.solapas([('padron', 'Padrón de entrega', filas|length), ('stock', 'Stock', stock|length), ('movs', 'Movimientos', movs|length)], solapa) }}
+{% set lista_solapas = [('padron', 'Padrón de entrega', filas|length)] %}
+{% if camp.hay_empresa %}{% set lista_solapas = lista_solapas + [('empresas', 'Retiros por empresa', retiros|length)] %}{% endif %}
+{{ ui.solapas(lista_solapas + [('stock', 'Stock', stock|length), ('movs', 'Movimientos', movs|length)], solapa) }}
 
 <div class="abm-panel {{ 'oculto' if solapa != 'padron' }}" data-panel="padron">
   <div class="card">
@@ -72,6 +87,12 @@
       </select>{% endcall %}
     {% endcall %}
     <div id="msg-entrega"></div>
+    {% if camp.hay_empresa and generado %}
+    <div class="alert alert-info oculto" id="empresa-barra">{{ ui.icono('info', 16) }}<div class="alert-texto">
+      <b id="empresa-nombre"></b>: <span id="empresa-resumen"></span>
+      <div class="alert-acciones">{{ ui.boton('Retira por la empresa', 'primary', icono_='ok', onclick="abrirEmpresa()", chico=True, id='btn-empresa') }}</div>
+    </div></div>
+    {% endif %}
     <div class="data-table-wrap">
       <table class="data-table" id="tbl-entrega" data-exportar="Entrega {{ camp.titulo }}">
         <thead><tr>
@@ -82,11 +103,15 @@
         <tbody>
           {% for f in filas %}
           <tr data-id="{{ f.id }}" data-entregado="{{ f.entregado }}" data-origen="{{ f.origen }}"
+              data-empleador="{{ f.empleador or '' }}" data-nombre="{{ f.apellido_nombres }}" data-orden="{{ f.orden }}"
+              data-documento="{{ f.nro_documento or '' }}" data-fecha="{{ f.fecha_entrega.strftime('%d/%m/%Y %H:%M') if f.fecha_entrega else '' }}"
+              data-quien="{{ (f.retiro_nombre ~ (' (DNI ' ~ f.retiro_documento ~ ')' if f.retiro_documento else '')) if f.retiro_nombre else ('El afiliado' if f.entregado else '') }}"
               data-tipo="{{ 'externo' if f.origen == 'externo' else ('titular' if f.cod_parentesco == 0 else 'familiar') }}">
             <td><div class="acciones">
               {% if not f.entregado %}{{ ui.accion('votar', titulo='Marcar que retiró', onclick="abrirEntrega(this)", datos={'id': f.id, 'nombre': f.apellido_nombres, 'documento': f.nro_documento or '', 'orden': f.orden}) }}{% endif %}
               {% if f.entregado %}{{ ui.accion('desaplicar', titulo='Quitar el retiro', onclick="abrirMotivo(this, 'quitar_entrega')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
               {% if not f.entregado %}{{ ui.accion('borrar', titulo='Quitar del padrón de entrega', onclick="abrirMotivo(this, 'quitar')", datos={'id': f.id, 'nombre': f.apellido_nombres}) }}{% endif %}
+              {% if f.id_retiro %}{{ ui.accion('pdf', href=url_for('ben_ent.retiro_pdf', id_camp=camp.id, id_retiro=f.id_retiro), titulo='Constancia del retiro por la empresa', blank=True) }}{% endif %}
               {% if f.id_afiliado and puede('/afiliados/padron') %}{{ ui.accion('ver', href=url_for('afiliados.padron', ver=f.id_afiliado), titulo='Ver en el padrón de afiliados', blank=True) }}{% endif %}
             </div></td>
             <td class="td-right td-mono" data-num="{{ f.orden }}">{{ f.orden }}</td>
@@ -97,7 +122,7 @@
             <td class="td-muted">{{ 'No afiliado' if f.origen == 'externo' else ('Titular' if f.cod_parentesco == 0 else (f.parentesco or '—')) }}</td>
             <td>{{ f.empleador or '—' }}</td>
             <td class="td-entrega" data-valor="{{ f.fecha_entrega.isoformat() if f.fecha_entrega else '' }}">{% if f.entregado %}{{ ui.estado('Retiró', 'ok') }} <span class="chico">{{ f.fecha_entrega.strftime('%d/%m/%Y %H:%M') }}</span>{% else %}{{ ui.estado('No retiró', 'neutro') }}{% endif %}</td>
-            <td class="td-quien">{% if f.retiro_nombre %}{{ f.retiro_nombre }}{% if f.retiro_documento %} <span class="chico td-mono">DNI {{ f.retiro_documento }}</span>{% endif %}{% elif f.entregado %}<span class="td-muted">El afiliado</span>{% endif %}</td>
+            <td class="td-quien">{% if f.retiro_nombre %}{{ f.retiro_nombre }}{% if f.retiro_documento %} <span class="chico td-mono">DNI {{ f.retiro_documento }}</span>{% endif %}{% if f.id_retiro %} <span class="chico td-muted">· por la empresa, constancia {{ '%06d' % f.id_retiro }}</span>{% endif %}{% elif f.entregado %}<span class="td-muted">El afiliado</span>{% endif %}</td>
             <td class="td-registro">{{ f.usuario_entrega or '' }}</td>
           </tr>
           {% else %}
@@ -152,6 +177,40 @@
   {% endif %}
   {% endif %}
 </div>
+
+{% if camp.hay_empresa %}
+<div class="abm-panel {{ 'oculto' if solapa != 'empresas' }}" data-panel="empresas">
+  <div class="card">
+    {{ ui.card_head('Retiros por empresa', nota='Cada vez que alguien retiró por una empresa, con su constancia. El PDF sale por duplicado: original y duplicado para firmar.') }}
+    {% call ui.barra_filtros('Buscar por empresa, quién retiró o DNI…', 50) %}{% endcall %}
+    <div class="data-table-wrap">
+      <table class="data-table" id="tbl-empresas" data-exportar="Retiros por empresa {{ camp.titulo }}">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Acciones</th><th class="th-right">Constancia</th><th data-orden="desc">Fecha</th>
+          <th>Empresa</th><th>Retiró</th><th>DNI</th><th class="th-right">Cantidad</th><th>Registró</th>
+        </tr></thead>
+        <tbody>
+          {% for r in retiros %}
+          <tr>
+            <td><div class="acciones">{{ ui.accion('pdf', href=url_for('ben_ent.retiro_pdf', id_camp=camp.id, id_retiro=r.id), titulo='Constancia por duplicado', blank=True) }}</div></td>
+            <td class="td-right td-mono" data-num="{{ r.id }}">{{ '%06d' % r.id }}</td>
+            <td data-valor="{{ r.fecha.isoformat() }}">{{ r.fecha.strftime('%d/%m/%Y %H:%M') }}</td>
+            <td class="td-fuerte">{{ r.empleador }}</td>
+            <td>{{ r.retiro_nombre }}</td>
+            <td class="td-mono">{{ r.retiro_documento }}</td>
+            <td class="td-right td-mono" data-num="{{ r.vigentes }}">{{ r.vigentes }}{% if r.vigentes != r.cantidad %} <span class="chico td-muted">de {{ r.cantidad }}</span>{% endif %}</td>
+            <td>{{ r.usuario or '' }}</td>
+          </tr>
+          {% else %}
+          <tr class="no-data-row"><td colspan="8" class="no-data">Todavía nadie retiró por una empresa. Filtrá la grilla del padrón por la empresa y usá «Retira por la empresa».</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {{ ui.paginacion() }}
+  </div>
+</div>
+{% endif %}
 
 <div class="abm-panel {{ 'oculto' if solapa != 'stock' }}" data-panel="stock">
   <div class="card">
@@ -257,6 +316,35 @@
   </div>
 </div>
 
+{% if camp.hay_empresa %}
+<div class="modal" id="modal-empresa">
+  <div class="modal-caja ancha">
+    <div class="modal-titulo">Retira por la empresa</div>
+    <div class="modal-texto" id="emp-titulo"></div>
+    <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}" id="form-empresa"
+          data-proceso="Registrando el retiro…" onsubmit="return confirmarEmpresa();">
+      <input type="hidden" name="accion" value="empresa">
+      <div class="modal-cuerpo">
+        <div id="emp-ya"></div>
+        <div class="campo-ayuda" id="emp-pend-titulo"></div>
+        <div class="lista-checks" id="emp-pendientes"></div>
+      </div>
+      <div class="campos">
+        <div class="campo" style="--span:8;"><label for="emp-nombre">Quién retira <span class="req">*</span></label>
+          <input type="text" name="retiro_nombre" id="emp-nombre" required maxlength="150" placeholder="Apellido y nombre"></div>
+        <div class="campo" style="--span:4;"><label for="emp-doc">DNI <span class="req">*</span></label>
+          <input type="text" name="retiro_documento" id="emp-doc" required maxlength="12" inputmode="numeric"></div>
+      </div>
+      <div class="alert alert-info">{{ ui.icono('info', 16) }}<div>Retira <b id="emp-cantidad">0</b>. Al registrarlo se imprime la constancia por duplicado para que firme.</div></div>
+      <div class="modal-acciones">
+        {{ ui.boton('Cancelar', 'secondary', onclick="cerrarModal('modal-empresa')") }}
+        {{ ui.boton('Registrar el retiro', 'primary', icono_='ok', submit=True, id='btn-emp-ok') }}
+      </div>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <div class="modal" id="modal-motivo">
   <div class="modal-caja">
     <div class="modal-titulo" id="motivo-titulo"></div>
@@ -337,6 +425,7 @@ function confirmarEntrega() {
       document.getElementById('kpi-porc').textContent = d.estado.porc;
       document.getElementById('kpi-faltan').textContent = d.estado.faltan;
       if (d.estado.controla_stock) document.getElementById('kpi-queda').textContent = d.estado.queda;
+      revisarEmpresa(document.getElementById('tbl-entrega')._grilla.filas());
       msgEntrega(d.marcado ? f.nombre + ': retiro registrado.'
                            : f.nombre + ' ya había retirado (' + f.fecha + (f.usuario ? ', ' + f.usuario : '') + ').',
                  d.marcado ? 'ok' : 'warning');
@@ -358,7 +447,94 @@ function abrirMotivo(b, accion) {
   document.getElementById('motivo-texto').value = '';
   abrirModal('modal-motivo');
 }
+// «Retira por la empresa»: aparece cuando todo lo que muestra el filtro de la
+// grilla es de una sola empresa. Los pendientes son los filtrados que no
+// retiraron (respeta los filtros); los que ya retiraron se buscan en toda la
+// empresa, para que se vea si alguno ya se llevó el suyo.
+var empresaActual = null;
+function filasEmpresa() {
+  return Array.from(document.querySelectorAll('#tbl-entrega tbody tr[data-id]'));
+}
+function revisarEmpresa(filtradas) {
+  var barra = document.getElementById('empresa-barra');
+  if (!barra) return;
+  var buscar = document.querySelector('#tbl-entrega').closest('.card').querySelector('.filter-input');
+  var empresas = {};
+  (filtradas || []).forEach(function (tr) { empresas[tr.dataset.empleador || ''] = 1; });
+  var nombres = Object.keys(empresas);
+  var total = filasEmpresa().length;
+  if (nombres.length !== 1 || !nombres[0] || !filtradas.length || filtradas.length === total
+      || !(buscar && buscar.value.trim())) {
+    barra.classList.add('oculto'); empresaActual = null; return;
+  }
+  empresaActual = nombres[0];
+  var pend = filtradas.filter(function (tr) { return tr.dataset.entregado !== '1'; }).length;
+  var ya = filasEmpresa().filter(function (tr) { return tr.dataset.empleador === empresaActual && tr.dataset.entregado === '1'; }).length;
+  document.getElementById('empresa-nombre').textContent = empresaActual;
+  document.getElementById('empresa-resumen').textContent = pend + (pend === 1 ? ' falta retirar' : ' faltan retirar')
+    + (ya ? ' · ' + ya + (ya === 1 ? ' ya retiró' : ' ya retiraron') : '') + '.';
+  document.getElementById('btn-empresa').disabled = pend === 0;
+  barra.classList.remove('oculto');
+}
+function contarEmpresa() {
+  var n = document.querySelectorAll('#emp-pendientes input[name="ids"]:checked').length;
+  document.getElementById('emp-cantidad').textContent = n + (n === 1 ? ' beneficio' : ' beneficios');
+  document.getElementById('btn-emp-ok').disabled = n === 0;
+}
+function abrirEmpresa() {
+  if (!empresaActual) return;
+  var g = document.getElementById('tbl-entrega')._grilla;
+  var pend = g.filas().filter(function (tr) { return tr.dataset.entregado !== '1'; });
+  var ya = filasEmpresa().filter(function (tr) { return tr.dataset.empleador === empresaActual && tr.dataset.entregado === '1'; });
+  document.getElementById('emp-titulo').textContent = empresaActual;
+  var cy = document.getElementById('emp-ya');
+  cy.innerHTML = '';
+  if (ya.length) {
+    var av = document.createElement('div');
+    av.className = 'alert alert-warning';
+    var t = document.createElement('div');
+    var b = document.createElement('b');
+    b.textContent = (ya.length === 1 ? 'Ya retiró 1' : 'Ya retiraron ' + ya.length) + ' de esta empresa:';
+    t.appendChild(b);
+    var ul = document.createElement('ul');
+    ya.forEach(function (tr) {
+      var li = document.createElement('li');
+      li.textContent = tr.dataset.nombre + ' — ' + tr.dataset.fecha + (tr.dataset.quien ? ', retiró ' + tr.dataset.quien : '');
+      ul.appendChild(li);
+    });
+    t.appendChild(ul);
+    av.appendChild(t);
+    cy.appendChild(av);
+  }
+  document.getElementById('emp-pend-titulo').textContent = 'Faltan retirar (' + pend.length + '): destildá a quien no se lleve.';
+  var cp = document.getElementById('emp-pendientes');
+  cp.innerHTML = '';
+  pend.sort(function (a, b) { return a.dataset.nombre.localeCompare(b.dataset.nombre); }).forEach(function (tr) {
+    var l = document.createElement('label');
+    l.className = 'campo-check';
+    var c = document.createElement('input');
+    c.type = 'checkbox'; c.name = 'ids'; c.value = tr.dataset.id; c.checked = true;
+    c.addEventListener('change', contarEmpresa);
+    l.appendChild(c);
+    l.appendChild(document.createTextNode(' ' + tr.dataset.orden + ' · ' + tr.dataset.nombre
+      + (tr.dataset.documento ? ' · DNI ' + tr.dataset.documento : '')));
+    cp.appendChild(l);
+  });
+  document.getElementById('emp-nombre').value = '';
+  document.getElementById('emp-doc').value = '';
+  contarEmpresa();
+  abrirModal('modal-empresa');
+  setTimeout(function () { document.getElementById('emp-nombre').focus(); }, 0);
+}
+function confirmarEmpresa() {
+  var n = document.querySelectorAll('#emp-pendientes input[name="ids"]:checked').length;
+  if (!n) return false;
+  return confirm('¿Registrar que ' + document.getElementById('emp-nombre').value.trim() + ' retira ' + n
+                 + (n === 1 ? ' beneficio' : ' beneficios') + ' por ' + empresaActual + '?');
+}
 document.addEventListener('DOMContentLoaded', function () {
+  var bc = document.getElementById('btn-constancia');
+  if (bc) { try { window.open(bc.href, '_blank'); } catch (e) { /* el bloqueador: queda el botón */ } }
   var fe = document.getElementById('f-entregado'), ft = document.getElementById('f-tipo'),
       fo = document.getElementById('f-origen'), fa = document.getElementById('f-accion');
   gestion_admTable('tbl-entrega', { pageSize: 50, filtroExtra: function (tr) {
@@ -366,7 +542,8 @@ document.addEventListener('DOMContentLoaded', function () {
     if (ft.value && tr.dataset.tipo !== ft.value) return false;
     if (fo.value && tr.dataset.origen !== fo.value) return false;
     return true;
-  } });
+  }, onRender: revisarEmpresa });
+  if (document.getElementById('tbl-empresas')) gestion_admTable('tbl-empresas', { pageSize: 50 });
   gestion_admTable('tbl-stock', { pageSize: 50 });
   gestion_admTable('tbl-movs', { pageSize: 50, filtroExtra: function (tr) {
     return !fa.value || tr.dataset.accion === fa.value;

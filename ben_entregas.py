@@ -42,11 +42,24 @@ invitado, un no afiliado), entra con su nombre y documento, sin afiliado
 (`id_afiliado` NULL, origen «externo»). Descuenta stock igual. Quitarle el
 retiro a uno de afuera lo saca de la lista (no tiene padrón al que volver).
 
-Permiso: el de Campañas (/beneficios/campanias). sql/beneficios_entregas_20261118.sql
-y sql/beneficios_entregas_stock_20261118.sql.
+RETIRA POR LA EMPRESA (pedido del 24/11/2026, `ben_entrega_retiro`)
+Con la grilla filtrada a una sola empresa (todas las filas que quedan tienen el
+mismo empleador), aparece «Retira por la empresa»: muestra los que ya retiraron
+de esa empresa (cuándo y quién) y los que faltan, tildados, y pide el nombre y
+el DNI de quien viene a buscarlos. Registra de una vez el retiro de los tildados
+(todo o nada: si otro puesto marcó a alguno en el medio, no graba nada), con el
+mismo control de stock, y deja un `ben_entrega_retiro` cuyo id es el número de
+la constancia. La constancia es un PDF con el detalle por duplicado (original y
+duplicado, cada uno con las firmas de quien retira y de quien entrega); se
+vuelve a imprimir desde la solapa «Retiros por empresa» o desde la fila. Quitar
+el retiro de uno de esos afiliados lo saca de la constancia (el PDF lo avisa).
+
+Permiso: el de Campañas (/beneficios/campanias). sql/beneficios_entregas_20261118.sql,
+sql/beneficios_entregas_stock_20261118.sql y sql/beneficios_entregas_empresa_20261124.sql.
 
   /beneficios/campanias/<id>/entrega               el padrón de entrega; POST acciones
   /beneficios/campanias/<id>/entrega/api_entregar  «Marcar que retiró» (JSON)
+  /beneficios/campanias/<id>/entrega/retiro/<n>/pdf  la constancia del retiro por la empresa
 La grilla exporta a Excel con los filtros puestos, como todas.
 """
 
@@ -67,6 +80,9 @@ ben_ent_bp = Blueprint("ben_ent", __name__, url_prefix="/beneficios")
 URL = camp_mod.URL
 SQL_ESQUEMA = "sql/beneficios_entregas_20261118.sql"
 SQL_ESQUEMA_STOCK = "sql/beneficios_entregas_stock_20261118.sql"
+SQL_ESQUEMA_EMPRESA = "sql/beneficios_entregas_empresa_20261124.sql"
+#: Tope de afiliados en un retiro por la empresa.
+MAX_EMPRESA = 2000
 #: Las personas se piden de a tantas al armar el padrón.
 TANDA = 500
 
@@ -95,6 +111,59 @@ def leer_retiro(datos: dict) -> tuple[str | None, str | None]:
     if doc and not nombre:
         raise ErrorEntrega("Escribí también el nombre de quien retira.")
     return nombre, doc
+
+
+def leer_retiro_empresa(datos: dict) -> tuple[str, str]:
+    """(nombre, documento) de quien retira por la empresa: los dos obligatorios."""
+    nombre = limpio(datos.get("retiro_nombre"), 150)
+    doc = solo_digitos(datos.get("retiro_documento"))[:20]
+    if not nombre or not doc:
+        raise ErrorEntrega("Escribí el nombre y el DNI de quien retira por la empresa: van en la constancia.")
+    if not 6 <= len(doc) <= 11:
+        raise ErrorEntrega("El DNI de quien retira no parece válido (de 6 a 11 dígitos, sin puntos).")
+    return nombre, doc
+
+
+def leer_ids(valores) -> list[int]:
+    """Las filas tildadas, sin repetir; enteros positivos."""
+    ids = []
+    for v in valores or []:
+        try:
+            n = int(str(v).strip())
+        except ValueError:
+            raise ErrorEntrega("Lo tildado no es válido: recargá la página.") from None
+        if n > 0 and n not in ids:
+            ids.append(n)
+    if not ids:
+        raise ErrorEntrega("No hay nadie tildado para retirar.")
+    if len(ids) > MAX_EMPRESA:
+        raise ErrorEntrega(f"Son demasiados de una vez (más de {MAX_EMPRESA}).")
+    return ids
+
+
+def control_empresa(filas: list[dict], ids: list[int]) -> str:
+    """Que estén todas, ninguna retirada y de una sola empresa. Devuelve la empresa."""
+    por_id = {f["id"]: f for f in filas}
+    faltan = [i for i in ids if i not in por_id]
+    if faltan:
+        raise ErrorEntrega("Alguno ya no está en el padrón de entrega: recargá la página.")
+    ya = [por_id[i] for i in ids if por_id[i]["entregado"]]
+    if ya:
+        nombres = ", ".join(f"{f['apellido_nombres']} ({f['fecha_entrega']:%H:%M})" if f.get("fecha_entrega")
+                            else f["apellido_nombres"] for f in ya[:5])
+        raise ErrorEntrega(f"Mientras tanto ya {'retiró' if len(ya) == 1 else 'retiraron'} {nombres}"
+                           + ("…" if len(ya) > 5 else "") + ". No se registró nada: recargá y volvé a filtrar la empresa.")
+    empresas = {(por_id[i].get("empleador") or "").strip() for i in ids}
+    if len(empresas) != 1 or "" in empresas:
+        raise ErrorEntrega("Lo tildado tiene que ser de una sola empresa.")
+    return empresas.pop()
+
+
+def control_stock_n(camp: dict, n: int) -> None:
+    """Con stock cargado, que alcance para `n`."""
+    if camp.get("controla_stock") and (camp.get("queda") or 0) < n:
+        raise ErrorEntrega(f"No alcanza el stock: quedan {max(camp.get('queda') or 0, 0)} y son {n}. "
+                           "Cargá más stock o destildá a algunos.")
 
 
 def detalle_retiro(orden, nombre: str | None, doc: str | None) -> str:
@@ -151,6 +220,13 @@ def hay_stock(cur) -> bool:
     return bool(cur.fetchone()["n"])
 
 
+def hay_empresa(cur) -> bool:
+    """sql/beneficios_entregas_empresa_20261124.sql: el retiro por la empresa."""
+    cur.execute("""SELECT COUNT(*) AS n FROM information_schema.columns WHERE table_schema = DATABASE()
+                     AND table_name = 'ben_entrega' AND column_name = 'id_retiro'""")
+    return bool(cur.fetchone()["n"])
+
+
 def hay_esquema(cur) -> bool:
     cur.execute("""SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE()
                      AND table_name IN ('ben_entrega', 'ben_entrega_mov')""")
@@ -183,6 +259,7 @@ def campania(cur, id_camp: int, bloquear=False) -> dict | None:
         c["porc"] = round(int(c["entregados_padron"] or 0) * 100 / c["padron"], 1) if c["padron"] else 0.0
         c["externos"] = c["entregados"] - int(c["entregados_padron"] or 0)
         c["hay_stock"] = con_stock
+        c["hay_empresa"] = hay_empresa(cur)
     return c
 
 
@@ -362,7 +439,8 @@ def quitar_entrega(cur, camp: dict, id_fila: int, motivo: str, uid) -> str:
              f"Fuera del padrón, {f['apellido_nombres']}" + (f" (DNI {f['nro_documento']})" if f["nro_documento"] else "")
              + f", había retirado {f['fecha_entrega']:%d/%m/%Y %H:%M}: {motivo}", uid)
         return f["apellido_nombres"]
-    cur.execute("""UPDATE ben_entrega SET entregado = 0, fecha_entrega = NULL, id_usuario_entrega = NULL,
+    cur.execute(f"""UPDATE ben_entrega SET entregado = 0, fecha_entrega = NULL, id_usuario_entrega = NULL,
+                                          {"id_retiro = NULL," if camp.get("hay_empresa") else ""}
                                           retiro_nombre = NULL, retiro_documento = NULL WHERE id = %s""", (id_fila,))
     _mov(cur, camp["id"], f["id_afiliado"], "quita_entrega",
          f"Orden {f['orden']}, había retirado {f['fecha_entrega']:%d/%m/%Y %H:%M}: {motivo}", uid)
@@ -422,6 +500,102 @@ def entregar_fuera(cur, camp: dict, numero, nombre, motivo, retiro_nombre, retir
     return {"nombre": quien, "afiliado": bool(afi), "orden": orden}
 
 
+def entregar_empresa(cur, camp: dict, ids, nombre: str, doc: str, uid) -> dict:
+    """El retiro por la empresa (ver el docstring). `camp` viene con FOR UPDATE."""
+    ids = leer_ids(ids)
+    cur.execute(f"""SELECT * FROM ben_entrega WHERE id_campania = %s
+                      AND id IN ({', '.join(['%s'] * len(ids))}) FOR UPDATE""", [camp["id"], *ids])
+    filas = cur.fetchall()
+    empresa = control_empresa(filas, ids)
+    control_stock_n(camp, len(ids))
+    cur.execute("""INSERT INTO ben_entrega_retiro (id_campania, empleador, retiro_nombre, retiro_documento, cantidad, id_usuario)
+                   VALUES (%s, %s, %s, %s, %s, %s)""", (camp["id"], empresa[:200], nombre, doc, len(ids), uid))
+    id_retiro = cur.lastrowid
+    cur.execute(f"""UPDATE ben_entrega SET entregado = 1, fecha_entrega = NOW(), id_usuario_entrega = %s,
+                                           retiro_nombre = %s, retiro_documento = %s, id_retiro = %s
+                     WHERE id_campania = %s AND entregado = 0 AND id IN ({', '.join(['%s'] * len(ids))})""",
+                [uid, nombre, doc, id_retiro, camp["id"], *ids])
+    if cur.rowcount != len(ids):
+        raise ErrorEntrega("Otro puesto marcó a alguno en el medio. No se registró nada: recargá la página.")
+    for f in sorted(filas, key=lambda x: x["orden"]):
+        _mov(cur, camp["id"], f["id_afiliado"], "entrega",
+             detalle_retiro(f["orden"], nombre, doc) + f" por la empresa {empresa}, constancia N° {id_retiro}", uid)
+    return {"id": id_retiro, "empresa": empresa, "cantidad": len(ids)}
+
+
+def retiros_empresa(cur, id_camp: int) -> list[dict]:
+    if not hay_empresa(cur):
+        return []
+    cur.execute("""SELECT r.*, u.nombre AS usuario,
+                          (SELECT COUNT(*) FROM ben_entrega e WHERE e.id_retiro = r.id) AS vigentes
+                     FROM ben_entrega_retiro r LEFT JOIN s_usuarios u ON u.id = r.id_usuario
+                    WHERE r.id_campania = %s ORDER BY r.fecha DESC, r.id DESC""", (id_camp,))
+    return cur.fetchall()
+
+
+def retiro_empresa(cur, id_camp: int, id_retiro: int) -> dict | None:
+    cur.execute("""SELECT r.*, u.nombre AS usuario FROM ben_entrega_retiro r
+                     LEFT JOIN s_usuarios u ON u.id = r.id_usuario
+                    WHERE r.id = %s AND r.id_campania = %s""", (id_retiro, id_camp))
+    r = cur.fetchone()
+    if r:
+        cur.execute("""SELECT * FROM ben_entrega WHERE id_retiro = %s ORDER BY apellido_nombres, orden""", (id_retiro,))
+        r["filas"] = cur.fetchall()
+    return r
+
+
+def constancia_pdf(camp: dict, r: dict):
+    """La constancia del retiro por la empresa: original y duplicado, cada uno con sus firmas."""
+    import pagos_pdf as P
+    from reportlab.lib.units import cm
+    from reportlab.platypus import KeepTogether, PageBreak, Spacer, Table, TableStyle
+
+    numero = f"N° {r['id']:06d}"
+    titulo = "Constancia de retiro"
+    filas = r["filas"]
+    n = len(filas)
+
+    def cuerpo(doc):
+        doc.story.append(doc.P(
+            f"El {r['fecha']:%d/%m/%Y} a las {r['fecha']:%H:%M}, <b>{P._txt(r['retiro_nombre'])}</b> "
+            f"(DNI {P._txt(r['retiro_documento'])}), en representación de <b>{P._txt(r['empleador'])}</b>, retira "
+            f"<b>{n} {'beneficio' if n == 1 else 'beneficios'}</b> de la campaña <b>«{P._txt(camp['titulo'])}»</b> "
+            f"para {'el afiliado que se detalla' if n == 1 else 'los afiliados que se detallan'}, y se compromete a "
+            f"entregárselos.", fontSize=10, leading=15, spaceAfter=10))
+        doc.datos("RETIRO", [("Campaña", P._txt(camp["titulo"])), ("Fecha y hora", f"{r['fecha']:%d/%m/%Y %H:%M}"),
+                             ("Empresa", P._txt(r["empleador"])), ("Retira", P._txt(r["retiro_nombre"])),
+                             ("DNI", P._txt(r["retiro_documento"])), ("Cantidad", str(n)),
+                             ("Registró", P._txt(r.get("usuario")))])
+        if n != r["cantidad"]:
+            doc.story.append(doc.P(
+                f"<b>Aviso:</b> al registrarlo fueron {r['cantidad']}; después se quitó el retiro de "
+                f"{r['cantidad'] - n}. El detalle muestra los que siguen retirados.",
+                fontSize=8.5, textColor=doc.RED, spaceAfter=8))
+        doc.tabla("DETALLE", ["#", "Orden", "Apellido y nombres", "Documento", "CUIL", "Parentesco"],
+                  [[str(i), str(f["orden"]), P._txt(f["apellido_nombres"]), P._txt(f["nro_documento"]) or "—",
+                    P._cuit(f["cuil"]) if f.get("cuil") else "—",
+                    "Titular" if f.get("cod_parentesco") == 0 else (P._txt(f.get("parentesco")) or "—")]
+                   for i, f in enumerate(filas, 1)],
+                  [0.9, 1.3, 6.2, 2.4, 2.8, 2.4], derecha=(0, 1))
+        firmas = Table([["", "", ""],
+                        [doc.P("Firma de quien retira", alignment=1), "", doc.P("Entregó (por el sindicato)", alignment=1)],
+                        [doc.P(f"Aclaración: {P._txt(r['retiro_nombre'])}", alignment=1, fontSize=8), "",
+                         doc.P("Aclaración:", alignment=1, fontSize=8)],
+                        [doc.P(f"DNI {P._txt(r['retiro_documento'])}", alignment=1, fontSize=8), "", ""]],
+                       colWidths=[7 * cm, 2 * cm, 7 * cm], rowHeights=[1.6 * cm, None, None, None])
+        firmas.setStyle(TableStyle([("LINEABOVE", (0, 1), (0, 1), 0.6, doc.MUTED),
+                                    ("LINEABOVE", (2, 1), (2, 1), 0.6, doc.MUTED)]))
+        doc.story.append(KeepTogether([Spacer(1, 0.8 * cm), firmas]))
+
+    doc = P._Doc(titulo, numero, "ORIGINAL")
+    cuerpo(doc)
+    doc.story.append(PageBreak())
+    doc._membrete(titulo, numero, "DUPLICADO")
+    cuerpo(doc)
+    nombre = f"Constancia de retiro {r['id']:06d}"
+    return P.respuesta(doc.pdf(f"{titulo} {numero}"), nombre + ".pdf")
+
+
 # =============================================================================
 # Pantallas
 # =============================================================================
@@ -465,9 +639,11 @@ def entrega(id_camp):
             filas = padron(cur, id_camp)
             movs = movimientos(cur, id_camp)
             stock = stock_movs(cur, id_camp)
+            retiros = retiros_empresa(cur, id_camp)
             grupo = _grupo_txt(cur, camp)
+    nuevo = next((r for r in retiros if r["id"] == request.args.get("retiro", type=int)), None)
     return render_template("beneficios/entrega.html", camp=camp, filas=filas, movs=movs, grupo=grupo, stock=stock,
-                           solapa=request.args.get("solapa") or "padron")
+                           retiros=retiros, retiro_nuevo=nuevo, solapa=request.args.get("solapa") or "padron")
 
 
 @ben_ent_bp.route("/campanias/<int:id_camp>/entrega", methods=["POST"])
@@ -507,6 +683,16 @@ def accion(id_camp):
                                        request.form.get("motivo"), rn, rd, _uid())
                     flash(f"{r['nombre']}: retiro registrado fuera del padrón"
                           + (" (es afiliado: quedó agregado al padrón de entrega)." if r["afiliado"] else " (no afiliado)."))
+                elif acc == "empresa":
+                    if not camp["hay_empresa"]:
+                        raise ErrorEntrega(f"Falta correr {SQL_ESQUEMA_EMPRESA}: sin eso no hay retiro por la empresa.")
+                    rn, rd = leer_retiro_empresa(request.form)
+                    r = entregar_empresa(cur, camp, request.form.getlist("ids"), rn, rd, _uid())
+                    conn.commit()
+                    flash(f"{r['empresa']}: {rn} retiró {r['cantidad']} "
+                          f"{'beneficio' if r['cantidad'] == 1 else 'beneficios'}. Constancia N° {r['id']:06d}: "
+                          "imprimila por duplicado para que la firme.")
+                    return redirect(url_for("ben_ent.entrega", id_camp=id_camp, retiro=r["id"]))
                 elif acc == "quitar_entrega":
                     nombre = quitar_entrega(cur, camp, request.form.get("id", type=int), request.form.get("motivo"), _uid())
                     flash(f"Se quitó el retiro de {nombre}.")
@@ -520,6 +706,24 @@ def accion(id_camp):
                 conn.rollback()
                 raise
     return redirect(url_for("ben_ent.entrega", id_camp=id_camp))
+
+
+@ben_ent_bp.route("/campanias/<int:id_camp>/entrega/retiro/<int:id_retiro>/pdf")
+def retiro_pdf(id_camp, id_retiro):
+    salida = _guardia()
+    if salida:
+        return salida
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            if not hay_esquema(cur) or not hay_empresa(cur):
+                flash(f"!Falta correr {SQL_ESQUEMA_EMPRESA}.")
+                return redirect(url_for("ben_ent.entrega", id_camp=id_camp))
+            camp = campania(cur, id_camp)
+            r = retiro_empresa(cur, id_camp, id_retiro) if camp else None
+    if not r:
+        flash("!No existe esa constancia de retiro.")
+        return redirect(url_for("ben_ent.entrega", id_camp=id_camp))
+    return constancia_pdf(camp, r)
 
 
 def _fila_json(f: dict) -> dict:

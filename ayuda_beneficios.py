@@ -182,6 +182,20 @@ SECCIONES = [
      "apellido y nombre. Aparece en la grilla como «Fuera del padrón».",
    ]},
    {"tipo": "pasos", "items": [
+     "<b>Retira por la empresa</b>: escribí el nombre de la empresa en el buscador de la grilla. Cuando todo lo "
+     "que queda filtrado es de una sola empresa, arriba de la grilla aparece cuántos faltan y cuántos ya "
+     "retiraron, con el botón <b>Retira por la empresa</b>.",
+     "El diálogo muestra primero los de esa empresa que <b>ya retiraron</b> (cuándo y quién), para no "
+     "entregar dos veces, y abajo los que faltan, tildados: destildá a quien no se lleve. Escribí el nombre y "
+     "el <b>DNI</b> de quien retira (obligatorios); la cantidad es la de los tildados.",
+     "Al registrarlo se abre la <b>constancia en PDF por duplicado</b> (original y duplicado, con el detalle "
+     "de los afiliados y las firmas): imprimila para que la firme quien retira. Si el navegador bloquea la "
+     "ventana, está el botón «Imprimir constancia por duplicado».",
+     "La solapa <b>Retiros por empresa</b> lista las constancias para volver a imprimirlas; en la grilla, cada "
+     "afiliado retirado así tiene su botón PDF. Se registra todo o nada: si otro puesto marcó a alguno en el "
+     "medio, no se graba y hay que volver a filtrar. Con stock cargado, tiene que alcanzar para todos.",
+   ]},
+   {"tipo": "pasos", "items": [
      "En la solapa <b>Stock</b> cargá cuántos hay: una cantidad positiva suma (la compra, con el remito en el "
      "detalle) y una negativa ajusta (rotas, devueltas).",
      "Arriba, <b>Stock</b> dice cuántos quedan: lo cargado menos lo retirado, contando también los de fuera del "

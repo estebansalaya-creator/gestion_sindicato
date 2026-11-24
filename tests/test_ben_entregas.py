@@ -73,6 +73,67 @@ for args, txt in ((("0", "x", 0, 0), "cero"), (("abc", "x", 0, 0), "no es númer
     except E.ErrorEntrega:
         ok(True, "se rechaza: " + txt)
 
+print("Retira por la empresa")
+import datetime as _dt   # noqa: E402
+ok(E.leer_retiro_empresa({"retiro_nombre": " perez  juan ", "retiro_documento": "30.111.222"}) == ("perez juan", "30111222"),
+   "nombre y DNI limpios")
+for d, txt in (({"retiro_nombre": "PEREZ"}, "sin DNI"), ({"retiro_documento": "30111222"}, "sin nombre"),
+               ({"retiro_nombre": "PEREZ", "retiro_documento": "123"}, "DNI corto")):
+    try:
+        E.leer_retiro_empresa(d)
+        ok(False, "se rechaza: " + txt)
+    except E.ErrorEntrega:
+        ok(True, "se rechaza: " + txt)
+ok(E.leer_ids(["3", "1", "3"]) == [3, 1], "ids sin repetir")
+for v, txt in (([], "nadie tildado"), (["x"], "id que no es número")):
+    try:
+        E.leer_ids(v)
+        ok(False, "se rechaza: " + txt)
+    except E.ErrorEntrega:
+        ok(True, "se rechaza: " + txt)
+F = lambda i, emp, ent=0: {"id": i, "orden": i, "apellido_nombres": f"AFI {i}", "empleador": emp, "entregado": ent,
+                           "fecha_entrega": _dt.datetime(2026, 11, 24, 13, 0) if ent else None}
+ok(E.control_empresa([F(1, "CUSTOMS UNION SRL"), F(2, "CUSTOMS UNION SRL")], [1, 2]) == "CUSTOMS UNION SRL", "una empresa")
+for filas, ids, txt in (([F(1, "A"), F(2, "B")], [1, 2], "dos empresas"), ([F(1, "A")], [1, 2], "falta una fila"),
+                        ([F(1, "A"), F(2, "A", 1)], [1, 2], "uno ya retiró"), ([F(1, None)], [1], "sin empresa")):
+    try:
+        E.control_empresa(filas, ids)
+        ok(False, "se rechaza: " + txt)
+    except E.ErrorEntrega:
+        ok(True, "se rechaza: " + txt)
+E.control_stock_n({"controla_stock": False}, 50)
+ok(True, "sin stock cargado: no controla")
+try:
+    E.control_stock_n({"controla_stock": True, "queda": 2}, 3)
+    ok(False, "stock que no alcanza: se rechaza")
+except E.ErrorEntrega:
+    ok(True, "stock que no alcanza: se rechaza")
+
+print("Constancia por duplicado (PDF)")
+try:
+    import institucion   # noqa: E402
+    institucion.obtener = lambda: {"nombre": "Sindicato de prueba", "sigla": "SP", "cuit": "30657937270"}
+    institucion.ruta_logo = lambda d=None: None
+    institucion.domicilio_completo = lambda d: "Calle 123"
+    from flask import Flask   # noqa: E402
+    r = {"id": 7, "empleador": "CUSTOMS UNION SERVICES SRL", "retiro_nombre": "PEREZ JUAN", "retiro_documento": "30111222",
+         "cantidad": 3, "fecha": _dt.datetime(2026, 11, 24, 13, 30), "usuario": "Esteban",
+         "filas": [{"orden": 1, "apellido_nombres": "ABALSAMO JOSE LUIS", "nro_documento": "22265037",
+                    "cuil": "20222650373", "cod_parentesco": 0, "parentesco": None},
+                   {"orden": 124, "apellido_nombres": "ARROSPIDE HERNAN MARTIN", "nro_documento": "29462103",
+                    "cuil": "20294621033", "cod_parentesco": 0, "parentesco": None}]}
+    with Flask(__name__).test_request_context():
+        resp = E.constancia_pdf({"titulo": "Caja navideña 2026"}, r)
+        resp.direct_passthrough = False
+        datos = resp.get_data()
+    salida = os.environ.get("PDF_PRUEBA")
+    if salida:
+        open(salida, "wb").write(datos)
+    ok(datos[:4] == b"%PDF" and datos.count(b"/Type /Page") - datos.count(b"/Type /Pages") >= 2,
+       "el PDF sale con original y duplicado (2 páginas o más)")
+except ImportError as e:
+    print("  (sin reportlab o flask: no se prueba el PDF)", e)
+
 if fallos:
     print(f"{len(fallos)} FALLAS")
     sys.exit(1)

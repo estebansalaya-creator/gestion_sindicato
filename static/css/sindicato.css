@@ -722,6 +722,15 @@ fieldset.solo-lectura .solo-edicion { display: none; }
 .alert-danger  { background: var(--danger-bg); border-color: var(--danger); color: var(--danger-texto); }
 .alert-warning { background: var(--warn-bg);   border-color: var(--warn);   color: var(--warn-texto); }
 .alert-info    { background: var(--info-bg);   border-color: var(--info);   color: var(--info-texto); }
+/* Un aviso con texto que ocupa el ancho y sus botones abajo (la constancia de un
+   retiro por la empresa): <div class="alert alert-ok">ícono<div class="alert-texto">…
+   <div class="alert-acciones">botones</div></div></div>                    */
+.alert-texto    { flex: 1; }
+.alert-acciones { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+/* Una lista de casillas, una por renglón, dentro de un diálogo (a quién se le
+   entrega en «Retira por la empresa»). */
+.lista-checks { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.lista-checks .campo-check { padding-bottom: 2px; margin-top: 0; }
 /* En la ficha de un familiar: de quién es. Grande, para que se lea de un vistazo. */
 .titular-de { align-items: center; font-size: .95rem; }
 .titular-de > div { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }

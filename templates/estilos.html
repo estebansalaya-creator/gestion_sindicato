@@ -282,6 +282,13 @@
     {{ ui.aviso('El CUIL 20204564703 no es válido: no verifica el dígito de control.', 'danger') }}
     {{ ui.aviso('Se guardó, pero el titular de este grupo está dado de baja.', 'warning') }}
     {{ ui.aviso('Los importados de AEDA tienen apellido y nombre en un solo campo.', 'info') }}
+    <div class="alert alert-ok">{{ ui.icono('ok', 16) }}<div class="alert-texto"><b>Constancia N° 000012</b> · Aviso con botones abajo.
+      <div class="alert-acciones">{{ ui.boton('Imprimir constancia', 'primary', icono_='pdf', chico=True) }}</div></div></div>
+    <div class="lista-checks">
+      <label class="campo-check"><input type="checkbox" checked> 1 · ABALSAMO JOSE LUIS</label>
+      <label class="campo-check"><input type="checkbox" checked> 124 · ARROSPIDE HERNAN MARTIN</label>
+    </div>
+    {{ ej("<div class=\"alert alert-ok\">{{ ui.icono('ok', 16) }}<div class=\"alert-texto\">… <div class=\"alert-acciones\">botones</div></div></div>\n<div class=\"lista-checks\"><label class=\"campo-check\"><input type=\"checkbox\"> …</label> …</div>   casillas, una por renglón (en un diálogo)") }}
     {{ ej("{{ ui.mensajes(errores) }}                 flash('Guardado.') → verde · flash('!Ojo…') → amarillo\n{{ ui.aviso('Texto', 'info') }}             ok | danger | warning | info") }}
   </div>
 </div>
