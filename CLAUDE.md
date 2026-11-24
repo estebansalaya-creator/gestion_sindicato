@@ -962,6 +962,18 @@ del remitente, y deja la fila de `mail_config` **apagada**: no sale nada hasta a
   24 horas (`limite_diario`) y el mismo registro en `mail_envios`.
 - `p_afiliados` no tiene columna de correo: el del afiliado sale de sus contactos (`s_contactos`, vinieron de AEDA).
   Test: `python tests/test_ben_campanias.py` (incluye `entregar` sin servidor).
+- **Errores del servidor** (24/11/2026: la campaña 1 daba «Connection unexpectedly closed» —era el usuario de la
+  cuenta mal escrito, «infomes@», que había vuelto con el restore de la base: Gmail corta sin responder— y cada
+  reanudación marcaba a diez afiliados como error, que no se vuelven a intentar): `_entregar` dice en qué paso falló (conectar, STARTTLS,
+  iniciar sesión, presentar el remitente, entregar) y qué suele ser (`PASOS`, `SUGERENCIAS`, `motivo_conexion`). Lo
+  que no es del destinatario —corte, timeout, red, un 421, el remitente o el mensaje rechazados (el límite de Gmail,
+  «550 5.4.5»)— levanta **`MailConexionError`** (es MailError): queda en `mail_envios` y la campaña se pausa con ese
+  motivo, con el afiliado **pendiente**. Usuario o contraseña siguen como antes; un rechazo de la dirección (550 en
+  RCPT) sigue siendo del destinatario y cuenta para los 10 seguidos.
+- **Probar la conexión** (`POST /admin/correo/diagnosticar`, `mailer.diagnosticar`): conecta, STARTTLS, inicia sesión,
+  `MAIL FROM` + `RSET` y se va, **sin mandar nada** (no necesita el envío activo ni cuenta para el límite). Prueba la
+  salida del servidor donde está abierta la pantalla: Railway o el IIS local. La respuesta al EHLO de Gmail trae la IP
+  de salida. **Railway no deja salir SMTP (25, 465, 587, 2525) salvo en el plan Pro.**
 
 ## Beneficios: Convenio YMCA
 
@@ -1008,6 +1020,12 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
   24 horas la deja **pausada** con la nota; se **reanuda** desde donde quedó (la lista está en la base: un reinicio no
   pierde nada, la ficha ofrece «Seguir enviando»). 10 errores seguidos la pausan. La ficha sigue el avance (JSON).
 - Primero «Enviar prueba» a una dirección (asunto con «[PRUEBA]», no toca la lista).
+- **Editar** (`puede_editar`): un borrador, entero; una **pausada** (pedido del 24/11/2026), solo título, asunto,
+  texto y flyer —a quién va se ve sin poder cambiarlo, la lista ya está armada—. Los pendientes reciben la versión
+  nueva. No mientras el hilo está andando.
+- **Flyer perdido** (`flyer_perdido`, 24/11/2026: el archivo de la campaña 1 desapareció del servidor y salieron 15
+  mails sin la imagen): con `flyer_archivo` cargado y el archivo ausente (ni disco ni bucket) no se prueba, no se
+  envía ni se reanuda, el hilo se pausa con el aviso, y la ficha y el formulario piden cargarlo de nuevo.
 - **Eliminar** (pedido del 23/11/2026; `puede_eliminar`): en cualquier estado, desde la lista (tacho) o la ficha,
   con su flyer y su lista (`ben_campania_envio` cae por la FK). No mientras se envía (estado «enviando» o el hilo
   andando) ni con padrón de entrega. Lo que salió queda en `mail_envios` (sin FK a la campaña).

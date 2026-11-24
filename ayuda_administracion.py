@@ -188,6 +188,12 @@ SECCIONES = [
      "Tildá <b>Activar el envío de correos</b> y <b>Guardar</b>.",
      "<b>Enviar prueba</b> a tu dirección: es lo único que confirma que la cuenta anda.",
    ]},
+   {"tipo": "criterio", "html":
+    "<b>Probar la conexión</b> se conecta, inicia sesión, presenta el remitente y se va, <b>sin mandar nada</b>: "
+    "dice en qué paso se corta. Al conectar suele ser la red desde donde sale el sistema (Railway no deja salir "
+    "correo salvo en el plan Pro); al iniciar sesión, el usuario o la contraseña; al presentar el remitente, el "
+    "límite de envíos de Gmail, que se libera solo a las 24 horas. Prueba la salida del servidor donde está "
+    "abierta la pantalla: en aeda.seggestion.com.ar, la de Railway; en el sistema local, la de la oficina."},
    {"tipo": "campos", "items": [
      ("Límite cada 24 horas", "Freno de seguridad: pasado ese número de mails en las últimas 24 horas no sale "
       "ninguno más (una campaña queda pausada y se reanuda después). Gmail corta en 2.000."),

@@ -347,6 +347,35 @@ def _institucion(cur) -> str:
         return "El sindicato"
 
 
+def flyer_perdido(camp: dict) -> bool:
+    """La campaña tiene flyer cargado pero el archivo no está (ni en el disco ni en el bucket).
+
+    Pasó el 24/11/2026 con la «Caja navideña 2026»: el archivo se perdió en el servidor
+    y el envío siguió sin la imagen (15 mails con el texto solo). Con el flyer perdido no
+    se prueba, no se envía y no se reanuda: se vuelve a cargar con Editar.
+    """
+    return bool(camp.get("flyer_archivo")) and ruta_flyer(camp) is None
+
+
+def aviso_flyer_perdido(camp: dict) -> str:
+    return (f"El flyer «{camp.get('flyer_nombre') or camp.get('flyer_archivo')}» no está en el servidor: "
+            "los correos saldrían sin la imagen. Volvé a cargarlo con Editar.")
+
+
+def puede_editar(camp: dict, en_curso: bool = False) -> str | None:
+    """None si se edita; si no, por qué. Un borrador, entero; una pausada (pedido del
+    24/11/2026), solo el contenido —título, asunto, texto y flyer—: la lista ya está
+    armada y a parte ya le llegó, así que a quién va no cambia. Los que faltan reciben
+    la versión nueva."""
+    if camp.get("estado") == "borrador":
+        return None
+    if camp.get("estado") == "pausada" and not en_curso:
+        return None
+    if camp.get("estado") == "pausada" or camp.get("estado") == "enviando":
+        return "Se está enviando: pausala y después editala."
+    return "Una campaña enviada o cancelada no se cambia: hacé una nueva."
+
+
 def puede_eliminar(camp: dict, en_curso: bool = False) -> str | None:
     """Por qué no se puede eliminar la campaña (None = se puede).
 
@@ -385,6 +414,9 @@ def _tanda(id_camp: int, base_url: str, uid, pausa: float = PAUSA_SEGUNDOS) -> N
             conn.commit()
             ruta = ruta_flyer(camp)
             flyer = ruta.read_bytes() if ruta else None
+            if camp.get("flyer_archivo") and flyer is None:
+                _pausar(conn, id_camp, aviso_flyer_perdido(camp))
+                return
             de = mailer.remitente(conn, {})
             while True:
                 with conn.cursor() as cur:
@@ -515,21 +547,28 @@ def editar(id_camp=None):
                 flash(f"!Falta correr {SQL_ESQUEMA}.")
                 return redirect(url_for("ben_camp.lista"))
             convenios = _convenios(cur)
+            solo_contenido = False
             if id_camp:
                 camp = _leer(cur, id_camp)
-                if camp["estado"] != "borrador":
-                    flash("!Una campaña que ya se empezó a mandar no se cambia: hacé una nueva.")
+                motivo = puede_editar(camp, corriendo(id_camp))
+                if motivo:
+                    flash("!" + motivo)
                     return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
+                solo_contenido = camp["estado"] == "pausada"
             if request.method == "POST":
                 f = request.form
                 camp = {**camp, "titulo": " ".join((f.get("titulo") or "").split())[:150],
                         "asunto": " ".join((f.get("asunto") or "").split())[:200],
-                        "cuerpo": (f.get("cuerpo") or "").strip()[:20000] or None,
-                        "destino": f.get("destino") if f.get("destino") in DESTINOS else "titulares",
-                        "id_convenio": f.get("id_convenio", type=int) if f.get("destino") == "adheridos" else None}
-                filtro = filtro_de({k[2:]: v for k, v in f.items() if k.startswith("f_")}) \
-                    if camp["destino"] == "padron" else None
-                if camp["destino"] == "padron" and not _hay_columna_filtro(cur):
+                        "cuerpo": (f.get("cuerpo") or "").strip()[:20000] or None}
+                if solo_contenido:
+                    # La lista ya está armada: a quién va no se toca (el formulario no lo manda).
+                    filtro = _filtro_guardado(camp)
+                else:
+                    camp["destino"] = f.get("destino") if f.get("destino") in DESTINOS else "titulares"
+                    camp["id_convenio"] = f.get("id_convenio", type=int) if f.get("destino") == "adheridos" else None
+                    filtro = filtro_de({k[2:]: v for k, v in f.items() if k.startswith("f_")}) \
+                        if camp["destino"] == "padron" else None
+                if not solo_contenido and camp["destino"] == "padron" and not _hay_columna_filtro(cur):
                     errores.append(f"Para mandar a una lista del padrón falta correr {SQL_ESQUEMA_PADRON}.")
                 if not camp["titulo"]:
                     errores.append("Poné un título para reconocerla en la lista.")
@@ -546,17 +585,25 @@ def editar(id_camp=None):
                         errores.append(str(e))
                 if not errores and not (nuevo or camp.get("flyer_archivo")) and not camp["cuerpo"]:
                     errores.append("Cargá el flyer o el texto: el mail no puede ir vacío.")
+                if not errores and not nuevo and flyer_perdido(camp):
+                    errores.append(aviso_flyer_perdido(camp).replace(" con Editar", " acá"))
                 if not errores:
                     valores = [camp["titulo"], camp["asunto"], camp["cuerpo"], camp["destino"], camp["id_convenio"]]
                     try:
-                        if id_camp:
+                        if solo_contenido:
+                            cur.execute("""UPDATE ben_campania SET titulo = %s, asunto = %s, cuerpo = %s
+                                            WHERE id = %s AND estado = 'pausada'""",
+                                        (camp["titulo"], camp["asunto"], camp["cuerpo"], id_camp))
+                            if not cur.rowcount and not _sin_cambios(cur, id_camp, camp):
+                                raise ErrorCampania("La campaña cambió de estado mientras la editabas: no se guardó.")
+                        elif id_camp:
                             cur.execute("""UPDATE ben_campania SET titulo = %s, asunto = %s, cuerpo = %s, destino = %s,
                                                   id_convenio = %s WHERE id = %s""", (*valores, id_camp))
                         else:
                             cur.execute("""INSERT INTO ben_campania (titulo, asunto, cuerpo, destino, id_convenio, id_usuario)
                                            VALUES (%s, %s, %s, %s, %s, %s)""", (*valores, _uid()))
                             id_camp = cur.lastrowid
-                        if _hay_columna_filtro(cur):
+                        if not solo_contenido and _hay_columna_filtro(cur):
                             import json
                             cur.execute("UPDATE ben_campania SET filtro = %s WHERE id = %s",
                                         (json.dumps(filtro, ensure_ascii=False) if filtro else None, id_camp))
@@ -565,6 +612,12 @@ def editar(id_camp=None):
                             cur.execute("""UPDATE ben_campania SET flyer_archivo = %s, flyer_nombre = %s, flyer_tipo = %s
                                             WHERE id = %s""", (*nuevo, id_camp))
                         conn.commit()
+                    except ErrorCampania as e:
+                        conn.rollback()
+                        if nuevo:
+                            almacenamiento.borrar(_base() / nuevo[0])
+                        flash("!" + str(e))
+                        return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
                     except Exception:
                         conn.rollback()
                         if nuevo:
@@ -572,7 +625,15 @@ def editar(id_camp=None):
                         raise
                     if nuevo and anterior:
                         almacenamiento.borrar(anterior)
-                    flash("Campaña guardada. Mirá cómo queda y mandate una prueba antes de enviarla.")
+                    if solo_contenido:
+                        cur.execute("""SELECT SUM(estado = 'pendiente') AS faltan, SUM(estado = 'ok') AS ok
+                                         FROM ben_campania_envio WHERE id_campania = %s""", (id_camp,))
+                        n = cur.fetchone() or {}
+                        flash(f"Cambios guardados. Los {int(n.get('faltan') or 0)} que faltan reciben esta versión; "
+                              f"a los {int(n.get('ok') or 0)} que ya les llegó no se les vuelve a mandar. "
+                              "Mandate una prueba antes de reanudar.")
+                    else:
+                        flash("Campaña guardada. Mirá cómo queda y mandate una prueba antes de enviarla.")
                     return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
                 if nuevo:
                     almacenamiento.borrar(_base() / nuevo[0])
@@ -586,7 +647,15 @@ def editar(id_camp=None):
         else:
             filtro = _filtro_guardado(camp) if camp else None
     return render_template("beneficios/campania_form.html", camp=camp, errores=errores, destinos=DESTINOS,
-                           convenios=convenios, max_mb=MAX_MB, filtro=filtro or filtro_de({}), atributos=atributos)
+                           convenios=convenios, max_mb=MAX_MB, filtro=filtro or filtro_de({}), atributos=atributos,
+                           solo_contenido=solo_contenido, flyer_falta=bool(camp) and flyer_perdido(camp))
+
+
+def _sin_cambios(cur, id_camp, camp) -> bool:
+    """El UPDATE no tocó filas: o no cambió nada (MySQL cuenta las filas cambiadas, no
+    las encontradas) o la campaña ya no está pausada."""
+    cur.execute("SELECT estado FROM ben_campania WHERE id = %s", (id_camp,))
+    return (cur.fetchone() or {}).get("estado") == "pausada"
 
 
 def _hay_columna_filtro(cur) -> bool:
@@ -639,6 +708,7 @@ def ficha(id_camp):
                            por_estado=por_estado, con_error=con_error, cfg=cfg, estados=ESTADOS, destinos=DESTINOS,
                            vista=vista, institucion=institucion, corriendo=corriendo(id_camp),
                            es_imagen=(camp.get("flyer_tipo") or "").startswith("image/"),
+                           flyer_falta=flyer_perdido(camp), puede_editar=puede_editar(camp, corriendo(id_camp)) is None,
                            filtro_txt=describir_filtro(_filtro_guardado(camp), atributos) if camp["destino"] == "padron" else None)
 
 
@@ -670,6 +740,9 @@ def probar(id_camp):
             with conn.cursor() as cur:
                 camp = _leer(cur, id_camp)
                 institucion = _institucion(cur)
+            if flyer_perdido(camp):
+                flash("!" + aviso_flyer_perdido(camp))
+                return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
             ruta = ruta_flyer(camp)
             de = mailer.remitente(conn, {})
             camp_prueba = {**camp, "asunto": "[PRUEBA] " + camp["asunto"]}
@@ -700,6 +773,9 @@ def enviar(id_camp):
                 return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
             if not cfg.get("activo") or not cfg.get("host"):
                 flash("!El correo saliente no está configurado o está apagado (Administración del Sistema › Correo Saliente).")
+                return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
+            if flyer_perdido(camp):
+                flash("!" + aviso_flyer_perdido(camp))
                 return redirect(url_for("ben_camp.ficha", id_camp=id_camp))
             try:
                 lista_dest, _ = destinatarios(cur, camp["destino"], camp["id_convenio"], _filtro_guardado(camp))
@@ -733,6 +809,8 @@ def cambiar(id_camp, accion):
             if accion == "pausar" and camp["estado"] == "enviando":
                 cur.execute("UPDATE ben_campania SET estado = 'pausada', nota = 'La pausó un usuario.' WHERE id = %s", (id_camp,))
                 flash("Campaña pausada: termina el mail que está saliendo y se detiene.")
+            elif accion == "reanudar" and camp["estado"] in ("pausada", "enviando") and flyer_perdido(camp):
+                flash("!" + aviso_flyer_perdido(camp))
             elif accion == "reanudar" and camp["estado"] in ("pausada", "enviando"):
                 cur.execute("UPDATE ben_campania SET estado = 'enviando', nota = NULL WHERE id = %s", (id_camp,))
                 conn.commit()

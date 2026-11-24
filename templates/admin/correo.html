@@ -83,6 +83,13 @@
       <div class="campo" style="--span:3;"><label>&nbsp;</label>{{ ui.boton('Enviar prueba', 'secondary', submit=True, icono_='mail') }}</div>
     </div>
   </form>
+  <form method="post" action="{{ url_for('correo.diagnosticar') }}" class="bloque">
+    <div class="campos">
+      <div class="campo" style="--span:9;"><label>Probar la conexión sin mandar nada</label>
+        <small class="campo-ayuda">Se conecta, inicia sesión, presenta el remitente y se va: dice en qué paso se corta (la red, la cuenta o el límite de Gmail). No necesita el envío activo y no cuenta para el límite. Prueba la salida del servidor donde está abierta esta pantalla.</small></div>
+      <div class="campo" style="--span:3;">{{ ui.boton('Probar la conexión', 'secondary', submit=True, icono_='ok') }}</div>
+    </div>
+  </form>
 </div>
 
 {% set ed = editando or {} %}

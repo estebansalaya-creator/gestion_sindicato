@@ -20,7 +20,8 @@
   </div>
   <div class="page-header-acciones">
     {{ ui.boton('Volver', 'secondary', href=url_for('ben_camp.lista'), icono_='volver') }}
-    {% if camp.estado == 'borrador' %}{{ ui.boton('Editar', 'secondary', href=url_for('ben_camp.editar', id_camp=camp.id), icono_='editar') }}{% endif %}
+    {# Un borrador entero; una pausada, solo el contenido (ben_campanias.puede_editar). #}
+    {% if puede_editar %}{{ ui.boton('Editar', 'secondary', href=url_for('ben_camp.editar', id_camp=camp.id), icono_='editar') }}{% endif %}
     {{ ui.boton('Lista en Excel', 'secondary', href=url_for('ben_camp.lista_xlsx', id_camp=camp.id), icono_='planilla') }}
     {# El padrón de entrega del beneficio (ben_entregas.py): con el mismo grupo de «A quién va». #}
     {% if camp.entrega_generada %}
@@ -46,6 +47,7 @@
 {{ ui.mensajes() }}
 {% if not cfg.get('activo') %}{{ ui.aviso('El correo saliente está apagado o sin configurar: no se puede probar ni enviar. Se configura en Administración del Sistema › Correo Saliente.', 'warning') }}{% endif %}
 {% if camp.nota and camp.estado == 'pausada' %}{{ ui.aviso('Pausada: ' ~ camp.nota, 'warning') }}{% endif %}
+{% if flyer_falta %}{{ ui.aviso('El flyer «' ~ (camp.flyer_nombre or '') ~ '» no está en el servidor: los correos saldrían sin la imagen. Cargalo de nuevo con Editar; hasta entonces no se prueba ni se envía.', 'danger') }}{% endif %}
 
 <div class="card">
   {% call ui.card_head('Estado', nota=estados[camp.estado][0]) %}{{ ui.estado(estados[camp.estado][0], estados[camp.estado][1]) }}{% endcall %}
@@ -110,7 +112,8 @@
     <div class="datos">{{ dato('Asunto', camp.asunto) }}{{ dato('Flyer', camp.flyer_nombre or 'Sin flyer') }}</div>
     <div class="vista-correo">
       {{ vista | safe }}
-      {% if camp.flyer_archivo and es_imagen %}<img src="{{ url_for('ben_camp.flyer', id_camp=camp.id) }}" alt="{{ camp.titulo }}" class="vista-correo-flyer">
+      {% if flyer_falta %}<p class="campo-ayuda error">Falta el flyer «{{ camp.flyer_nombre }}».</p>
+      {% elif camp.flyer_archivo and es_imagen %}<img src="{{ url_for('ben_camp.flyer', id_camp=camp.id) }}" alt="{{ camp.titulo }}" class="vista-correo-flyer">
       {% elif camp.flyer_archivo %}<p>{{ ui.boton('Ver el PDF adjunto', 'secondary', href=url_for('ben_camp.flyer', id_camp=camp.id), icono_='pdf', blank=True, chico=True) }}</p>{% endif %}
       <p class="vista-correo-pie">{{ institucion }} · <u>No quiero recibir más estas novedades</u></p>
     </div>

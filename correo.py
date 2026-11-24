@@ -518,6 +518,35 @@ def envios():
     )
 
 
+@mail_bp.route("/diagnosticar", methods=["POST"])
+def diagnosticar():
+    """Conecta, inicia sesión y se va, SIN mandar nada (pedido del 24/11/2026).
+
+    Dice en qué paso se corta: la red (al conectar), la cuenta (al iniciar
+    sesión) o el límite de Gmail (al presentar el remitente). Corre donde corre
+    la pantalla: en aeda.seggestion.com.ar prueba la salida de Railway; en el
+    IIS local, la de la oficina.
+    """
+    redir = _login()
+    if redir:
+        return redir
+    try:
+        with get_connection() as conn:
+            pasos = mailer.diagnosticar(conn)
+    except mailer.MailError as e:
+        flash(f"!{e}")
+        return redirect(url_for("correo.config"))
+    hechos = " · ".join(f"{p['paso']}: bien ({p['ms']} ms{', ' + p['detalle'] if p['detalle'] else ''})"
+                        for p in pasos if p["ok"])
+    falla = next((p for p in pasos if not p["ok"]), None)
+    if falla:
+        flash(f"!Falló en «{falla['paso']}» ({falla['ms']} ms): {falla['detalle']}"
+              + (f" Antes: {hechos}." if hechos else "") + " No se mandó ningún mail.")
+    else:
+        flash(f"La conexión anda: {hechos}. No se mandó ningún mail.")
+    return redirect(url_for("correo.config"))
+
+
 @mail_bp.route("/probar", methods=["POST"])
 def probar():
     """Manda un mail de prueba. Es lo único que confirma que la clave anda.

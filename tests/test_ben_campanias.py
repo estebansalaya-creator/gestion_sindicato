@@ -176,6 +176,106 @@ try:
 finally:
     mailer._entregar = real
 
+print("Errores del servidor (24/11/2026)")
+import smtplib   # noqa: E402
+
+
+def falso_smtp(falla_en=None, error=None, rechazos=None, mail_resp=(250, b"2.1.0 OK")):
+    """Un smtplib.SMTP de mentira que falla en el paso pedido."""
+    class F:
+        def __init__(s, host, puerto, timeout=None):
+            if falla_en == "conectar":
+                raise error
+        def ehlo(s):
+            return (250, b"smtp.x at your service, [1.2.3.4]\nSIZE 35882577")
+        def starttls(s):
+            if falla_en == "tls":
+                raise error
+            return (220, b"2.0.0 Ready to start TLS")
+        def login(s, u, p):
+            if falla_en == "login":
+                raise error
+            return (235, b"2.7.0 Accepted")
+        def mail(s, de):
+            return mail_resp
+        def rset(s):
+            return (250, b"OK")
+        def send_message(s, msg, to_addrs=None):
+            if falla_en == "enviar":
+                raise error
+            return rechazos or {}
+        def quit(s):
+            pass
+    return F
+
+
+real_smtp = smtplib.SMTP
+m = C.armar_mensaje(camp, dest, de, None, "u", "AEDA")
+try:
+    for paso, error, texto in [
+        ("conectar", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), "cortó la conexión sin responder, al conectar"),
+        ("conectar", TimeoutError("timed out"), "no respondió a tiempo, al conectar"),
+        ("conectar", OSError(101, "Network is unreachable"), "no hay salida de red"),
+        ("tls", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), "al iniciar el cifrado"),
+        ("login", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), "al iniciar sesión"),
+        ("enviar", smtplib.SMTPDataError(550, b"5.4.5 Daily user sending limit exceeded"), "5.4.5 Daily user sending limit"),
+        ("enviar", smtplib.SMTPSenderRefused(421, b"4.7.0 Try again later", "b@aeda.org.ar"), "421 4.7.0"),
+        ("enviar", smtplib.SMTPRecipientsRefused({"juan@mail.com": (421, b"4.7.0 Try again later")}), "421 4.7.0"),
+    ]:
+        smtplib.SMTP = falso_smtp(paso, error)
+        try:
+            mailer._entregar(cfg, m, ["juan@mail.com"])
+            ok(False, f"{paso}: {texto}")
+        except mailer.MailConexionError as e:
+            ok(texto in str(e) and "smtp.x:587" in str(e), f"{paso}: {texto}")
+
+    smtplib.SMTP = falso_smtp("enviar", smtplib.SMTPRecipientsRefused({"juan@mail.com": (550, b"5.1.1 User unknown")}))
+    try:
+        mailer._entregar(cfg, m, ["juan@mail.com"])
+        ok(False, "un 550 a todos los destinatarios sigue siendo de ellos")
+    except smtplib.SMTPRecipientsRefused:
+        ok(True, "un 550 a todos los destinatarios sigue siendo de ellos")
+    smtplib.SMTP = falso_smtp("login", smtplib.SMTPAuthenticationError(535, b"5.7.8 Username and Password not accepted"))
+    try:
+        mailer._entregar(cfg, m, ["juan@mail.com"])
+        ok(False, "usuario o contraseña: SMTPAuthenticationError como siempre")
+    except smtplib.SMTPAuthenticationError:
+        ok(True, "usuario o contraseña: SMTPAuthenticationError como siempre")
+
+    # entregar(): el corte se registra y se levanta (la campaña se pausa); un rechazo, no.
+    smtplib.SMTP = falso_smtp("conectar", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"))
+    conn = Conn(cfg)
+    try:
+        mailer.entregar(conn, C.armar_mensaje(camp, dest, de, None, "u", "AEDA"), codigo="campania", de=de)
+        ok(False, "un corte del servidor corta la campaña")
+    except mailer.MailError as e:
+        ok(isinstance(e, mailer.MailConexionError) and "al conectar" in str(e), "un corte del servidor corta la campaña")
+    ok(conn.inserts and conn.inserts[0][-3] == "error" and "al conectar" in conn.inserts[0][-2],
+       "y queda en mail_envios con el motivo")
+    smtplib.SMTP = falso_smtp("enviar", smtplib.SMTPRecipientsRefused({"juan@mail.com": (550, b"5.1.1 User unknown")}))
+    r = mailer.entregar(Conn(cfg), C.armar_mensaje(camp, dest, de, None, "u", "AEDA"), codigo="campania", de=de)
+    ok(r["estado"] == "error" and r["error"] == "juan@mail.com: 550 5.1.1 User unknown",
+       "un rechazo de la dirección es del destinatario y no corta")
+
+    # diagnosticar(): no manda nada y dice dónde se corta.
+    smtplib.SMTP = falso_smtp()
+    pasos = mailer.diagnosticar(Conn(dict(cfg, activo=0)))
+    ok([p["ok"] for p in pasos] == [True] * 4 and "[1.2.3.4]" in pasos[0]["detalle"]
+       and "SIZE" not in pasos[0]["detalle"], "diagnóstico sin falla: 4 pasos, con la IP del EHLO (apagado también)")
+    smtplib.SMTP = falso_smtp("login", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"))
+    pasos = mailer.diagnosticar(Conn(cfg))
+    ok([p["ok"] for p in pasos] == [True, True, False] and "al iniciar sesión" in pasos[-1]["detalle"],
+       "diagnóstico: se corta al iniciar sesión")
+    smtplib.SMTP = falso_smtp(mail_resp=(550, b"5.4.5 Daily user sending limit exceeded"))
+    pasos = mailer.diagnosticar(Conn(cfg))
+    ok(not pasos[-1]["ok"] and "5.4.5" in pasos[-1]["detalle"] and "límite" in pasos[-1]["detalle"],
+       "diagnóstico: el límite de Gmail al presentar el remitente")
+    smtplib.SMTP = falso_smtp("conectar", smtplib.SMTPServerDisconnected("Connection unexpectedly closed"))
+    pasos = mailer.diagnosticar(Conn(cfg))
+    ok(len(pasos) == 1 and not pasos[0]["ok"] and "Railway" in pasos[0]["detalle"], "diagnóstico: se corta al conectar")
+finally:
+    smtplib.SMTP = real_smtp
+
 print("Eliminar")
 ok(C.puede_eliminar({"estado": "borrador"}) is None, "un borrador se elimina")
 ok(C.puede_eliminar({"estado": "enviada"}) is None, "una enviada se elimina")
@@ -184,6 +284,17 @@ ok(C.puede_eliminar({"estado": "pausada"}) is None, "una pausada (sin hilo) se e
 ok(C.puede_eliminar({"estado": "pausada"}, en_curso=True) is not None, "con el hilo andando, no")
 ok(C.puede_eliminar({"estado": "enviando"}) is not None, "enviando, no")
 ok(C.puede_eliminar({"estado": "enviada", "entrega_generada": "2026-11-18"}) is not None, "con padrón de entrega, no")
+
+print("Editar una pausada y el flyer perdido (24/11/2026)")
+ok(C.puede_editar({"estado": "borrador"}) is None, "un borrador se edita")
+ok(C.puede_editar({"estado": "pausada"}) is None, "una pausada se edita (el contenido)")
+ok(C.puede_editar({"estado": "pausada"}, en_curso=True) is not None, "pausada con el hilo andando, no")
+ok(C.puede_editar({"estado": "enviando"}) is not None, "enviando, no")
+ok(C.puede_editar({"estado": "enviada"}) is not None and C.puede_editar({"estado": "cancelada"}) is not None,
+   "enviada o cancelada, no")
+ok(not C.flyer_perdido({"flyer_archivo": None}), "sin flyer no hay flyer perdido")
+ok(C.flyer_perdido({"flyer_archivo": "campanias/no-existe-0000.png", "flyer_nombre": "x.png"}),
+   "flyer cargado y archivo ausente: perdido")
 
 print("Pantallas (con datos inventados)")
 import app as A   # noqa: E402
@@ -214,6 +325,17 @@ with A.app.test_request_context("/"):
                             cfg={"activo": 1}, estados=C.ESTADOS, destinos=C.DESTINOS, vista="", institucion="AEDA",
                             corriendo=False, es_imagen=True)
         ok("Reanudar" in h and "Se alcanzó el límite" in h, "ficha pausada")
+        h = render_template("beneficios/campania.html", camp=c2, cuenta=None, n_dest=0, por_estado={"pendiente": 5},
+                            con_error=[], cfg={"activo": 1}, estados=C.ESTADOS, destinos=C.DESTINOS, vista="",
+                            institucion="AEDA", corriendo=False, es_imagen=True, flyer_falta=True, puede_editar=True)
+        ok("no está en el servidor" in h and "Editar" in h and "/flyer" not in h,
+           "ficha pausada con el flyer perdido: aviso, Editar y sin la imagen rota")
+        h = render_template("beneficios/campania_form.html", camp=dict(c2, destino="padron"), errores=[],
+                            destinos=C.DESTINOS, convenios=[], max_mb=5, filtro=C.filtro_de({"sexo": "F"}),
+                            atributos=[], solo_contenido=True, flyer_falta=True)
+        ok('id="destino" onchange="verConvenio(); contar()" disabled' in h and "solo-lectura\" disabled" in h
+           and "La lista ya está armada: 10 direcciones" in h and "cargalo de nuevo abajo" in h,
+           "formulario de una pausada: a quién va, sin poder cambiarlo")
         h = render_template("beneficios/campanias.html", filas=[c2, dict(c2, destino="padron", filtro_txt="Activos")],
                             estados=C.ESTADOS, destinos=C.DESTINOS, cfg={})
         ok("Pileta" in h, "lista")

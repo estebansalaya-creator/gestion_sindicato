@@ -149,7 +149,15 @@ SECCIONES = [
     "enviada, cómo salió cada una)."},
    {"tipo": "aviso", "html":
     "Sale por el Correo Saliente del sistema y respeta su límite de 24 horas: una campaña más grande que el "
-    "límite queda <b>pausada</b> con el motivo y se reanuda al día siguiente, desde donde quedó."},
+    "límite queda <b>pausada</b> con el motivo y se reanuda al día siguiente, desde donde quedó. Si el servidor "
+    "de correo no responde, corta la conexión o frena a la cuenta, también se pausa en el acto, con el motivo y "
+    "el paso en que falló, y ese afiliado sigue pendiente: al reanudar se le manda. Antes de reanudar, "
+    "<b>Probar la conexión</b> en Correo Saliente dice si ya anda, sin mandar nada."},
+   {"tipo": "criterio", "html":
+    "<b>Editar</b>: un borrador se cambia entero. Una campaña <b>pausada</b> también se edita, pero solo el título, "
+    "el asunto, el texto y el flyer: a quién va no se cambia, porque la lista ya está armada. Los que faltan "
+    "reciben la versión nueva; a los que ya les llegó no se les vuelve a mandar. Si el flyer no está en el servidor, "
+    "la ficha lo avisa y no se puede probar ni seguir enviando hasta cargarlo de nuevo."},
    {"tipo": "criterio", "html":
     "<b>Eliminar</b> (el tacho en la lista o el botón en la ficha) borra la campaña con su flyer y su lista de "
     "direcciones, en cualquier estado: borrador, enviada, pausada o cancelada. No se puede mientras se está "

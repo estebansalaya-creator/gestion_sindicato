@@ -69,9 +69,12 @@ NO MANDA NADA SI NO ESTA ENCENDIDO
 from __future__ import annotations
 
 import datetime
+import errno
 import logging
 import re
 import smtplib
+import socket
+import time
 from email.message import EmailMessage
 from email.utils import formataddr, parseaddr
 from pathlib import Path
@@ -100,6 +103,19 @@ MAESTROS = {
 
 class MailError(Exception):
     """Algo impide mandar. El mensaje se le muestra a la persona."""
+
+
+class MailConexionError(MailError):
+    """El servidor no deja mandar: no responde, corta la conexión o frena a la
+    cuenta (el límite de Gmail). No es culpa del destinatario: con el siguiente
+    pasaría lo mismo.
+
+    Hasta el 24/11/2026 esto quedaba como error DEL DESTINATARIO: una campaña
+    marcaba a diez afiliados con «Connection unexpectedly closed», se pausaba, y
+    al reanudarla marcaba a otros diez. Esos afiliados no se vuelven a intentar
+    (se manda a los pendientes), así que se quedaban sin el mail. Ahora la
+    campaña se pausa en el primero y él queda pendiente.
+    """
 
 
 # ===========================================================================
@@ -494,7 +510,10 @@ def entregar(conn, msg: EmailMessage, *, codigo: str, entidad_tipo: str | None =
     Con la misma configuración, el mismo freno de 24 horas y el mismo registro
     que `enviar()`. Devuelve {"estado": "ok"|"error", "error": …}; un error de
     configuración o el límite levantan MailError (no tiene sentido seguir con
-    el siguiente destinatario).
+    el siguiente destinatario). Lo que es del servidor y no del destinatario
+    (no responde, corta, frena a la cuenta) queda registrado y levanta
+    MailConexionError, que también es MailError: la campaña se pausa y el
+    destinatario sigue pendiente.
     """
     cfg = config(conn)
     _validar_config(cfg)
@@ -512,7 +531,7 @@ def entregar(conn, msg: EmailMessage, *, codigo: str, entidad_tipo: str | None =
     destinos = [parseaddr(x)[1] for x in (msg.get("To") or "").split(",") if parseaddr(x)[1]]
     _validar_direcciones([{"email": d} for d in destinos])
     cfg_envio = cuenta_de_envio(cfg, de)
-    estado, error = "ok", None
+    estado, error, cortar = "ok", None, None
     try:
         rechazados = _entregar(cfg_envio, msg, destinos) or {}
         if rechazados:
@@ -520,6 +539,14 @@ def entregar(conn, msg: EmailMessage, *, codigo: str, entidad_tipo: str | None =
             error = "; ".join(f"{d}: {_texto_respuesta(r)}" for d, r in rechazados.items())[:600]
     except smtplib.SMTPAuthenticationError as e:
         raise MailError(f"El servidor rechazó el usuario o la contraseña ({_texto_respuesta((e.smtp_code, e.smtp_error))}).") from e
+    except MailConexionError as e:
+        # Queda en el registro y se corta: el que llama (la campaña) se pausa y
+        # este destinatario sigue pendiente.
+        estado, error, cortar = "error", str(e)[:600], e
+        log.warning("Enviando %s a %s: %s", codigo, destinos, e)
+    except smtplib.SMTPRecipientsRefused as e:
+        estado = "error"
+        error = "; ".join(f"{d}: {_texto_respuesta(r)}" for d, r in e.recipients.items())[:600]
     except Exception as e:                                   # noqa: BLE001
         estado, error = "error", str(e)[:600]
         log.warning("Enviando %s a %s: %s", codigo, destinos, e)
@@ -536,6 +563,8 @@ def entregar(conn, msg: EmailMessage, *, codigo: str, entidad_tipo: str | None =
         conn.commit()
     except Exception:                                        # noqa: BLE001
         log.exception("No se pudo registrar el envío de %s", codigo)
+    if cortar:
+        raise cortar
     return {"estado": estado, "error": error}
 
 
@@ -554,31 +583,184 @@ def _texto_respuesta(resp) -> str:
         return str(resp)
 
 
+#: Los pasos de la conversación con el servidor: el error dice en cuál falló.
+PASOS = {
+    "conectar": "al conectar",
+    "tls": "al iniciar el cifrado (STARTTLS)",
+    "login": "al iniciar sesión",
+    "remitente": "al presentar el remitente",
+    "enviar": "al entregar el mensaje",
+}
+
+#: Qué suele ser, según el paso. Es lo que se le dice a la persona.
+SUGERENCIAS = {
+    "conectar": ("Suele ser la red desde donde sale el sistema: el puerto de correo bloqueado (Railway no deja "
+                 "salir SMTP salvo en el plan Pro) o el servidor o el puerto mal cargados."),
+    "tls": "Revisá la seguridad: con el puerto 587 va STARTTLS; con el 465, SSL.",
+    "login": "Revisá el usuario y la contraseña de aplicación de la cuenta.",
+    "remitente": ("Con Gmail suele ser el límite de envíos de la cuenta: se libera solo, 24 horas después de "
+                  "los mails que lo llenaron."),
+    "enviar": ("Con Gmail suele ser el límite de envíos de la cuenta: se libera solo, 24 horas después de "
+               "los mails que lo llenaron."),
+}
+
+
+def _que_paso(e: BaseException) -> str:
+    """La falla en castellano. El orden importa: las de smtplib son OSError."""
+    if isinstance(e, smtplib.SMTPServerDisconnected):
+        return "el servidor cortó la conexión sin responder"
+    if isinstance(e, smtplib.SMTPRecipientsRefused):
+        resp = next(iter(e.recipients.values()), None)
+        return f"el servidor respondió «{_texto_respuesta(resp)}»"
+    if isinstance(e, smtplib.SMTPResponseException):
+        return f"el servidor respondió «{_texto_respuesta((e.smtp_code, e.smtp_error))}»"
+    if isinstance(e, TimeoutError):                         # socket.timeout también
+        return "el servidor no respondió a tiempo"
+    if isinstance(e, ConnectionRefusedError):
+        return "la conexión fue rechazada"
+    if isinstance(e, ConnectionResetError):
+        return "la conexión se cortó del otro lado"
+    if isinstance(e, socket.gaierror):
+        return "no se encontró el servidor (el nombre no resuelve)"
+    if isinstance(e, OSError) and e.errno in (errno.ENETUNREACH, errno.EHOSTUNREACH):
+        return "no hay salida de red hacia el servidor"
+    return str(e) or type(e).__name__
+
+
+def motivo_conexion(paso: str, servidor: str, e: BaseException) -> str:
+    """`No se pudo mandar por smtp.gmail.com:587: el servidor cortó la conexión
+    sin responder, al conectar. Suele ser…` — qué pasó, en qué paso y qué mirar."""
+    texto = f"No se pudo mandar por {servidor}: {_que_paso(e)}, {PASOS.get(paso, paso)}."
+    sugerencia = SUGERENCIAS.get(paso)
+    return f"{texto} {sugerencia}" if sugerencia else texto
+
+
+def _abrir(cfg: dict):
+    """La conexión, como la usa el envío: (smtp, servidor). Puede fallar al conectar."""
+    puerto = int(cfg.get("puerto") or 587)
+    clase = smtplib.SMTP_SSL if (cfg.get("seguridad") or "starttls") == "ssl" else smtplib.SMTP
+    return clase(cfg["host"], puerto, timeout=30)
+
+
+def _servidor(cfg: dict) -> str:
+    return f"{cfg.get('host')}:{int(cfg.get('puerto') or 587)}"
+
+
+def _cerrar(smtp) -> None:
+    if smtp is None:
+        return
+    try:
+        smtp.quit()
+    except Exception:                                        # noqa: BLE001
+        pass
+
+
 def _entregar(cfg: dict, msg: EmailMessage, destinos: list[str]):
     """La conexión con el servidor. Separado para poder simularlo al probar.
 
     Devuelve lo que devuelve `send_message`: el diccionario de destinatarios
     RECHAZADOS, vacío cuando el servidor los aceptó a todos. No se descarta
     porque un rechazo parcial no levanta excepción y es, si no, invisible.
-    """
-    puerto = int(cfg.get("puerto") or 587)
-    seg = cfg.get("seguridad") or "starttls"
 
-    if seg == "ssl":
-        smtp = smtplib.SMTP_SSL(cfg["host"], puerto, timeout=30)
-    else:
-        smtp = smtplib.SMTP(cfg["host"], puerto, timeout=30)
+    Lo que no es de los destinatarios —el servidor no responde, corta, no deja
+    iniciar sesión por un rato, frena a la cuenta— sale como MailConexionError
+    con el paso en que pasó: «Connection unexpectedly closed» a secas no dice
+    si es la red, la cuenta o el límite. Usuario o contraseña rechazados siguen
+    saliendo como SMTPAuthenticationError (`entregar` los traduce), y que el
+    servidor rechace a TODOS los destinatarios, como SMTPRecipientsRefused.
+    """
+    servidor, paso, smtp = _servidor(cfg), "conectar", None
     try:
-        if seg == "starttls":
+        smtp = _abrir(cfg)
+        if (cfg.get("seguridad") or "starttls") == "starttls":
+            paso = "tls"
             smtp.starttls()
         if cfg.get("usuario"):
+            paso = "login"
             smtp.login(cfg["usuario"], cfg.get("password") or "")
+        paso = "enviar"
         return smtp.send_message(msg, to_addrs=destinos)
+    except smtplib.SMTPAuthenticationError:
+        raise
+    except smtplib.SMTPRecipientsRefused as e:
+        # Los rechazó a todos: es de ellos (la dirección no existe), salvo un 421,
+        # que es el servidor yéndose (Gmail lo usa para frenar ráfagas).
+        if any((r or (0,))[0] == 421 for r in e.recipients.values()):
+            raise MailConexionError(motivo_conexion(paso, servidor, e)) from e
+        raise
+    except (smtplib.SMTPException, OSError) as e:
+        # Un rechazo del remitente o del mensaje (MAIL FROM, DATA) también es de la
+        # cuenta o del mensaje, no del destinatario: Gmail avisa ahí su límite
+        # diario («550 5.4.5 Daily user sending limit exceeded»).
+        raise MailConexionError(motivo_conexion(paso, servidor, e)) from e
     finally:
+        _cerrar(smtp)
+
+
+def diagnosticar(conn) -> list[dict]:
+    """Conecta, inicia sesión, presenta el remitente y se va, SIN mandar nada.
+
+    Para saber en qué paso se corta sin gastar un mail ni molestar a nadie (pedido
+    del 24/11/2026: la campaña daba «Connection unexpectedly closed» y no había
+    forma de saber si era la red, la cuenta o el límite de Gmail). No necesita el
+    envío activo y no cuenta para el límite. Devuelve un renglón por paso
+    {paso, ok, ms, detalle}; el primero que falla es el último. La respuesta al
+    EHLO de Gmail trae la IP desde la que sale el sistema.
+    """
+    cfg = config(conn)
+    if not cfg.get("host"):
+        raise MailError("Falta el servidor SMTP en la configuración de correo.")
+    if cfg.get("password_error"):
+        raise MailError(f"La clave del SMTP no se puede descifrar ({cfg['password_error']}). Volvé a cargarla.")
+    servidor, pasos, smtp = _servidor(cfg), [], None
+    remitente = cfg.get("remitente_email") or cfg.get("usuario") or ""
+
+    def paso(clave, nombre, hacer):
+        inicio = time.monotonic()
         try:
-            smtp.quit()
-        except Exception:
-            pass
+            resp = hacer()
+        except smtplib.SMTPAuthenticationError as e:
+            detalle = (f"el servidor rechazó el usuario o la contraseña "
+                       f"({_texto_respuesta((e.smtp_code, e.smtp_error))}). {SUGERENCIAS['login']}")
+            pasos.append({"paso": nombre, "ok": False, "ms": int((time.monotonic() - inicio) * 1000),
+                          "detalle": detalle})
+            return False
+        except (smtplib.SMTPException, OSError) as e:
+            pasos.append({"paso": nombre, "ok": False, "ms": int((time.monotonic() - inicio) * 1000),
+                          "detalle": motivo_conexion(clave, servidor, e)})
+            return False
+        codigo = resp[0] if isinstance(resp, tuple) else None
+        bien = codigo is None or 200 <= codigo < 400
+        detalle = _texto_respuesta(resp) if isinstance(resp, tuple) else ""
+        if not bien:
+            detalle = motivo_conexion(clave, servidor, smtplib.SMTPResponseException(*resp))
+        pasos.append({"paso": nombre, "ok": bien, "ms": int((time.monotonic() - inicio) * 1000),
+                      "detalle": detalle.splitlines()[0] if bien and detalle else detalle})
+        return bien
+
+    caja = {}
+
+    def conectar():
+        caja["smtp"] = _abrir(cfg)
+        return caja["smtp"].ehlo()
+
+    try:
+        if not paso("conectar", f"Conectar con {servidor}", conectar):
+            return pasos
+        smtp = caja["smtp"]
+        if (cfg.get("seguridad") or "starttls") == "starttls" and not paso("tls", "Cifrado (STARTTLS)", smtp.starttls):
+            return pasos
+        if cfg.get("usuario") and not paso("login", f"Iniciar sesión como {cfg['usuario']}",
+                                           lambda: smtp.login(cfg["usuario"], cfg.get("password") or "")):
+            return pasos
+        if remitente and paso("remitente", f"Presentar el remitente {remitente}", lambda: smtp.mail(remitente)):
+            try:
+                smtp.rset()                                  # no se manda nada: se deshace el MAIL FROM
+            except Exception:                                # noqa: BLE001
+                pass
+        return pasos
+    finally:
+        _cerrar(caja.get("smtp"))
 
 
 def probar_conexion(conn, destino: str) -> str:

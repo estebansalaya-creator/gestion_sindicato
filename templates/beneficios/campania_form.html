@@ -4,7 +4,9 @@
 
 {#
   Beneficios › Campañas › alta y edición (ben_camp.editar): el flyer (imagen o
-  PDF), el asunto, el texto y a quién va. Solo se edita mientras es borrador.
+  PDF), el asunto, el texto y a quién va. Un borrador se edita entero; una
+  pausada (`solo_contenido`), solo título, asunto, texto y flyer: la lista ya
+  está armada y a quién va se muestra sin poder cambiarlo.
 #}
 {% block content %}
 <div class="page-header">
@@ -18,6 +20,8 @@
 </div>
 
 {{ ui.mensajes(errores) }}
+{% if solo_contenido %}{{ ui.aviso('La campaña está pausada: se cambian el título, el asunto, el texto y el flyer. A quién va no se cambia, porque la lista ya está armada. Los que faltan reciben la versión nueva; a los que ya les llegó no se les vuelve a mandar.', 'info') }}{% endif %}
+{% if flyer_falta %}{{ ui.aviso('El flyer «' ~ (camp.flyer_nombre or '') ~ '» no está en el servidor: cargalo de nuevo abajo. Sin él no se puede probar ni seguir enviando.', 'danger') }}{% endif %}
 
 <form method="post" enctype="multipart/form-data" class="card" data-proceso="Guardando…">
   <div class="bloque">
@@ -32,13 +36,13 @@
         <small class="campo-ayuda">Va arriba del flyer. {nombre} se reemplaza por el nombre de cada afiliado. Las direcciones web quedan como enlace.</small></div>
       <div class="campo" style="--span:6;"><label for="flyer">Flyer</label>
         <input type="file" name="flyer" id="flyer" accept=".png,.jpg,.jpeg,.gif,.webp,.pdf">
-        <small class="campo-ayuda">{% if camp.get('flyer_nombre') %}Cargado: {{ camp.flyer_nombre }}. Elegí otro para reemplazarlo. {% endif %}Imagen (PNG, JPG, GIF, WEBP) o PDF, hasta {{ max_mb }} MB. Conviene una imagen de 600 a 1.200 px de ancho.</small></div>
+        <small class="campo-ayuda">{% if camp.get('flyer_nombre') and not flyer_falta %}Cargado: {{ camp.flyer_nombre }}. Elegí otro para reemplazarlo. {% endif %}Imagen (PNG, JPG, GIF, WEBP) o PDF, hasta {{ max_mb }} MB. Conviene una imagen de 600 a 1.200 px de ancho.</small></div>
       <div class="campo" style="--span:3;"><label for="destino">A quién va</label>
-        <select name="destino" id="destino" onchange="verConvenio(); contar()">
+        <select name="destino" id="destino" onchange="verConvenio(); contar()" {{ 'disabled' if solo_contenido }}>
           {% for k, t in destinos.items() %}<option value="{{ k }}" {{ 'selected' if (camp.get('destino') or 'titulares') == k }}>{{ t }}</option>{% endfor %}
         </select></div>
       <div class="campo" style="--span:3;" id="campo-convenio"><label for="id_convenio">Convenio</label>
-        <select name="id_convenio" id="id_convenio" onchange="contar()">
+        <select name="id_convenio" id="id_convenio" onchange="contar()" {{ 'disabled' if solo_contenido }}>
           {% for c in convenios %}<option value="{{ c.id }}" {{ 'selected' if camp.get('id_convenio') == c.id }}>{{ c.nombre }}</option>{% endfor %}
         </select></div>
     </div>
@@ -46,6 +50,7 @@
   {# La lista con los filtros de la Consulta del Padrón (destino «padron»). #}
   <div class="bloque oculto" id="bloque-padron">
     <div class="bloque-titulo">Filtros del padrón</div>
+    <fieldset class="solo-lectura" {{ 'disabled' if solo_contenido }}>
     <div class="campos">
       <div class="campo" style="--span:4;"><label for="f_q">Buscar</label>
         <input type="text" name="f_q" id="f_q" maxlength="100" value="{{ filtro.q }}" placeholder="Apellido, CUIL, documento, empleador, localidad…" oninput="contar()">
@@ -74,9 +79,10 @@
           {% for a in atributos %}<option value="{{ a.id }}" {{ 'selected' if filtro.atributo == a.id|string }}>{{ a.rotulo }}</option>{% endfor %}
         </select></div>
     </div>
+    </fieldset>
   </div>
   <div class="bloque">
-    <p class="campo-ayuda" id="cuenta-destino">Calculando a cuántos les llega…</p>
+    <p class="campo-ayuda" id="cuenta-destino">{% if solo_contenido %}La lista ya está armada: {{ camp.total }} direcciones.{% else %}Calculando a cuántos les llega…{% endif %}</p>
   </div>
   <div class="form-acciones">{{ ui.boton('Guardar', icono_='guardar', submit=True) }}</div>
 </form>
@@ -103,6 +109,6 @@ function contar() {
     }).catch(function () { out.textContent = ''; });
   }, 350);
 }
-document.addEventListener('DOMContentLoaded', function () { verConvenio(); contar(); });
+document.addEventListener('DOMContentLoaded', function () { verConvenio();{% if not solo_contenido %} contar();{% endif %} });
 </script>
 {% endblock %}
