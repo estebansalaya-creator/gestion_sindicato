@@ -131,16 +131,22 @@ def config():
         editando=editando,
         seguridades=SEGURIDADES,
         tiene_clave=bool(cfg.get("password") or cfg.get("password_cif")),
-        hay_cifrado=_hay_cifrado(), sql_esquema=SQL_ESQUEMA,
+        hay_cifrado=_hay_cifrado(), problema_cifrado=_problema_cifrado(),
+        sql_esquema=SQL_ESQUEMA,
     )
 
 
 def _hay_cifrado() -> bool:
+    return not _problema_cifrado()
+
+
+def _problema_cifrado() -> str:
+    """Qué le falta al cifrado ("" si anda), para decirlo en la pantalla."""
     try:
         import secretos
-        return secretos.hay_clave()
-    except Exception:                                        # noqa: BLE001 — falta cryptography
-        return False
+        return secretos.problema_clave()
+    except ImportError as e:                                 # falta cryptography
+        return f"No se puede cifrar: {e}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -207,8 +213,7 @@ def remitente_guardar():
     if smtp_clave:
         import secretos
         if not secretos.hay_clave():
-            flash("!El servidor no tiene configurado el cifrado (SIND_FERNET_KEY): "
-                  "no se puede guardar la contraseña.")
+            flash("!No se puede guardar la contraseña: " + secretos.problema_clave())
             return volver
 
     try:
@@ -393,6 +398,9 @@ def guardar():
 
     clave = f.get("password") or ""
     activo = 1 if f.get("activo") else 0
+    if clave and _problema_cifrado():
+        flash("!No se guardó nada: " + _problema_cifrado())
+        return volver
 
     try:
         with get_connection() as conn:

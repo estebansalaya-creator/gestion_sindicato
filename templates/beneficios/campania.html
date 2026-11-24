@@ -32,6 +32,13 @@
       {{ ui.boton('Crear padrón de entrega', 'secondary', submit=True, icono_='grupo') }}
     </form>
     {% endif %}
+    {# Eliminar: en cualquier estado salvo mientras sale o con padrón de entrega (puede_eliminar). #}
+    {% if not camp.entrega_generada and camp.estado != 'enviando' and not corriendo %}
+    <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='borrar') }}" class="form-en-linea"
+          onsubmit="return confirm({{ ('¿Eliminar el borrador y su flyer?' if camp.estado == 'borrador' else '¿Eliminar la campaña «' ~ camp.titulo ~ '»?\n\nSe borran el flyer, la lista de direcciones y cómo salió cada una. Los correos que salieron siguen en Correo Saliente › Envíos.\n\nNo se puede deshacer.') | tojson | forceescape }});">
+      {{ ui.boton('Eliminar', 'danger', submit=True, icono_='borrar') }}
+    </form>
+    {% endif %}
     {% if camp.estado != 'borrador' and puede('/admin/correo') %}{{ ui.boton('Envíos', 'secondary', href=url_for('correo.envios', origen_tipo='campania', origen_id=camp.id), icono_='mail') }}{% endif %}
   </div>
 </div>
@@ -57,10 +64,6 @@
             onsubmit="return confirm('Se va a mandar «{{ camp.asunto | replace("'", "") }}» a {{ n_dest }} direcciones, de a una.\n\n¿Seguir?');"
             data-proceso="Armando la lista…">
         {{ ui.boton('Enviar a ' ~ n_dest ~ ' direcciones', 'primary', submit=True, icono_='mail') if n_dest and cfg.get('activo') }}
-      </form>
-      <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=camp.id, accion='borrar') }}" class="form-acciones"
-            onsubmit="return confirm('¿Eliminar el borrador y su flyer?');">
-        {{ ui.boton('Eliminar el borrador', 'danger', submit=True, icono_='borrar', chico=True) }}
       </form>
     {% else %}
       {% set hechos = camp.enviados + camp.errores + (por_estado.get('baja') or 0) %}

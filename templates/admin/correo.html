@@ -22,7 +22,7 @@
 {{ ui.mensajes() }}
 
 {% if not hay_cifrado %}
-  {{ ui.aviso('El servidor no tiene configurado el cifrado: falta la variable SIND_FERNET_KEY (en el .env y en Railway, la misma en los dos). Sin ella no se puede guardar ninguna contraseña.', 'danger') }}
+  {{ ui.aviso(problema_cifrado ~ ' La SIND_FERNET_KEY tiene que ser la misma en el .env local y en Railway. Sin ella no se puede guardar ninguna contraseña.', 'danger') }}
 {% endif %}
 {% if cfg.password_error %}
   {{ ui.aviso('La contraseña guardada no se puede descifrar (' ~ cfg.password_error ~ '). Suele pasar cuando cambió la SIND_FERNET_KEY: cargala de nuevo abajo.', 'danger') }}

@@ -46,7 +46,7 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-__all__ = ["cifrar_secret", "descifrar_secret", "hay_clave", "InvalidToken"]
+__all__ = ["cifrar_secret", "descifrar_secret", "hay_clave", "problema_clave", "InvalidToken"]
 
 
 # La clave se busca en el entorno del proceso y, si no está, en el .env de al
@@ -79,11 +79,39 @@ def _leer_env_local(nombre: str) -> str:
 
 
 def _clave_configurada() -> str:
-    """El entorno manda; el .env es el respaldo para desarrollo."""
-    return (os.getenv(_VARIABLE) or "").strip() or _leer_env_local(_VARIABLE)
+    """El entorno manda; el .env es el respaldo para desarrollo.
+
+    Las comillas se sacan también de la variable de entorno: en Railway es fácil
+    pegar `"abc…="` con comillas, y Fernet las toma como parte de la clave.
+    """
+    entorno = (os.getenv(_VARIABLE) or "").strip().strip('"').strip("'").strip()
+    return entorno or _leer_env_local(_VARIABLE)
+
+
+def problema_clave() -> str:
+    """
+    Qué tiene de malo la clave configurada, o "" si sirve.
+
+    Nunca devuelve la clave: solo su largo y de dónde salió, para que el
+    mensaje se pueda mostrar en pantalla sin exponerla.
+    """
+    key = _clave_configurada()
+    if not key:
+        return f"Falta {_VARIABLE} en el servidor."
+    origen = "la variable de entorno" if (os.getenv(_VARIABLE) or "").strip() else f"{_ENV_LOCAL.name}"
+    try:
+        Fernet(key.encode())
+    except (ValueError, TypeError):
+        return (f"{_VARIABLE} ({origen}) no es una clave Fernet válida: tiene {len(key)} "
+                "caracteres y tiene que ser de 44, en base64 url-safe, terminada en «=». "
+                "Copiá la misma del .env del servidor local, sin comillas ni espacios.")
+    return ""
 
 
 def _get_fernet() -> Fernet:
+    error = problema_clave()
+    if error and _clave_configurada():
+        raise RuntimeError(error)
     key = _clave_configurada()
     if not key:
         raise RuntimeError(
@@ -103,7 +131,7 @@ def hay_clave() -> bool:
     usuario escribe la contraseña, aprieta guardar y recién ahí se entera de
     que el servidor no puede cifrarla.
     """
-    return bool(_clave_configurada())
+    return not problema_clave()
 
 
 def cifrar_secret(texto_plano: str) -> bytes:

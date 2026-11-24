@@ -176,6 +176,15 @@ try:
 finally:
     mailer._entregar = real
 
+print("Eliminar")
+ok(C.puede_eliminar({"estado": "borrador"}) is None, "un borrador se elimina")
+ok(C.puede_eliminar({"estado": "enviada"}) is None, "una enviada se elimina")
+ok(C.puede_eliminar({"estado": "cancelada"}) is None, "una cancelada se elimina")
+ok(C.puede_eliminar({"estado": "pausada"}) is None, "una pausada (sin hilo) se elimina")
+ok(C.puede_eliminar({"estado": "pausada"}, en_curso=True) is not None, "con el hilo andando, no")
+ok(C.puede_eliminar({"estado": "enviando"}) is not None, "enviando, no")
+ok(C.puede_eliminar({"estado": "enviada", "entrega_generada": "2026-11-18"}) is not None, "con padrón de entrega, no")
+
 print("Pantallas (con datos inventados)")
 import app as A   # noqa: E402
 from flask import render_template   # noqa: E402

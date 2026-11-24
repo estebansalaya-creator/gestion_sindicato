@@ -347,6 +347,18 @@ def _institucion(cur) -> str:
         return "El sindicato"
 
 
+def puede_eliminar(camp: dict, en_curso: bool = False) -> str | None:
+    """Por qué no se puede eliminar la campaña (None = se puede).
+
+    No mientras se envía (hay un hilo leyendo la lista) ni con padrón de entrega:
+    se perdería quién retiró el beneficio (ben_entrega cae en cascada)."""
+    if camp.get("estado") == "enviando" or en_curso:
+        return "La campaña se está enviando: pausala o cancelala antes de eliminarla."
+    if camp.get("entrega_generada"):
+        return "La campaña tiene padrón de entrega: no se elimina (se perdería quién retiró)."
+    return None
+
+
 def corriendo(id_camp: int) -> bool:
     with _LOCK:
         return id_camp in _CORRIENDO
@@ -485,6 +497,7 @@ def lista():
             atributos = {a["id"]: a["rotulo"] for a in atributos_activos(cur)}
     for f in filas:
         f["corriendo"] = corriendo(f["id"])
+        f["no_eliminar"] = puede_eliminar(f, f["corriendo"])
         f["filtro_txt"] = describir_filtro(_filtro_guardado(f), atributos) if f["destino"] == "padron" else None
     return render_template("beneficios/campanias.html", filas=filas, estados=ESTADOS, destinos=DESTINOS, cfg=cfg)
 
@@ -728,15 +741,21 @@ def cambiar(id_camp, accion):
             elif accion == "cancelar" and camp["estado"] in ("pausada", "enviando"):
                 cur.execute("UPDATE ben_campania SET estado = 'cancelada', envio_hasta = NOW() WHERE id = %s", (id_camp,))
                 flash("Campaña cancelada: lo que faltaba no se manda.")
-            elif accion == "borrar" and camp["estado"] == "borrador" and camp.get("entrega_generada"):
-                flash("!La campaña tiene padrón de entrega: no se elimina (se perdería quién retiró).")
-            elif accion == "borrar" and camp["estado"] == "borrador":
-                cur.execute("DELETE FROM ben_campania WHERE id = %s", (id_camp,))
-                conn.commit()
-                if camp.get("flyer_archivo"):
-                    almacenamiento.borrar(_base() / camp["flyer_archivo"])
-                flash("Borrador eliminado.")
-                return redirect(url_for("ben_camp.lista"))
+            elif accion == "borrar":
+                # Se elimina en cualquier estado salvo mientras sale (pedido del 23/11/2026).
+                # La lista (ben_campania_envio) se va con ella por la FK; lo que salió queda
+                # en mail_envios (Correo Saliente › Envíos), que no tiene FK a la campaña.
+                motivo = puede_eliminar(camp, corriendo(id_camp))
+                if motivo:
+                    flash("!" + motivo)
+                else:
+                    cur.execute("DELETE FROM ben_campania WHERE id = %s", (id_camp,))
+                    conn.commit()
+                    if camp.get("flyer_archivo"):
+                        almacenamiento.borrar(_base() / camp["flyer_archivo"])
+                    flash("Borrador eliminado." if camp["estado"] == "borrador" else
+                          f"Campaña «{camp['titulo']}» eliminada. Los correos que salieron siguen en Correo Saliente › Envíos.")
+                    return redirect(url_for("ben_camp.lista"))
             else:
                 flash("!No se puede hacer eso en el estado en que está.")
         conn.commit()

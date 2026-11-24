@@ -44,6 +44,12 @@
           <td><div class="acciones">
             {{ ui.accion('ver', href=url_for('ben_camp.ficha', id_camp=c.id)) }}
             {% if c.estado == 'borrador' %}{{ ui.accion('editar', href=url_for('ben_camp.editar', id_camp=c.id)) }}{% endif %}
+            {% if not c.no_eliminar %}
+            <form method="post" action="{{ url_for('ben_camp.cambiar', id_camp=c.id, accion='borrar') }}" class="form-en-linea"
+                  data-titulo="{{ c.titulo }}" data-borrador="{{ 1 if c.estado == 'borrador' else 0 }}" onsubmit="return confirmarEliminar(this)">
+              {{ ui.accion('borrar', titulo='Eliminar la campaña', submit=True) }}
+            </form>
+            {% else %}{{ ui.accion('borrar', titulo=c.no_eliminar, deshabilitado=True) }}{% endif %}
           </div></td>
           <td class="td-center" data-valor="{{ c.creada.isoformat() }}">{{ c.creada.strftime('%d/%m/%Y') }}</td>
           <td class="td-fuerte">{{ c.titulo }}</td>
@@ -63,6 +69,12 @@
   {{ ui.paginacion() }}
 </div>
 <script>
+function confirmarEliminar(f) {
+  var t = f.dataset.titulo;
+  return confirm(f.dataset.borrador === '1'
+    ? '¿Eliminar el borrador «' + t + '» y su flyer?'
+    : '¿Eliminar la campaña «' + t + '»?\n\nSe borran el flyer, la lista de direcciones y cómo salió cada una. Los correos que salieron siguen en Correo Saliente › Envíos.\n\nNo se puede deshacer.');
+}
 document.addEventListener('DOMContentLoaded', function () {
   var fe = document.getElementById('f-estado');
   gestion_admTable('tbl-campanias', { pageSize: 20, filtroExtra: function (tr) { return !fe.value || tr.dataset.estado === fe.value; } });

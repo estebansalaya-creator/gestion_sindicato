@@ -1008,6 +1008,9 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
   24 horas la deja **pausada** con la nota; se **reanuda** desde donde quedó (la lista está en la base: un reinicio no
   pierde nada, la ficha ofrece «Seguir enviando»). 10 errores seguidos la pausan. La ficha sigue el avance (JSON).
 - Primero «Enviar prueba» a una dirección (asunto con «[PRUEBA]», no toca la lista).
+- **Eliminar** (pedido del 23/11/2026; `puede_eliminar`): en cualquier estado, desde la lista (tacho) o la ficha,
+  con su flyer y su lista (`ben_campania_envio` cae por la FK). No mientras se envía (estado «enviando» o el hilo
+  andando) ni con padrón de entrega. Lo que salió queda en `mail_envios` (sin FK a la campaña).
 - **Lista según los filtros del padrón** (pedido del 17/11/2026, `sql/beneficios_campanias_padron_20261117.sql`):
   destino «padron» con los filtros de la Consulta del Padrón guardados en `ben_campania.filtro` (JSON: q, estado,
   tipo, sexo, edad_desde, edad_hasta, atributo; `filtro_de` los valida con `afiliados._filtros_listado`). La lista

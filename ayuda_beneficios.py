@@ -150,6 +150,11 @@ SECCIONES = [
    {"tipo": "aviso", "html":
     "Sale por el Correo Saliente del sistema y respeta su límite de 24 horas: una campaña más grande que el "
     "límite queda <b>pausada</b> con el motivo y se reanuda al día siguiente, desde donde quedó."},
+   {"tipo": "criterio", "html":
+    "<b>Eliminar</b> (el tacho en la lista o el botón en la ficha) borra la campaña con su flyer y su lista de "
+    "direcciones, en cualquier estado: borrador, enviada, pausada o cancelada. No se puede mientras se está "
+    "enviando (primero se pausa o se cancela) ni si tiene padrón de entrega, porque se perdería quién retiró el "
+    "beneficio. Los correos que ya salieron siguen en Correo Saliente › Envíos. No se puede deshacer."},
  ]},
 
 {
