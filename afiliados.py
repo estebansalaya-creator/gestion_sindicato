@@ -1050,8 +1050,27 @@ def _actualizar(cur, antes: dict, d: dict, cat: dict):
                     (nuevo, viejo))
 
 
+def _texto_baja(fecha_baja, id_motivo, cat: dict) -> str | None:
+    """«25/11/2026 · RENUNCIA»: la baja en un renglón, fecha y motivo juntos."""
+    if not fecha_baja:
+        return None
+    motivo = cat["etiquetas"]["id_motivo_baja"].get(str(id_motivo)) if id_motivo else None
+    return " · ".join(x for x in (fecha_baja.strftime("%d/%m/%Y"), motivo) if x)
+
+
+#: La baja y la reactivación son UN movimiento (pedido del 25/11/2026, como en
+#: gestion_adm desde el 19/11/2026). Antes eran tres renglones —Activo sí → no,
+#: Fecha de baja y Motivo de baja— para algo que es un solo hecho. El renglón de
+#: la baja queda en `campo = 'fecha_baja'`, como en gestion_adm, y el motivo va
+#: en el valor; el de la reactivación, en `campo = 'estado'` (no 'activo': ese
+#: se muestra como sí/no), con la baja que se deshizo como valor anterior.
+CAMPO_BAJA = {"fecha_baja": "Baja"}
+CAMPO_REACTIVACION = {"estado": "Reactivación"}
+
+
 def _cambiar_estado(accion: str, id_af: int):
-    """Baja o reactivación. La baja de un titular se lleva a su grupo (siempre)."""
+    """Baja o reactivación. La baja de un titular se lleva a su grupo (siempre).
+    Cada una deja un solo renglón en la auditoría (ver CAMPO_BAJA)."""
     with get_connection() as conn:
         conn.begin()
         try:
@@ -1064,11 +1083,12 @@ def _cambiar_estado(accion: str, id_af: int):
                     return redirect(url_for("afiliados.abm_afiliados"))
 
                 if accion == "reactivar":
-                    despues = {"activo": 1, "fecha_baja": None, "id_motivo_baja": None}
                     cur.execute("UPDATE p_afiliados SET activo = 1, fecha_baja = NULL, "
                                 "id_motivo_baja = NULL WHERE id_afiliado = %s", (id_af,))
-                    _registrar(cur, id_af, antes["cuil"], antes, despues, CAMPOS_ESTADO,
-                               "REACTIVACION", cat, vigencia=date.today())
+                    baja = _texto_baja(antes["fecha_baja"], antes["id_motivo_baja"], cat)
+                    _registrar(cur, id_af, antes["cuil"],
+                               {"estado": "Baja" + (f" {baja}" if baja else "")}, {"estado": "Activo"},
+                               CAMPO_REACTIVACION, "REACTIVACION", cat, vigencia=date.today())
                     conn.commit()
                     flash("Afiliado reactivado.")
                     return redirect(url_for("afiliados.abm_afiliados", edit=id_af))
@@ -1095,13 +1115,13 @@ def _cambiar_estado(accion: str, id_af: int):
                                 (antes["cuil"], id_af))
                     ids += [f["id_afiliado"] for f in cur.fetchall()]
 
-                despues = {"activo": 0, "fecha_baja": fecha_baja, "id_motivo_baja": id_motivo}
                 for i in ids:
                     previo = antes if i == id_af else _afiliado(cur, i)
                     cur.execute("UPDATE p_afiliados SET activo = 0, fecha_baja = %s, "
                                 "id_motivo_baja = %s WHERE id_afiliado = %s",
                                 (fecha_baja, id_motivo, i))
-                    _registrar(cur, i, previo["cuil"], previo, despues, CAMPOS_ESTADO, "BAJA",
+                    _registrar(cur, i, previo["cuil"], {"fecha_baja": previo["fecha_baja"]},
+                               {"fecha_baja": _texto_baja(fecha_baja, id_motivo, cat)}, CAMPO_BAJA, "BAJA",
                                cat, vigencia=fecha_baja,
                                observaciones=None if i == id_af else "Baja del grupo con el titular")
                 conn.commit()

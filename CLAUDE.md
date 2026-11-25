@@ -503,6 +503,10 @@ simplemente no se dibuja, que es más difícil de notar que un error.
 - **Auditoría**: todo cambio deja una fila por campo en `p_afiliados_movimientos` (valores legibles:
   «3 · Hijo soltero…», no «3»). Si un campo se agrega a `CAMPOS` de `afiliados.py`, queda auditado;
   si se agrega al formulario y no ahí, se guarda sin rastro.
+  **La baja y la reactivación son un renglón** (pedido del 25/11/2026, como gestion_adm): la baja, `campo = 'fecha_baja'`,
+  rótulo «Baja», valor «25/11/2026 · RENUNCIA» (`CAMPO_BAJA`); la reactivación, `campo = 'estado'`, «Baja … → Activo».
+  Antes eran tres (Activo, Fecha de baja, Motivo): `sql/afiliados_movimientos_baja_un_renglon_20261125.sql` juntó los
+  que había. El alta ya era uno solo.
 - **Listado paginado en el servidor** (11/11/2026): mandar el padrón entero (5.617 personas) eran 8,5 MB de HTML y
   en Railway tardaba. Ahora filtros, orden y página van en la URL (`_filtros_listado`, `_consultar_listado`,
   `paginar.py`) y la base devuelve 50 filas; «Exportar a Excel» es `/afiliados/exportar` con los mismos filtros. Los
