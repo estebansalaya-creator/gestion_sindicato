@@ -37,8 +37,11 @@ v(d["sexo"] == "F" and d["ejemplar"] == "B", "sexo y ejemplar")
 v(d["fecha_nacimiento"] == date(1984, 5, 2) and d["fecha_emision"] == date(2015, 8, 10), "fechas dd/mm/aaaa")
 v(d["fecha_vencimiento"] is None, "la tarjeta no trae vencimiento")
 
-d = L.parsear_codigo(TARJETA.replace("@F@", "@1@"))
-v(d["sexo"] is None and d["sexo_codigo"] == "1", "sexo «1»: no se adivina, queda el código")
+for cod, letra in (("1", "M"), ("2", "F"), ("3", "X")):
+    d = L.parsear_codigo(TARJETA.replace("@F@", f"@{cod}@"))
+    v(d["sexo"] == letra and d["sexo_codigo"] == cod, f"sexo «{cod}» (tabla de ARCA / ANSES) = {letra}")
+d = L.parsear_codigo(TARJETA.replace("@F@", "@9@"))
+v(d["sexo"] is None and d["sexo_codigo"] == "9", "sexo «9»: no se adivina, queda el código")
 
 print("\nCódigo del DNI libreta")
 d = L.parsear_codigo(LIBRETA)
@@ -103,8 +106,10 @@ else:
     v(c["Documento"] and c["Nacimiento"], "documento y nacimiento siguen bien")
     c = {f["campo"]: f["ok"] for f in A.comparar(d, dict(ficha, fecha_nacimiento=None))}
     v(c["Nacimiento"] is None, "sin nacimiento en la ficha: no se compara")
-    d2 = L.parsear_codigo(TARJETA.replace("@F@", "@1@"))
-    v({f["campo"]: f["ok"] for f in A.comparar(d2, ficha)}["Sexo"] is None, "sexo «1»: no se compara")
+    d2 = L.parsear_codigo(TARJETA.replace("@F@", "@2@"))
+    v({f["campo"]: f["ok"] for f in A.comparar(d2, ficha)}["Sexo"] is True, "sexo «2» = F: coincide")
+    d2 = L.parsear_codigo(TARJETA.replace("@F@", "@9@"))
+    v({f["campo"]: f["ok"] for f in A.comparar(d2, ficha)}["Sexo"] is None, "sexo desconocido: no se compara")
     v(A.comparar(None, ficha) == [], "sin código: nada que comparar")
 
 print(f"\n{ok} bien, {fallos} mal")

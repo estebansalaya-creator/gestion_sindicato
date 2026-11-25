@@ -13,8 +13,8 @@ los bytes de una imagen y devuelve lo que pudo leer.
 - DNI libreta nuevo (2009-2011) y algunas tarjetas viejas: empieza con «@»,
   ``@DNI@ejemplar@…@APELLIDO@NOMBRES@nacionalidad@nacimiento@sexo@emisión@trámite@…@vencimiento@…``.
 
-El sexo a veces no viene como M/F (en algunas tarjetas sale «1»): solo se toma
-si es M, F o X; si no, queda vacío y se dice. No se adivina.
+El sexo viene como letra (M/F/X) o como el código de ARCA / ANSES: 1 masculino,
+2 femenino, 3 otro (X). Cualquier otra cosa queda vacía y se dice.
 
 **Frente o dorso.** La imagen con el código es el frente. Sin código, si tiene
 una cara es un frente que no se pudo leer (foto movida, reflejo); si no, se
@@ -57,8 +57,13 @@ def _fecha(txt: str) -> date | None:
     return None
 
 
+#: El sexo con el código de la tabla de ARCA / ANSES (1 masculino, 2 femenino, 3 otro).
+SEXO_CODIGO = {"1": "M", "2": "F", "3": "X"}
+
+
 def _sexo(txt: str) -> str | None:
     s = (txt or "").strip().upper()
+    s = SEXO_CODIGO.get(s, s)
     return s if s in ("M", "F", "X") else None
 
 
@@ -294,7 +299,8 @@ def leer(contenido: bytes) -> dict:
         if not foto:
             avisos.append("No se encontró la cara para la foto de la ficha.")
         if datos and datos["sexo"] is None and datos.get("sexo_codigo"):
-            avisos.append(f"El código trae el sexo como «{datos['sexo_codigo']}»: no se toma, vale lo de la ficha.")
+            avisos.append(f"El código trae el sexo como «{datos['sexo_codigo']}», que no es M, F, X ni 1, 2, 3: "
+                          "no se toma, vale lo de la ficha.")
         domicilio = None
     else:
         lado = "dorso"

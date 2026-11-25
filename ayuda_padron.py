@@ -162,8 +162,8 @@ SECCIONES = [
       "se recorta la cara si la encuentra) o <b>Quitar</b>."),
    ]},
    {"tipo": "criterio", "html":
-    "El código del DNI tarjeta no trae domicilio, CUIL ni vencimiento, y en algunos el sexo viene como número: "
-    "en ese caso no se toma y vale el de la ficha. Nada se guarda sin que alguien elija a la persona: el mismo "
+    "El código del DNI tarjeta no trae domicilio, CUIL ni vencimiento. El sexo viene como letra o con el código "
+    "de ARCA / ANSES (1 masculino, 2 femenino, 3 otro). Nada se guarda sin que alguien elija a la persona: el mismo "
     "número puede estar en dos fichas."},
    {"tipo": "aviso", "html":
     "Las fotos que se suben y no se guardan se borran solas a los dos días."},

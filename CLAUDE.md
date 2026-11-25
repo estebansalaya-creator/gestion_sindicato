@@ -551,8 +551,8 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   del frente (zxing-cpp; la foto de celular casi nunca sale en grises: se prueba binarizada y a varias escalas) y
   recorta la cara (Haar de OpenCV, con un ojo en la mitad de arriba para descartar caras cabeza abajo; prueba primero el
   giro que dio el código). Formatos: **tarjeta** `trámite@APELLIDO@NOMBRES@sexo@DNI@ejemplar@nacimiento@emisión` (sin
-  vencimiento, domicilio ni CUIL) y **libreta** (empieza con «@», trae vencimiento). El sexo puede venir como «1»:
-  solo se toma M/F/X. La imagen con código (o con cara) es el frente; la otra, el dorso (domicilio por OCR si hay
+  vencimiento, domicilio ni CUIL) y **libreta** (empieza con «@», trae vencimiento). El sexo viene como letra o con
+  el código de ARCA / ANSES (1 M, 2 F, 3 X: `lector_dni.SEXO_CODIGO`); otra cosa no se toma. La imagen con código (o con cara) es el frente; la otra, el dorso (domicilio por OCR si hay
   tesseract). Lo leído queda en `tmp_dni/<ficha>_*` (disco y bucket, se borra a los 2 días) y el paso 2
   (`/afiliados/dni/<ficha>`) busca por `nro_documento` y por los 8 del medio del CUIL, con lo que coincide o no
   (apellido, primer nombre, nacimiento, sexo). **Nada se guarda sin elegir a la persona**. Guardar: cada imagen a
