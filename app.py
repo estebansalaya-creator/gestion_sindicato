@@ -37,6 +37,7 @@ from contactos import contactos_bp                              # noqa: E402
 from afiliados import afiliados_bp                              # noqa: E402
 from afiliados_tablas import tablas_bp as afiliados_tablas_bp   # noqa: E402
 from afiliados_metricas import metricas_bp                      # noqa: E402
+from afiliados_dni import afiliados_dni_bp                     # noqa: E402
 from exportar import exportar_bp                                # noqa: E402
 from reintegros import reintegros_bp                            # noqa: E402
 from institucion import institucion_bp, encabezado as encabezado_institucion  # noqa: E402
@@ -498,6 +499,8 @@ app.register_blueprint(contactos_bp)
 app.register_blueprint(afiliados_bp)
 app.register_blueprint(afiliados_tablas_bp)
 app.register_blueprint(metricas_bp)
+# Carga de DNI: lee el código del frente, busca al afiliado y le pega DNI y foto.
+app.register_blueprint(afiliados_dni_bp)
 app.register_blueprint(exportar_bp)
 app.register_blueprint(reintegros_bp)
 app.register_blueprint(institucion_bp)

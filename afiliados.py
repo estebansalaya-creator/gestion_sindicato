@@ -23,6 +23,8 @@ agrega es lo que un afiliado tiene y una empresa no:
   la solapa, no en el formulario, para que no haya dos lugares que digan cosas
   distintas. En el alta sí se carga, y nace la primera relación.
 - **Documentación** adjunta, con el parcial de documentacion.py.
+- **Foto** (`p_afiliados.foto`, afiliado_foto.py): la recorta del DNI la carga
+  de DNI (afiliados_dni.py) y se cambia o se quita desde la ficha.
 - **Aportes OSEDA**, solo si alguien del grupo tiene o tuvo DDJJ de OSEDA:
   la ficha la pide aparte, ya dibujada (`aportes`, afiliado_aportes.py).
 
@@ -49,6 +51,7 @@ from flask import (Blueprint, render_template, request, redirect, url_for,
                    session, flash, jsonify, send_file)
 
 import afiliado_aportes as _aportes
+import afiliado_foto as _foto
 import almacenamiento
 import arca_padron
 import contactos as _contactos
@@ -364,7 +367,7 @@ def _catalogos(cur) -> dict:
 
 
 def _afiliado(cur, id_afiliado) -> dict | None:
-    columnas = ", ".join(["id_afiliado"] + list(CAMPOS) + list(CAMPOS_ESTADO))
+    columnas = ", ".join(["id_afiliado"] + list(CAMPOS) + list(CAMPOS_ESTADO) + ["foto"])
     cur.execute(f"SELECT {columnas} FROM p_afiliados WHERE id_afiliado = %s", (id_afiliado,))
     return cur.fetchone()
 
@@ -700,7 +703,8 @@ def abm_afiliados():
             afiliado = dict(d, id_afiliado=id_af or None,
                             activo=antes["activo"] if antes else 1,
                             fecha_baja=antes["fecha_baja"] if antes else None,
-                            id_motivo_baja=antes["id_motivo_baja"] if antes else None)
+                            id_motivo_baja=antes["id_motivo_baja"] if antes else None,
+                            foto=antes.get("foto") if antes else None)
             atributos_sel = elegidos
 
     return _pantalla(afiliado, atributos_sel, errores, modo="abm")
@@ -872,6 +876,86 @@ def ver_documento(id_af, id_documento):
         return redirect(request.referrer or url_for("afiliados.padron", ver=id_af))
     return send_file(real, mimetype=doc["mime_type"] or None, as_attachment=False,
                      download_name=doc["nombre_original"])
+
+
+@afiliados_bp.route("/afiliados/<int:id_af>/foto")
+def foto_archivo(id_af):
+    """La foto de la ficha: la ve quien puede consultar el padrón."""
+    if not validasesion():
+        return ("", 401)
+    if not puede_consulta():
+        return ("", 403)
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT foto FROM p_afiliados WHERE id_afiliado = %s", (id_af,))
+            fila = cur.fetchone()
+    real = _foto.ruta((fila or {}).get("foto"))
+    if not real:
+        return ("", 404)
+    # El nombre cambia con cada foto nueva: se puede guardar en caché.
+    return send_file(real, mimetype="image/jpeg", max_age=86400)
+
+
+@afiliados_bp.route("/afiliados/<int:id_af>/foto", methods=["POST"])
+def foto(id_af):
+    """Cambiar la foto (una imagen cualquiera: se recorta la cara si la encuentra) o quitarla."""
+    salida = _guardia_abm(id_af)
+    if salida:
+        return salida
+    volver = url_for("afiliados.abm_afiliados", edit=id_af)
+    accion = request.form.get("accion", "")
+    nueva = None
+    if accion == "cambiar":
+        arch = request.files.get("foto")
+        if not arch or not arch.filename:
+            flash("!Elegí la foto.")
+            return redirect(volver)
+        contenido = arch.read()
+        if len(contenido) > _doc.MAX_MB * 1024 * 1024:
+            flash(f"!La foto supera los {_doc.MAX_MB} MB.")
+            return redirect(volver)
+        import lector_dni
+        try:
+            retrato = lector_dni.retrato(contenido)
+        except lector_dni.LectorError as e:
+            flash(f"!{e}")
+            return redirect(volver)
+    elif accion != "quitar":
+        return redirect(volver)
+
+    vieja = None
+    with get_connection() as conn:
+        conn.begin()
+        try:
+            with conn.cursor() as cur:
+                cat = _catalogos(cur)
+                af = _afiliado(cur, id_af)
+                if af is None:
+                    conn.rollback()
+                    flash("!Ese afiliado no existe.")
+                    return redirect(url_for("afiliados.abm_afiliados"))
+                vieja = af.get("foto")
+                if accion == "cambiar":
+                    nueva = _foto.guardar(id_af, retrato)
+                    cur.execute("UPDATE p_afiliados SET foto = %s WHERE id_afiliado = %s",
+                                (_foto.relativa(nueva), id_af))
+                    _registrar(cur, id_af, af["cuil"], {"foto": "con foto" if vieja else None},
+                               {"foto": "nueva, subida a mano"}, {"foto": "Foto"}, "MODIFICACION", cat)
+                else:
+                    cur.execute("UPDATE p_afiliados SET foto = NULL WHERE id_afiliado = %s", (id_af,))
+                    _registrar(cur, id_af, af["cuil"], {"foto": "con foto" if vieja else None},
+                               {"foto": None}, {"foto": "Foto"}, "MODIFICACION", cat,
+                               observaciones="Foto quitada")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            if nueva:
+                almacenamiento.borrar(nueva)
+            raise
+    # La anterior se borra recién con la fila al día.
+    _foto.borrar(vieja)
+    flash("Foto cambiada." if accion == "cambiar" else "Foto quitada.")
+    return redirect(volver)
 
 
 def _grupo(cur, cuil_titular) -> list[dict]:
@@ -1293,6 +1377,16 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
                                     nacionalidad=ARGENTINA, tipo_documento="DU",
                                     fecha_alta=date.today())
 
+            # Alta desde la carga de DNI: lo que dice el código del frente ya puesto.
+            if afiliado is None and not consulta and request.args.get("nuevo") and request.args.get("nro_documento"):
+                fn = request.args.get("fecha_nacimiento") or ""
+                afiliado = {"tipo_documento": request.args.get("tipo_documento") or "DU",
+                            "nro_documento": digitos(request.args.get("nro_documento"))[:8],
+                            "apellido_nombres": (request.args.get("apellido_nombres") or "").upper()[:100],
+                            "fecha_nacimiento": date.fromisoformat(fn) if re.match(r"^\d{4}-\d{2}-\d{2}$", fn) else None,
+                            "sexo": request.args.get("sexo") if request.args.get("sexo") in ("M", "F", "X") else None,
+                            "nacionalidad": ARGENTINA, "fecha_alta": date.today(), "cod_parentesco": TITULAR}
+
             editando = bool(afiliado and afiliado.get("id_afiliado"))
             grupo, contactos_af, movimientos, empleador = [], [], [], None
             relaciones, documentos, tipos_doc_adj, doc_faltantes = [], [], [], []
@@ -1333,7 +1427,7 @@ def _pantalla(afiliado, atributos_sel, errores, modo: str):
 
     return render_template(
         "afiliados/abm_afiliados.html",
-        modo=modo, puede_abm=puede_abm(),
+        modo=modo, puede_abm=puede_abm(), puede_dni=puede("/afiliados/dni"),
         afiliados=afiliados, afiliado=afiliado, editando=editando,
         f=filtros, hay_filtros=_hay_filtros(filtros), endpoint_listado=endpoint,
         pag=paginar.paginador(total, filtros["pagina"], filtros["tam"], endpoint,

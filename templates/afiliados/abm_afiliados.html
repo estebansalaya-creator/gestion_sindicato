@@ -224,6 +224,10 @@
             {{ ui.boton('Reactivar', 'ok', icono_='reactivar', chico=True, submit=True) }}
           </form>
         {% endif %}
+        {% if puede_dni %}
+        {{ ui.boton('Cargar DNI', 'ghost', icono_='subir', chico=True,
+                    href=url_for('afiliados_dni.carga_dni', para=a.get('id_afiliado'))) }}
+        {% endif %}
         {{ ui.boton('Cancelar', 'secondary', href=url_for('afiliados.abm_afiliados'), chico=True) }}
       {% endif %}
     {% endcall %}
@@ -267,6 +271,9 @@
          CUIL se puede escribir a mano: escrito, no se recalcula. #}
       <div class="bloque">
         <div class="bloque-titulo">Identificación</div>
+        {# La foto, a la derecha de los datos (afiliado_foto.py). Sus botones son
+           de los formularios del pie (form="…"): este ya es un formulario. #}
+        <div class="con-foto">
         <div class="campos">
           <div class="campo" style="--span:2;">
             <label for="tipo_documento">Tipo doc.</label>
@@ -324,6 +331,30 @@
               {{ ui.opciones(nacionalidades, a.get('nacionalidad') if a.get('nacionalidad') is not none else (12 if not editando else none)) }}
             </select>
           </div>
+        </div>
+        {% if editando %}
+        <figure class="foto-afiliado">
+          {% if a.get('foto') %}
+          <a href="{{ url_for('afiliados.foto_archivo', id_af=a.get('id_afiliado'), v=a.get('foto')[-12:]) }}" target="_blank" rel="noopener">
+            <img class="foto-afiliado-img" src="{{ url_for('afiliados.foto_archivo', id_af=a.get('id_afiliado'), v=a.get('foto')[-12:]) }}"
+                 alt="Foto de {{ a.get('apellido_nombres') }}">
+          </a>
+          {% else %}
+          <div class="foto-afiliado-img foto-vacia">{{ ui.icono('usuario', 40) }}<span>Sin foto</span></div>
+          {% endif %}
+          {% if not consulta %}
+          <figcaption class="foto-acciones">
+            <label class="btn btn-ghost btn-sm">{{ ui.icono('subir') }}{{ 'Cambiar' if a.get('foto') else 'Subir' }}
+              <input type="file" name="foto" form="form-foto" accept=".jpg,.jpeg,.png,.webp,image/*" class="oculto"
+                     onchange="this.form.requestSubmit ? this.form.requestSubmit() : this.form.submit()">
+            </label>
+            {% if a.get('foto') %}
+            {{ ui.boton('Quitar', 'ghost', icono_='borrar', chico=True, form='form-foto-quitar', submit=True) }}
+            {% endif %}
+          </figcaption>
+          {% endif %}
+        </figure>
+        {% endif %}
         </div>
       </div>
 
@@ -448,6 +479,17 @@
       </div>
       {% endif %}
     </form>
+    {% if editando and not consulta %}
+    {# Los formularios de la foto: sus campos están en la ficha, con form="…". #}
+    <form method="post" enctype="multipart/form-data" id="form-foto" data-proceso="Recortando la foto…"
+          action="{{ url_for('afiliados.foto', id_af=a.get('id_afiliado')) }}">
+      <input type="hidden" name="accion" value="cambiar">
+    </form>
+    <form method="post" id="form-foto-quitar" action="{{ url_for('afiliados.foto', id_af=a.get('id_afiliado')) }}"
+          onsubmit="return confirm('¿Quitar la foto de la ficha?');">
+      <input type="hidden" name="accion" value="quitar">
+    </form>
+    {% endif %}
   </div>
 </div>
 {% endif %}

@@ -133,6 +133,43 @@ SECCIONES = [
  ]},
 
 {
+ "grupo": "Padrón",
+ "id": "pad_dni",
+ "titulo": "Carga de DNI y foto de la ficha",
+ "url": "/afiliados/dni",
+ "endpoints": ["afiliados_dni.carga_dni", "afiliados_dni.carga_dni_ver"],
+ "resumen": "Subir las fotos del DNI: busca a la persona, guarda frente y dorso y recorta la foto.",
+ "bloques": [
+   {"tipo": "pasos", "items": [
+     "<b>Carga de DNI</b> (o <b>Cargar DNI</b> en la ficha). Soltá las fotos del frente y del dorso, en cualquier "
+     "orden; también sirve solo el frente. La foto del celular tal cual, derecha o de costado.",
+     "El sistema lee el <b>código de barras del frente</b> (documento, apellido, nombres, nacimiento, emisión, "
+     "ejemplar y trámite), dice qué imagen es el frente y cuál el dorso, y <b>recorta la cara</b> para la foto.",
+     "Busca en el padrón por el número de documento (también dentro del CUIL) y muestra cada persona encontrada "
+     "con lo que coincide y lo que no con el DNI.",
+     "Elegí a la persona, revisá el lado de cada imagen y si va la foto, y <b>Guardar en la ficha</b>.",
+   ]},
+   {"tipo": "campos", "items": [
+     ("Qué se guarda", "Cada imagen en la solapa Documentación, como «DNI — frente» o «DNI — dorso», y la foto en "
+      "la ficha (reemplaza la que tenía). Queda en Movimientos. Los datos de la ficha no se cambian: si algo no "
+      "coincide, se corrige a mano en la ficha."),
+     ("Si no está en el padrón", "Con el código leído, <b>Dar de alta con estos datos</b> abre el alta con "
+      "documento, apellido y nombres, nacimiento y sexo puestos. Después del alta, <b>Buscar</b> en la carga "
+      "para pegarle el DNI y la foto."),
+     ("Si el código no se lee", "Buscá por número de documento a mano, o probá con otra foto: el DNI entero, sin "
+      "reflejos sobre el código y con buena luz."),
+     ("Foto en la ficha", "Al lado de la Identificación. Desde el ABM se puede <b>Cambiar</b> (con cualquier foto: "
+      "se recorta la cara si la encuentra) o <b>Quitar</b>."),
+   ]},
+   {"tipo": "criterio", "html":
+    "El código del DNI tarjeta no trae domicilio, CUIL ni vencimiento, y en algunos el sexo viene como número: "
+    "en ese caso no se toma y vale el de la ficha. Nada se guarda sin que alguien elija a la persona: el mismo "
+    "número puede estar en dos fichas."},
+   {"tipo": "aviso", "html":
+    "Las fotos que se suben y no se guardan se borran solas a los dos días."},
+ ]},
+
+{
  "grupo": "Análisis",
  "id": "pad_metricas",
  "titulo": "Métricas del Padrón",

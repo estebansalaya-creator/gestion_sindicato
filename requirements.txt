@@ -26,6 +26,12 @@ pymupdf
 pytesseract
 Pillow
 
+# Carga de DNI (lector_dni.py): el código PDF417 del frente y la cara para la
+# foto de la ficha. OpenCV anterior a la 5: la 5 dejó de traer los detectores
+# de caras (haarcascade_*.xml) en el wheel. Trae numpy.
+zxing-cpp
+opencv-python-headless<5
+
 # Firma del pedido a ARCA (constatación WSCDC, opcional).
 cryptography
 

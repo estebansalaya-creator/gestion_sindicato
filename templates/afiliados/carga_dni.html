@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+{% import "_ui.html" as ui %}
+{% block title %}Carga de DNI{% endblock %}
+
+{#
+  Carga de DNI (afiliados_dni.py), en dos pasos:
+
+    subir      las fotos (frente y dorso, en cualquier orden): se leen al soltarlas
+    resultado  lo leído, el afiliado encontrado y qué se guarda
+
+  El resultado es un solo formulario (guardar); buscar a mano y descartar son
+  formularios aparte, al pie, y sus campos y botones los nombran con form="…":
+  anidar formularios no es válido en HTML.
+#}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Carga de DNI</h1>
+    <p>Las fotos del DNI: busca a la persona en el padrón por el código del frente, guarda frente y dorso en su
+       documentación y recorta la cara para la foto de la ficha.</p>
+  </div>
+  {% if paso == 'resultado' %}
+  <div class="page-header-acciones">
+    {{ ui.boton('Cargar otro DNI', 'secondary', icono_='subir', form='form-descartar', submit=True) }}
+  </div>
+  {% endif %}
+</div>
+
+{{ ui.mensajes() }}
+
+{% if paso == 'subir' %}
+{# ── Paso 1: las fotos ─────────────────────────────────────────────────────── #}
+{% if faltan %}
+  {{ ui.aviso('No se puede leer un DNI en este servidor: falta instalar ' ~ faltan|join(', ')
+              ~ ' (ver requirements.txt).', 'danger') }}
+{% endif %}
+{% if afiliado_para %}
+  {{ ui.aviso('Para la ficha de ' ~ afiliado_para.apellido_nombres ~ ' (CUIL ' ~ (afiliado_para.cuil or '—')
+              ~ '). Si el documento no coincide, se avisa antes de guardar.', 'info') }}
+{% endif %}
+<div class="card">
+  {{ ui.card_head('Fotos del DNI', nota='El frente (con el código de barras) y el dorso. Hasta ' ~ max_mb ~ ' MB cada una.') }}
+  <form method="post" enctype="multipart/form-data" class="card-body" id="form-leer"
+        data-proceso="Leyendo el DNI…" data-proceso-detalle="Se busca el código del frente y la cara para la foto.">
+    <input type="hidden" name="accion" value="leer">
+    <input type="hidden" name="para" value="{{ para or '' }}">
+    <label class="drop-zone" id="zona-dni">
+      {{ ui.icono('subir', 30) }}
+      <strong>Soltá las dos fotos acá o hacé clic para elegirlas</strong>
+      <span class="chico">Frente y dorso, en cualquier orden (también solo el frente). JPG, PNG o WEBP: la foto del
+        celular tal cual, derecha o de costado.</span>
+      <input type="file" name="imagenes" id="imagenes" multiple accept=".jpg,.jpeg,.png,.webp,image/*" class="oculto">
+    </label>
+    <p class="chico muted separado">Para que el código se lea: el DNI entero en la foto, sin reflejos sobre el código de
+      barras y con buena luz. Una foto de la pantalla también sirve si se ve nítida.</p>
+  </form>
+</div>
+
+{% else %}
+{# ── Paso 2: lo leído y a quién va ─────────────────────────────────────────── #}
+{% set lados = [('frente', 'DNI — frente'), ('dorso', 'DNI — dorso'), ('', 'No guardar')] %}
+<form method="post" action="{{ url_for('afiliados_dni.carga_dni') }}" id="form-guardar" class="con-resumen"
+      data-proceso="Guardando en la ficha…">
+  <input type="hidden" name="accion" value="guardar">
+  <input type="hidden" name="ficha" value="{{ ficha }}">
+
+  <div class="card">
+    {{ ui.card_head('Lo que se leyó') }}
+    <div class="card-body">
+      <div class="dni-imagenes">
+        {% for img in carga.imagenes %}
+        <figure class="dni-imagen">
+          <a href="{{ url_for('afiliados_dni.carga_dni_archivo', ficha=ficha, archivo=img.archivo) }}" target="_blank" rel="noopener">
+            <img src="{{ url_for('afiliados_dni.carga_dni_archivo', ficha=ficha, archivo=img.archivo) }}" alt="{{ img.original }}">
+          </a>
+          <figcaption>
+            <div class="campo">
+              <label for="lado_{{ loop.index0 }}">{{ img.original }}</label>
+              <select name="lado_{{ loop.index0 }}" id="lado_{{ loop.index0 }}">
+                {% for v, t in lados %}<option value="{{ v }}" {{ 'selected' if v == img.lado }}>{{ t }}</option>{% endfor %}
+              </select>
+            </div>
+            {% if img.codigo_leido %}{{ ui.estado('Código leído', 'ok') }}{% endif %}
+            {% if img.domicilio %}<p class="chico">Domicilio: <b>{{ img.domicilio }}</b></p>{% endif %}
+            {% for av in img.avisos %}<p class="chico campo-ayuda error">{{ av }}</p>{% endfor %}
+          </figcaption>
+        </figure>
+        {% endfor %}
+        {% if carga.foto %}
+        <figure class="dni-imagen">
+          <img class="foto-afiliado-img" src="{{ url_for('afiliados_dni.carga_dni_archivo', ficha=ficha, archivo=carga.foto) }}"
+               alt="Foto recortada">
+          <figcaption>
+            <label class="campo-check"><input type="checkbox" name="usar_foto" value="1" checked> Usar como foto de la ficha</label>
+            {% set con_foto = candidatos|selectattr('foto')|list %}
+            {% if con_foto %}<p class="chico muted">Reemplaza la foto que tenga.</p>{% endif %}
+          </figcaption>
+        </figure>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('Datos del código', nota='El código PDF417 del frente. No trae domicilio, CUIL ni vencimiento (el del DNI tarjeta).' if datos else None) }}
+    <div class="card-body">
+      {% if datos %}
+      <div class="datos">
+        <div class="dato"><div class="dato-lbl">Documento</div><div class="dato-val mono">{{ datos.dni }}</div></div>
+        <div class="dato"><div class="dato-lbl">Apellido</div><div class="dato-val">{{ datos.apellido }}</div></div>
+        <div class="dato"><div class="dato-lbl">Nombres</div><div class="dato-val">{{ datos.nombres }}</div></div>
+        <div class="dato"><div class="dato-lbl">Sexo</div><div class="dato-val">{{ datos.sexo or ('«' ~ datos.sexo_codigo ~ '» (no se toma)') }}</div></div>
+        <div class="dato"><div class="dato-lbl">Nacimiento</div><div class="dato-val">{{ datos.fecha_nacimiento.strftime('%d/%m/%Y') if datos.fecha_nacimiento else '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Emisión</div><div class="dato-val">{{ datos.fecha_emision.strftime('%d/%m/%Y') if datos.fecha_emision else '—' }}</div></div>
+        {% if datos.fecha_vencimiento %}
+        <div class="dato"><div class="dato-lbl">Vencimiento</div><div class="dato-val">{{ datos.fecha_vencimiento.strftime('%d/%m/%Y') if datos.fecha_vencimiento else '—' }}</div></div>
+        {% endif %}
+        <div class="dato"><div class="dato-lbl">Ejemplar</div><div class="dato-val">{{ datos.ejemplar or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Trámite</div><div class="dato-val mono">{{ datos.tramite or '—' }}</div></div>
+        <div class="dato"><div class="dato-lbl">Formato</div><div class="dato-val">{{ 'DNI tarjeta' if datos.formato == 'tarjeta' else 'DNI libreta' }}</div></div>
+      </div>
+      {% else %}
+      {{ ui.aviso('No se leyó el código del frente. Buscá a la persona por número de documento, o probá con otra foto.', 'warning') }}
+      {% endif %}
+      <div class="campos separado">
+        <div class="campo" style="--span:3;">
+          <label for="dni">Buscar otro documento</label>
+          <input type="text" id="dni" name="dni" form="form-buscar" class="mono" inputmode="numeric" maxlength="10"
+                 value="{{ dni_manual or '' }}" placeholder="{{ dni_buscado or 'Número' }}">
+        </div>
+        <div class="campo campo-boton" style="--span:2;">
+          {{ ui.boton('Buscar', 'secondary', icono_='buscar', form='form-buscar', submit=True) }}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    {{ ui.card_head('En el padrón', nota=('Documento ' ~ dni_buscado) if dni_buscado else None) }}
+    {% if candidatos %}
+    <div class="data-table-wrap">
+      <table class="data-table compacta">
+        <thead><tr>
+          <th class="col-acciones" data-no-sort>Elegir</th>
+          <th>Apellido y nombres</th><th>CUIL</th><th>Parentesco</th><th>Estado</th><th>Coincide con el DNI</th>
+        </tr></thead>
+        <tbody>
+          {% for c in candidatos %}
+          <tr class="{{ 'fila-baja' if not c.activo }}">
+            <td><input type="radio" name="id_afiliado" value="{{ c.id_afiliado }}" aria-label="Elegir a {{ c.apellido_nombres }}"
+                       {{ 'checked' if c.id_afiliado == elegido }} required></td>
+            <td class="td-fuerte">
+              <a href="{{ url_for('afiliados.abm_afiliados' if puede_abm else 'afiliados.padron', **({'edit': c.id_afiliado} if puede_abm else {'ver': c.id_afiliado})) }}"
+                 target="_blank" rel="noopener">{{ c.apellido_nombres }}</a>
+              {% if c.foto %}<span class="chico muted"> · tiene foto</span>{% endif %}
+            </td>
+            <td class="td-mono">{{ c.cuil or '—' }}</td>
+            <td>{{ c.parentesco or c.cod_parentesco }}</td>
+            <td>{{ ui.activo(c.activo, c.fecha_baja) }}</td>
+            <td>
+              {% if c.no_coincide %}{{ ui.estado('Es la ficha desde la que se vino: el documento no coincide', 'warn') }}{% endif %}
+              {% for f in c.comparacion %}
+                {% if f.ok is none %}{{ ui.estado(f.campo ~ ': sin dato', 'neutro') }}
+                {% elif f.ok %}{{ ui.estado(f.campo, 'ok') }}
+                {% else %}<span title="DNI: {{ f.dni }} · Ficha: {{ f.ficha }}">{{ ui.estado(f.campo ~ ' distinto', 'danger') }}</span>{% endif %}
+              {% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if candidatos|selectattr('diferencias')|list %}
+    <div class="card-aviso">
+      {{ ui.aviso('Lo marcado en rojo no coincide entre el DNI y la ficha (pasá el mouse para ver los dos valores). '
+                  'Revisalo antes de guardar: guardar no cambia los datos de la ficha.', 'warning') }}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="card-body">
+      {{ ui.aviso(('No hay nadie en el padrón con el documento ' ~ dni_buscado ~ '.') if dni_buscado
+                  else 'Sin el número de documento no se puede buscar.', 'warning') }}
+      {% if alta and puede_abm %}
+      <p class="separado">
+        {{ ui.boton('Dar de alta con estos datos', 'primary', icono_='agregar', blank=True,
+                    href=url_for('afiliados.abm_afiliados', **alta)) }}
+      </p>
+      <p class="chico muted">Se abre el alta en otra pestaña con documento, apellido y nombres, nacimiento y sexo puestos.
+        Después de guardarla, volvé acá y apretá <b>Buscar</b> para pegarle el DNI y la foto.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <aside class="card resumen {{ 'warn' if not candidatos }}">
+    {{ ui.card_head('Guardar') }}
+    <div class="card-body">
+      <p class="chico">Las imágenes van a la solapa Documentación con su tipo, y la foto a la ficha. Los datos de la
+        ficha no se tocan.</p>
+      <div class="form-acciones">
+        {{ ui.boton('Descartar', 'secondary', form='form-descartar', submit=True) }}
+        {% if candidatos %}{{ ui.boton('Guardar en la ficha', 'primary', icono_='guardar', submit=True) }}{% endif %}
+      </div>
+    </div>
+  </aside>
+</form>
+
+<form method="post" action="{{ url_for('afiliados_dni.carga_dni') }}" id="form-buscar">
+  <input type="hidden" name="accion" value="buscar">
+  <input type="hidden" name="ficha" value="{{ ficha }}">
+  <input type="hidden" name="para" value="{{ para or '' }}">
+</form>
+{% endif %}
+
+<form method="post" action="{{ url_for('afiliados_dni.carga_dni') }}" id="form-descartar">
+  <input type="hidden" name="accion" value="descartar">
+  <input type="hidden" name="ficha" value="{{ ficha or '' }}">
+  <input type="hidden" name="para" value="{{ para or '' }}">
+</form>
+
+{% if paso == 'subir' %}
+<script>
+(function () {
+  var zona = document.getElementById('zona-dni'), inp = document.getElementById('imagenes'),
+      form = document.getElementById('form-leer');
+  function enviar() {
+    if (!inp.files.length) return;
+    if (inp.files.length > 2) { alert('Hasta dos fotos: el frente y el dorso.'); inp.value = ''; return; }
+    form.dispatchEvent(new Event('submit', {cancelable: true}));
+    form.submit();
+  }
+  inp.addEventListener('change', enviar);
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('encima'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('encima'); });
+  });
+  zona.addEventListener('drop', function (e) { inp.files = e.dataTransfer.files; enviar(); });
+})();
+</script>
+{% endif %}
+{% endblock %}

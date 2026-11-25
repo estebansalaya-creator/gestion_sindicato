@@ -16,7 +16,7 @@
   ('mensajes', 'Mensajes'), ('formulario', 'Formulario'), ('solo-lectura', 'Solo lectura'),
   ('renglones', 'Carga con renglones'), ('solapas', 'Solapas'),
   ('dialogo', 'Diálogo'), ('indicadores', 'Indicadores'), ('buscador-general', 'Buscador general'), ('correo', 'Correo'), ('aplicacion', 'Aplicación'), ('ayuda', 'Ayuda'), ('inicio', 'Panel de inicio'), ('importacion', 'Importación'),
-  ('comprobantes', 'Comprobantes'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
+  ('comprobantes', 'Comprobantes'), ('foto', 'Foto y DNI'), ('graficos', 'Gráficos'), ('reglas', 'Reglas'),
 ] %}
 
 {% block content %}
@@ -701,6 +701,28 @@ A FACTURA  COD. 01  Punto de Venta: 00003  Comp. Nro: 00001234</pre></details>
       Los datos que identifican un comprobante validado por ARCA van <code>readonly</code>, pero el servidor los vuelve a
       constatar al guardar: la pantalla no es el control.
     </p>
+  </div>
+</div>
+
+{# ── Foto y DNI ──────────────────────────────────────────────────────────── #}
+<div class="card guia-seccion" id="foto">
+  {{ ui.card_head('Foto y DNI', nota='la foto de la ficha del afiliado y las imágenes de la carga de DNI') }}
+  <div class="card-body pila">
+    <div class="con-foto">
+      <div class="campos">
+        <div class="campo" style="--span:3;"><label>Documento</label><input type="text" class="mono" value="21107600"></div>
+        <div class="campo" style="--span:9;"><label>Apellido y nombres</label><input type="text" value="PEREZ JUAN"></div>
+      </div>
+      <figure class="foto-afiliado">
+        <div class="foto-afiliado-img foto-vacia">{{ ui.icono('usuario', 40) }}<span>Sin foto</span></div>
+        <figcaption class="foto-acciones">
+          <label class="btn btn-ghost btn-sm">{{ ui.icono('subir') }}Subir<input type="file" class="oculto"></label>
+        </figcaption>
+      </figure>
+    </div>
+    {{ ej("<div class=\"con-foto\">\n  <div class=\"campos\">…</div>\n  <figure class=\"foto-afiliado\">\n    <img class=\"foto-afiliado-img\" src=\"…\">   (sin foto: <div class=\"foto-afiliado-img foto-vacia\">…</div>)\n    <figcaption class=\"foto-acciones\">…</figcaption>\n  </figure>\n</div>\n<div class=\"dni-imagenes\"><figure class=\"dni-imagen\"><img …><figcaption>…</figcaption></figure></div>\n{{ ui.boton('Quitar', 'ghost', form='form-foto-quitar', submit=True) }}   el botón de un formulario que está en otro lado") }}
+    <p class="chico muted">Dentro de un formulario no va otro formulario: los campos y botones de la foto apuntan a
+      formularios del pie con <code>form="…"</code> (también <code>ui.boton(…, form=…)</code>).</p>
   </div>
 </div>
 

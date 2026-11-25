@@ -126,12 +126,15 @@
 
 {# ── Botones con texto ──────────────────────────────────────────────────────
    tipo: primary | secondary | ghost | danger | ok | excel | pdf.
-   Con `href` es un enlace; con `submit=True`, el botón del formulario. #}
-{% macro boton(texto, tipo='primary', href=None, icono_=None, submit=False, onclick=None, chico=False, id=None, datos={}, blank=False) -%}
+   Con `href` es un enlace; con `submit=True`, el botón del formulario.
+   `form="id"`: el botón de un formulario que está en otro lado de la página
+   (para no anidar formularios: la foto de la ficha, la carga de DNI). #}
+{% macro boton(texto, tipo='primary', href=None, icono_=None, submit=False, onclick=None, chico=False, id=None, datos={}, blank=False, form=None) -%}
 {%- set clase = 'btn btn-' ~ tipo ~ (' btn-sm' if chico else '') -%}
 {%- set extra -%}
   {%- if id %} id="{{ id }}"{% endif %}
   {%- if onclick %} onclick="{{ onclick }}"{% endif %}
+  {%- if form %} form="{{ form }}"{% endif %}
   {%- for k, v in datos.items() %} data-{{ k }}="{{ v }}"{% endfor %}
 {%- endset -%}
 {%- if href -%}

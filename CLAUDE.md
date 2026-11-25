@@ -60,6 +60,9 @@ gestion_sindicato/
   aplicar_cobros.py       la aplicación automática por consola; simula por defecto, --aplicar graba
   afiliados.py            ABM del padrón (p_afiliados): grupo familiar, empleadores, documentación, baja lógica, auditoría
   afiliado_aportes.py     solapa «Aportes OSEDA» de la ficha: DDJJ contra lo transferido por ARCA (de gestion_adm)
+  afiliados_dni.py        Carga de DNI: lee las fotos, busca al afiliado, guarda frente/dorso y la foto de la ficha
+  lector_dni.py           el código PDF417 del DNI (tarjeta y libreta) y el recorte de la cara (zxing-cpp + OpenCV)
+  afiliado_foto.py        la foto de la ficha (p_afiliados.foto): guardar, servir, borrar (disco y bucket)
   afiliados_tablas.py     tablas auxiliares del padrón: una pantalla, una solapa por catálogo (TABLAS)
   afiliados_metricas.py   métricas del padrón: indicadores, altas y bajas, pirámide, empleadores, controles
   documentacion.py        documentación adjunta de cualquier entidad (p_documentacion), parcial _documentacion.html
@@ -224,11 +227,15 @@ repetiría en la URL lo que dice el dominio.
                      /aplicaciones (?cuit=), /aplicaciones/aplicar,
                      /aplicaciones/<id>/desaplicar, /aplicaciones/automatica POST
 /afiliados/padron    consulta del padrón (solo lectura), ?ver=ID
-/afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio)
+/afiliados           ABM, ?edit=ID, ?nuevo=1, ?familiar_de=CUIL (alta de familiar con grupo y domicilio);
+                     ?nuevo=1&nro_documento=&apellido_nombres=&fecha_nacimiento=&sexo= (alta desde la carga de DNI)
                      listado: ?q, ?estado=activo|baja|todos, ?tipo, ?sexo, ?edad_desde, ?edad_hasta, ?atributo,
                      ?orden, ?dir, ?tam, ?pagina (lo mismo en /afiliados/padron); /afiliados/exportar (.xlsx);
                      /afiliados/<id>/aportes la solapa Aportes OSEDA (HTML, 204 sin DDJJ; la pide la ficha)
                      /afiliados/arca ?cuil= o ?documento=&sexo= (&id=): ARCA completa la ficha (JSON)
+/afiliados/<id>/foto GET la foto de la ficha; POST accion=cambiar (archivo `foto`) | quitar
+/afiliados/dni       Carga de DNI: POST accion=leer (imagenes) | buscar (ficha, dni) | guardar | descartar; ?para=ID;
+                     /<ficha> el resultado; /<ficha>/<archivo> las imágenes de la carga en curso
 /afiliados/empleador razón social de un CUIT (ayuda del formulario)
 /afiliados/metricas  tablero; ?estado=todos, ?personas=titulares, ?desde=&hasta=, ?control=<clave>
 /contactos/<tipo>/<id>  POST alta/edición/baja de contacto (tipo: empresa | afiliado | proveedor)
@@ -539,6 +546,23 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   vacío). PDF o imagen, hasta 10 MB, en `SIND_ADJUNTOS/documentacion/afiliado/<id>/` con nombre
   generado. Ver: quien consulta el padrón; subir y eliminar: quien tiene el ABM. Auditado (campo
   `documentacion`).
+- **Carga de DNI y foto** (pedido del 25/11/2026; `afiliados_dni.py`, `lector_dni.py`, `afiliado_foto.py`,
+  `sql/afiliados_foto_dni_20261125.sql`): una o dos fotos del DNI en cualquier orden. `lector_dni.leer` lee el PDF417
+  del frente (zxing-cpp; la foto de celular casi nunca sale en grises: se prueba binarizada y a varias escalas) y
+  recorta la cara (Haar de OpenCV, con un ojo en la mitad de arriba para descartar caras cabeza abajo; prueba primero el
+  giro que dio el código). Formatos: **tarjeta** `trámite@APELLIDO@NOMBRES@sexo@DNI@ejemplar@nacimiento@emisión` (sin
+  vencimiento, domicilio ni CUIL) y **libreta** (empieza con «@», trae vencimiento). El sexo puede venir como «1»:
+  solo se toma M/F/X. La imagen con código (o con cara) es el frente; la otra, el dorso (domicilio por OCR si hay
+  tesseract). Lo leído queda en `tmp_dni/<ficha>_*` (disco y bucket, se borra a los 2 días) y el paso 2
+  (`/afiliados/dni/<ficha>`) busca por `nro_documento` y por los 8 del medio del CUIL, con lo que coincide o no
+  (apellido, primer nombre, nacimiento, sexo). **Nada se guarda sin elegir a la persona**. Guardar: cada imagen a
+  `p_documentacion` con el tipo `dni_frente` / `dni_dorso` (por código) y la foto (JPEG 300×400) a
+  `fotos/afiliado/<id>/<uuid>.jpg`, ruta relativa en `p_afiliados.foto`; auditado (campos `documentacion` y `foto`). Los
+  datos de la ficha no se tocan. Sin nadie con ese documento: «Dar de alta con estos datos» (`/afiliados?nuevo=1&…`).
+  En la ficha la foto va a la derecha de Identificación (`.con-foto`), con Cambiar (cualquier imagen: `lector_dni.retrato`
+  recorta la cara o el centro) y Quitar; «Cargar DNI» en el encabezado lleva a la carga con `?para=ID`. Permiso: la
+  opción de menú `/afiliados/dni` (el script la da a quien tiene el ABM). **OpenCV anterior a la 5**: la 5 no trae los
+  `haarcascade_*.xml`. Prueba sin base: `python tests/test_lector_dni.py`; con una foto: `python lector_dni.py foto.jpg`.
 - **Tablas auxiliares** («Tablas Auxiliares», menú 24, `sql/afiliados_tablas_20261110.sql`, roles
   Administrador y Supervisor): estado civil, nacionalidades, parentescos, provincias, tipos de
   documento, motivos de alta y baja, atributos y tipos de documentación (solo los del afiliado). Las
