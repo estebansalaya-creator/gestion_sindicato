@@ -1632,6 +1632,10 @@ function abmSolapa(nombre) {
   document.querySelectorAll('.abm-panel').forEach(function (p) {
     p.classList.toggle('oculto', p.dataset.panel !== nombre);
   });
+  // ui.sujeto: de quién es la ficha, en todas las solapas menos las de data-oculto-en.
+  document.querySelectorAll('[data-oculto-en]').forEach(function (el) {
+    el.hidden = el.dataset.ocultoEn.split(' ').indexOf(nombre) >= 0;
+  });
 }
 
 document.addEventListener('DOMContentLoaded', function () {

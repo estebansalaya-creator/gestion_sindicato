@@ -66,7 +66,14 @@
 
 <div class="abm-panel {{ 'oculto' if solapa != 'padron' }}" data-panel="padron">
   <div class="card">
-    {% call ui.card_head('Padrón de entrega', nota='El grupo de «A quién va» de la campaña cuando se creó, tenga o no correo. El número de orden es alfabético; los agregados a mano van al final.') %}
+    {% call ui.card_head('Padrón de entrega', nota='El grupo de «A quién va» de la campaña cuando se creó, tenga o no correo. El número de orden es alfabético; los agregados a mano y los que suma «Actualizar padrón» van al final.') %}
+      {% if generado %}
+      <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}" data-proceso="Actualizando el padrón de entrega…"
+            onsubmit="return confirm('¿Agregar al final a quienes hoy están en el grupo de «A quién va» y no en la lista (altas nuevas y reincorporados)? No se saca a nadie.');">
+        <input type="hidden" name="accion" value="actualizar">
+        {{ ui.boton('Actualizar padrón', 'primary', icono_='reactivar', submit=True, chico=True) }}
+      </form>
+      {% endif %}
       {% if camp.entregados == 0 %}
       <form method="post" action="{{ url_for('ben_ent.accion', id_camp=camp.id) }}" data-proceso="Armando el padrón de entrega…"
             {% if generado %}onsubmit="return confirm('¿Volver a crear el padrón con el grupo de «A quién va» y el padrón de afiliados de hoy? Se pierden los agregados y quitados a mano.');"{% endif %}>

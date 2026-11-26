@@ -63,6 +63,24 @@
   {% endif %}
 {% endif %}
 {{ ui.solapas(lista_solapas, inicial) }}
+{% if editando %}
+  {# De quién es la ficha: se ve en Contactos, Documentación, Movimientos… (no en el listado). #}
+  {% set fn_s = a.get('fecha_nacimiento') %}
+  {% set edad_s = (hoy.year - fn_s.year - (1 if (hoy.month, hoy.day) < (fn_s.month, fn_s.day) else 0)) if fn_s else none %}
+  {% set par_s = (parentescos|selectattr('codigo', 'equalto', a.get('cod_parentesco'))|map(attribute='descripcion')|list or [none])[0] %}
+  {% set cuil_s = (a.get('cuil') or '')|string %}
+  {% set ct_s = (a.get('cuil_titular') or '')|string %}
+  {% call ui.sujeto(a.get('apellido_nombres') or '(sin nombre)', [
+        ('CUIL ' ~ (cuil_s[:2] ~ '-' ~ cuil_s[2:10] ~ '-' ~ cuil_s[10:] if cuil_s|length == 11 else cuil_s)) if cuil_s else
+          (('DNI ' ~ a.get('nro_documento')) if a.get('nro_documento') else none),
+        par_s,
+        (edad_s ~ (' año' if edad_s == 1 else ' años')) if edad_s is not none else none,
+        ('Titular CUIL ' ~ (ct_s[:2] ~ '-' ~ ct_s[2:10] ~ '-' ~ ct_s[10:] if ct_s|length == 11 else ct_s))
+          if (a.get('cod_parentesco') != 0 and ct_s) else none,
+        empleador.razon_social if empleador else none], inicial=inicial) %}
+    {{ ui.activo(a.get('activo'), a.get('fecha_baja')) }}
+  {% endcall %}
+{% endif %}
 
 
 <!-- ── Listado ────────────────────────────────────────────────────────────── -->

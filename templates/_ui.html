@@ -281,6 +281,22 @@
 {%- endmacro %}
 
 
+{# ── Quién es (ficha con solapas) ───────────────────────────────────────────
+   sujeto: la franja de arriba de las solapas que dice de quién es la ficha,
+   para que se vea también en Contactos, Documentación, Movimientos… (pedido del
+   26/11/2026). `datos`: lista de textos cortos (CUIL, parentesco, empleador);
+   lo que se pasa con caller (un estado) va a la derecha. `oculto_en`: las
+   solapas donde no se muestra (el listado), separadas por espacio; abmSolapa()
+   la muestra u oculta al cambiar. #}
+{% macro sujeto(nombre, datos=[], oculto_en='listado', inicial=None) -%}
+<div class="ficha-sujeto" data-oculto-en="{{ oculto_en }}"{% if inicial in oculto_en.split() %} hidden{% endif %}>
+  <span class="ficha-sujeto-nombre">{{ nombre }}</span>
+  {% for d in datos if d %}<span class="ficha-sujeto-dato">{{ d }}</span>{% endfor %}
+  {% if caller is defined %}<span class="ficha-sujeto-estado">{{ caller() }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+
 {# ── Solapas ────────────────────────────────────────────────────────────────
    solapas: lista de (panel, texto, conteo o None). `inicial`: el panel que
    arranca visible. Los paneles van con

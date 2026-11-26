@@ -185,6 +185,9 @@ SECCIONES = [
      "motivo. <b>Quitar del padrón</b> (el tacho): solo a quien no retiró, con el motivo.",
      "<b>Volver a crear</b>: rehace la lista con el padrón de hoy. Solo mientras nadie retiró; se pierden los "
      "agregados y quitados a mano.",
+     "<b>Actualizar padrón</b>: suma al final de la lista a quienes hoy están en el grupo y no en el padrón de "
+     "entrega (altas nuevas, afiliados que se reincorporaron), aunque ya haya retiros. No cambia los números de "
+     "orden que ya hay, no saca a nadie (las bajas se quitan a mano) y no vuelve a poner a quien se quitó a mano.",
      "<b>Entregar a alguien fuera del padrón</b> (abajo de la grilla): documento o CUIL y el motivo. Si es "
      "afiliado, entra al padrón de entrega como agregado y ya con el retiro; si no es afiliado, escribí su "
      "apellido y nombre. Aparece en la grilla como «Fuera del padrón».",
@@ -212,7 +215,7 @@ SECCIONES = [
    ]},
    {"tipo": "criterio", "html":
     "El padrón de entrega es una <b>foto</b> del grupo al crearlo: lo que cambie después en el padrón de "
-    "afiliados no lo toca. Es aparte del correo: se crea con la campaña en borrador o ya enviada. Dos puestos "
+    "afiliados no lo toca, salvo las altas y reincorporaciones que suma «Actualizar padrón». Es aparte del correo: se crea con la campaña en borrador o ya enviada. Dos puestos "
     "pueden marcar a la vez: si alguien ya retiró, el segundo ve a qué hora y quién lo marcó."},
    {"tipo": "aviso", "html":
     "Todo queda en la solapa <b>Movimientos</b>: cada retiro (y quién retiró), cada retiro quitado, cada "

@@ -12,7 +12,9 @@ familiares, adheridos de un convenio: `ben_campanias.personas`), TENGAN O NO
 CORREO: el beneficio es de la persona, no de su dirección. Es una FOTO del
 padrón de afiliados al crearlo: lo que cambie después no lo toca. Lleva número
 de orden (alfabético), documento, CUIL, parentesco y empleador. Se vuelve a
-crear mientras nadie retiró (se pierden los agregados a mano). Se le agrega a
+crear mientras nadie retiró (se pierden los agregados a mano). «Actualizar
+padrón» (26/11/2026) suma al final a quien hoy está en el grupo y no en la lista
+(altas nuevas, reincorporados), aunque ya haya retiros. Se le agrega a
 alguien a mano (con motivo) o se lo quita (sin retiro, con motivo). Es
 independiente del envío del mail: se crea con la campaña en borrador o ya
 enviada.
@@ -350,6 +352,54 @@ def generar(cur, camp: dict, uid) -> int:
     return len(filas)
 
 
+def actualizar(cur, camp: dict, uid) -> dict:
+    """
+    Suma al padrón de entrega a quien HOY está en el grupo de «A quién va» y no
+    está en la lista: un alta nueva o un afiliado que se reincorporó (pedido del
+    26/11/2026). Se puede con retiros hechos: no rehace nada, solo agrega.
+
+    - Entran al final, con el número de orden siguiente y entre ellos en orden
+      alfabético: los números que ya se usan (en una lista impresa) no cambian.
+    - Al que se quitó a mano no lo vuelve a poner: lo saca quien lo quitó, con
+      motivo, y se agrega a mano si hace falta.
+    - Al que ya no está en el grupo (se dio de baja) no lo saca: puede haber
+      retirado, y la baja se ve en el padrón de afiliados. Se cuenta y se avisa.
+    """
+    if not camp.get("entrega_generada"):
+        raise ErrorEntrega("Primero creá el padrón de entrega.")
+    try:
+        grupo = camp_mod.personas(cur, camp["destino"], camp["id_convenio"], camp_mod._filtro_guardado(camp))
+    except camp_mod.ErrorCampania as e:
+        raise ErrorEntrega(str(e)) from e
+    hoy = {p["id_afiliado"] for p in grupo}
+    cur.execute("SELECT id_afiliado FROM ben_entrega WHERE id_campania = %s AND id_afiliado IS NOT NULL", (camp["id"],))
+    estan = {f["id_afiliado"] for f in cur.fetchall()}
+    cur.execute("""SELECT DISTINCT id_afiliado FROM ben_entrega_mov
+                    WHERE id_campania = %s AND accion = 'quitado' AND id_afiliado IS NOT NULL""", (camp["id"],))
+    quitados = {f["id_afiliado"] for f in cur.fetchall()} - estan
+    nuevos = sorted(hoy - estan - quitados)
+    filas = []
+    for i in range(0, len(nuevos), TANDA):
+        tanda = nuevos[i:i + TANDA]
+        cur.execute(SQL_DATOS + f" WHERE a.id_afiliado IN ({', '.join(['%s'] * len(tanda))})", tanda)
+        filas += cur.fetchall()
+    filas.sort(key=lambda f: (f["apellido_nombres"] or "", f["id_afiliado"]))
+    cur.execute("SELECT COALESCE(MAX(orden), 0) AS n FROM ben_entrega WHERE id_campania = %s", (camp["id"],))
+    orden = int(cur.fetchone()["n"])
+    for f in filas:
+        orden += 1
+        cur.execute("""INSERT INTO ben_entrega (id_campania, id_afiliado, orden, cuil, nro_documento, apellido_nombres,
+                                                cod_parentesco, parentesco, cuil_titular, empleador, origen)
+                       VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'padron')""",
+                    (camp["id"], f["id_afiliado"], orden, f["cuil"], f["nro_documento"], f["apellido_nombres"],
+                     f["cod_parentesco"], f["parentesco"], f["cuil_titular"],
+                     (f["empleador"] or None) and f["empleador"][:200]))
+        _mov(cur, camp["id"], f["id_afiliado"], "agregado",
+             "Actualizar padrón: alta nueva o reincorporado al grupo de «A quién va»", uid)
+    return {"agregados": len(filas), "nombres": [f["apellido_nombres"] for f in filas],
+            "fuera_del_grupo": len(estan - hoy), "quitados": len(quitados & hoy)}
+
+
 def _afiliado(cur, numero: str) -> dict | None:
     cur.execute(SQL_DATOS + """ WHERE a.cuil = %s OR CAST(a.nro_documento AS CHAR) = %s
                                ORDER BY a.activo DESC, (a.cod_parentesco = 0) DESC, a.id_afiliado LIMIT 1""",
@@ -665,6 +715,23 @@ def accion(id_camp):
                 if acc == "generar":
                     n = generar(cur, camp, _uid())
                     flash(f"Padrón de entrega creado: {n} {'persona' if n == 1 else 'personas'}.")
+                elif acc == "actualizar":
+                    r = actualizar(cur, camp, _uid())
+                    n = r["agregados"]
+                    if n:
+                        lista = ", ".join(r["nombres"][:10]) + (f" y {n - 10} más" if n > 10 else "")
+                        flash(f"Padrón de entrega actualizado: {'se agregó' if n == 1 else f'se agregaron {n}'} al final "
+                              f"de la lista ({lista}).")
+                    else:
+                        flash("El padrón de entrega ya estaba al día: no hay altas nuevas ni reincorporados en el grupo.")
+                    otros = []
+                    if r["fuera_del_grupo"]:
+                        otros.append(f"{r['fuera_del_grupo']} de la lista ya no están en el grupo (bajas): "
+                                     "no se sacan, se quitan a mano si corresponde")
+                    if r["quitados"]:
+                        otros.append(f"{r['quitados']} que se quitaron a mano siguen en el grupo y no se volvieron a poner")
+                    if otros:
+                        flash("!" + "; ".join(otros) + ".")
                 elif acc == "agregar":
                     r = agregar(cur, camp, request.form.get("numero"), request.form.get("motivo"), _uid())
                     flash(f"{r['nombre']} agregado al padrón de entrega con el número de orden {r['orden']}.{r['aviso']}")

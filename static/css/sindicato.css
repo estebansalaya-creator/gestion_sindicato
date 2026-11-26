@@ -695,6 +695,19 @@ fieldset.solo-lectura .solo-edicion { display: none; }
 }
 .abm-tab.activa .conteo { background: var(--blue); color: #fff; }
 .abm-panel.oculto { display: none; }
+/* De quién es la ficha, arriba de las solapas (ui.sujeto): se ve en todas
+   menos en el listado, así al cargar un contacto se sabe a quién. */
+.ficha-sujeto {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px;
+  padding: 9px 14px; margin-bottom: 10px;
+  background: var(--blue-light); border: 1px solid var(--info-borde); border-left: 4px solid var(--blue);
+  border-radius: var(--radius-sm);
+}
+.ficha-sujeto[hidden] { display: none; }
+.ficha-sujeto-nombre { color: var(--navy); font-size: .95rem; font-weight: 700; }
+.ficha-sujeto-dato   { color: var(--text); font-size: .8rem; }
+.ficha-sujeto-dato + .ficha-sujeto-dato::before { content: "·"; color: var(--text-muted); margin-right: 14px; }
+.ficha-sujeto-estado { margin-left: auto; }
 /* Sub-solapas dentro de una tarjeta (domicilio legal / fiscal). */
 .sub-solapas { display: flex; gap: 4px; }
 .sub-solapa {
