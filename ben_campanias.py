@@ -308,7 +308,86 @@ def ruta_flyer(camp: dict) -> Path | None:
     if base not in real.parents:
         return None
     real = almacenamiento.local(real)      # el envío en segundo plano también lo encuentra
-    return real if real.exists() else None
+    if real.exists():
+        _copiar_a_base(camp, real)
+        return real
+    return _restaurar_de_base(camp, real)
+
+
+# El disco del servidor no es para siempre: en Railway, sin volumen permanente ni
+# bucket, SIND_ADJUNTOS se vacía en cada deploy o reinicio y la campaña quedaba con
+# el flyer perdido (26/11/2026). Por eso la campaña guarda también una copia en la
+# base (ben_campania_flyer, sql/beneficios_flyer_en_base_20261126.sql) y, si el
+# archivo no está, se vuelve a escribir desde ahí. Sin la tabla, todo sigue como antes.
+SQL_FLYER_BASE = "sql/beneficios_flyer_en_base_20261126.sql"
+_sin_tabla_flyer = False
+
+
+def _tabla_falta(e: Exception) -> bool:
+    global _sin_tabla_flyer
+    if getattr(e, "args", [None])[0] == 1146:            # la tabla no existe
+        if not _sin_tabla_flyer:
+            log.warning("Falta ben_campania_flyer: correr %s para que el flyer no se pierda.", SQL_FLYER_BASE)
+        _sin_tabla_flyer = True
+        return True
+    return False
+
+
+def guardar_flyer_en_base(cur, id_camp: int, rel: str, ruta: Path) -> None:
+    """La copia del flyer en la base (lo llama el alta y el cambio de flyer, dentro de su transacción)."""
+    if _sin_tabla_flyer:
+        return
+    try:
+        cur.execute("""INSERT INTO ben_campania_flyer (id_campania, archivo, datos) VALUES (%s, %s, %s)
+                       ON DUPLICATE KEY UPDATE archivo = VALUES(archivo), datos = VALUES(datos)""",
+                    (id_camp, rel, ruta.read_bytes()))
+    except Exception as e:
+        if not _tabla_falta(e):
+            raise
+
+
+def _copiar_a_base(camp: dict, ruta: Path) -> None:
+    """Si el archivo está en el disco y la base no tiene su copia (un flyer de antes de la tabla), la guarda."""
+    if _sin_tabla_flyer or not camp.get("id"):
+        return
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT archivo FROM ben_campania_flyer WHERE id_campania = %s", (camp["id"],))
+                fila = cur.fetchone()
+                if fila and fila["archivo"] == camp["flyer_archivo"]:
+                    return
+                guardar_flyer_en_base(cur, camp["id"], camp["flyer_archivo"], ruta)
+            conn.commit()
+    except Exception as e:
+        if not _tabla_falta(e):
+            log.exception("No se pudo guardar la copia del flyer de la campaña %s en la base", camp.get("id"))
+
+
+def _restaurar_de_base(camp: dict, ruta: Path) -> Path | None:
+    """El archivo no está en el disco ni en el bucket: lo vuelve a escribir desde la copia de la base."""
+    if _sin_tabla_flyer or not camp.get("id"):
+        return None
+    try:
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT datos FROM ben_campania_flyer WHERE id_campania = %s AND archivo = %s",
+                            (camp["id"], camp["flyer_archivo"]))
+                fila = cur.fetchone()
+            conn.commit()
+    except Exception as e:
+        if not _tabla_falta(e):
+            log.exception("No se pudo leer la copia del flyer de la campaña %s", camp.get("id"))
+        return None
+    if not fila or not fila["datos"]:
+        return None
+    try:
+        almacenamiento.guardar(ruta, bytes(fila["datos"]), camp.get("flyer_tipo") or "")
+    except OSError:
+        log.exception("No se pudo volver a escribir el flyer %s", ruta)
+        return None
+    log.info("Flyer de la campaña %s restaurado desde la base: %s", camp["id"], ruta)
+    return ruta
 
 
 def _guardar_flyer(archivo) -> tuple[str, str, str]:
@@ -636,6 +715,7 @@ def editar(id_camp=None):
                             anterior = ruta_flyer(camp) if camp.get("flyer_archivo") else None
                             cur.execute("""UPDATE ben_campania SET flyer_archivo = %s, flyer_nombre = %s, flyer_tipo = %s
                                             WHERE id = %s""", (*nuevo, id_camp))
+                            guardar_flyer_en_base(cur, id_camp, nuevo[0], _base() / nuevo[0])
                         conn.commit()
                     except ErrorCampania as e:
                         conn.rollback()

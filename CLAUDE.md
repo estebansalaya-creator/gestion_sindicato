@@ -1054,6 +1054,11 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
 - **Flyer perdido** (`flyer_perdido`, 24/11/2026: el archivo de la campaña 1 desapareció del servidor y salieron 15
   mails sin la imagen): con `flyer_archivo` cargado y el archivo ausente (ni disco ni bucket) no se prueba, no se
   envía ni se reanuda, el hilo se pausa con el aviso, y la ficha y el formulario piden cargarlo de nuevo.
+- **Copia del flyer en la base** (26/11/2026: en Railway el flyer se perdía en cada deploy o reinicio —el disco del
+  contenedor se vacía sin volumen permanente ni bucket— y había que volver a cargarlo): `ben_campania_flyer` (una
+  fila por campaña, `sql/beneficios_flyer_en_base_20261126.sql`, cae con la campaña). Al cargar el flyer se guardan
+  ahí los bytes; `ruta_flyer` lo vuelve a escribir al disco (y al bucket, si hay) cuando falta, y guarda la copia de
+  un flyer que está en el disco y no en la base. Sin la tabla, como antes, con un aviso en el log.
 - **Direcciones con «ñ» o acentos** (24/11/2026: «jibañez@…» cortó la campaña: `formataddr` levanta
   UnicodeEncodeError): `mailer.RE_EMAIL` acepta solo ASCII. Al armar la lista se toma otra dirección válida del
   afiliado si la hay; si ya está en la lista, el hilo la marca con su error (`ERROR_DIRECCION`) y sigue con el
