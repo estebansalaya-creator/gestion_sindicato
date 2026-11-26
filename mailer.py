@@ -84,7 +84,11 @@ from jinja2.sandbox import SandboxedEnvironment
 
 log = logging.getLogger(__name__)
 
-RE_EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+#: Solo ASCII imprimible: «!» a «?» y «A» a «~» (todo menos el espacio, la arroba y lo que no es
+#: ASCII). Una «ñ» o un acento no van en una dirección de correo: smtplib ni siquiera arma el
+#: encabezado (`formataddr` levanta UnicodeEncodeError) y Gmail o Hotmail no los aceptan. Pasó el
+#: 24/11/2026 con «jibañez@…», que cortó la campaña entera.
+RE_EMAIL = re.compile(r"^[!-?A-~]+@[!-?A-~]+\.[!-?A-~]+$")
 
 # El maestro de cada clase de entidad, para el respaldo cuando no hay contacto
 # cargado. `c_proveedores` no tiene columna de mail: por eso no está.

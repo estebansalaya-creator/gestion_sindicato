@@ -347,6 +347,16 @@ def _institucion(cur) -> str:
         return "El sindicato"
 
 
+#: Por qué no sale a una dirección que no es válida para el correo.
+ERROR_DIRECCION = ("La dirección tiene «ñ», acentos o espacios y el correo no la acepta: corregila en los "
+                   "contactos del afiliado.")
+
+
+def direccion_invalida(email: str | None) -> str | None:
+    """None si la dirección sirve; si no, el motivo (queda como error del destinatario)."""
+    return None if mailer.RE_EMAIL.match((email or "").strip()) else ERROR_DIRECCION
+
+
 def flyer_perdido(camp: dict) -> bool:
     """La campaña tiene flyer cargado pero el archivo no está (ni en el disco ni en el bucket).
 
@@ -433,8 +443,23 @@ def _tanda(id_camp: int, base_url: str, uid, pausa: float = PAUSA_SEGUNDOS) -> N
                                         WHERE id = %s AND estado = 'enviando'""", (id_camp,))
                     conn.commit()
                     return
-                url_baja = f"{base_url}/beneficios/baja/{token_baja(dest['email'])}"
-                msg = armar_mensaje(camp, dest, de, flyer, url_baja, institucion)
+                # Lo que es de ESTE destinatario (una «ñ» en la dirección) queda como su error y
+                # se sigue con el siguiente: antes cortaba la campaña entera.
+                problema = direccion_invalida(dest["email"])
+                msg = None
+                if not problema:
+                    try:
+                        url_baja = f"{base_url}/beneficios/baja/{token_baja(dest['email'])}"
+                        msg = armar_mensaje(camp, dest, de, flyer, url_baja, institucion)
+                    except (UnicodeError, ValueError) as e:
+                        problema = f"No se pudo armar el mail para esta dirección: {e}"
+                if problema:
+                    with conn.cursor() as cur:
+                        cur.execute("""UPDATE ben_campania_envio SET estado = 'error', error = %s, enviado_at = NOW()
+                                        WHERE id = %s""", (problema[:500], dest["id"]))
+                        cur.execute("UPDATE ben_campania SET errores = errores + 1 WHERE id = %s", (id_camp,))
+                    conn.commit()
+                    continue
                 try:
                     r = mailer.entregar(conn, msg, codigo=CODIGO, entidad_tipo="afiliado", entidad_id=dest["id_afiliado"],
                                         origen_tipo="campania", origen_id=id_camp, id_usuario=uid,

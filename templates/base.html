@@ -1370,7 +1370,7 @@ document.addEventListener('DOMContentLoaded', function () {
 // y página van en la URL y el servidor manda solo una página. La tabla no se
 // inicializa con gestion_admTable —ordenaría y paginaría solo lo que vino—:
 //   · clic en un th[data-col] → ordena por esa columna (el segundo invierte);
-//   · el buscador del form busca al dejar de escribir; los .filtro-srv que
+//   · el buscador del form busca con Enter o Filtrar; los .filtro-srv que
 //     son select se aplican al elegir; los numéricos y fechas, con Enter o
 //     Filtrar. Siempre vuelve a la página 1.
 // Después de recargar, el cursor vuelve al buscador si se estaba buscando.
@@ -1403,13 +1403,12 @@ document.addEventListener('DOMContentLoaded', function () {
     });
     var q = form.querySelector('input[type="search"]');
     if (q) {
-      var espera = null;
-      q.addEventListener('input', function () {
-        clearTimeout(espera);
-        espera = setTimeout(function () {
+      // Busca con Enter o Filtrar, no mientras se escribe: recargar la página
+      // en cada pausa mareaba el filtro. Al volver, el cursor queda en el cuadro.
+      form.addEventListener('submit', function () {
+        if (document.activeElement === q) {
           try { sessionStorage.setItem('buscar-srv', form.id); } catch (e) {}
-          enviar();
-        }, 500);
+        }
       });
       var volver = null;
       try { volver = sessionStorage.getItem('buscar-srv'); sessionStorage.removeItem('buscar-srv'); } catch (e) {}

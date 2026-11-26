@@ -296,6 +296,67 @@ ok(not C.flyer_perdido({"flyer_archivo": None}), "sin flyer no hay flyer perdido
 ok(C.flyer_perdido({"flyer_archivo": "campanias/no-existe-0000.png", "flyer_nombre": "x.png"}),
    "flyer cargado y archivo ausente: perdido")
 
+print("Una dirección con «ñ» no corta la campaña (24/11/2026)")
+ok(not mailer.RE_EMAIL.match("jibañez@prudhommeycia.com") and not mailer.RE_EMAIL.match("ana perez@x.com")
+   and mailer.RE_EMAIL.match("j.ibanez+aeda@prud-hommeycia.com.ar"), "solo direcciones ASCII")
+ok(C.direccion_invalida("miñanmelina@gmail.com") == C.ERROR_DIRECCION and C.direccion_invalida("a@b.com") is None,
+   "direccion_invalida")
+from contextlib import contextmanager   # noqa: E402
+
+filas = [{"id": 1, "id_afiliado": 1, "email": "juan@mail.com", "nombre": "PEREZ JUAN", "estado": "pendiente"},
+         {"id": 2, "id_afiliado": 2, "email": "jibañez@prudhommeycia.com", "nombre": "IBAÑEZ JORGE", "estado": "pendiente"},
+         {"id": 3, "id_afiliado": 3, "email": "ana@mail.com", "nombre": "GOMEZ ANA", "estado": "pendiente"}]
+camp_t = dict(camp, id=9, estado="enviando", flyer_archivo=None, flyer_tipo=None, flyer_nombre=None)
+salieron, sql_t = [], []
+
+
+class CurT:
+    rowcount = 1
+    def __enter__(s):
+        return s
+    def __exit__(s, *a):
+        pass
+    def execute(s, sql, p=None):
+        s.sql = " ".join(sql.split())
+        sql_t.append((s.sql, p))
+        if s.sql.startswith("UPDATE ben_campania_envio SET estado"):
+            fila = next(f for f in filas if f["id"] == p[-1])
+            fila["estado"] = p[0] if p[0] in ("ok", "error") else "error"
+            fila["error"] = p[1] if len(p) == 3 else p[0]
+    def fetchone(s):
+        if s.sql.startswith("SELECT * FROM ben_campania WHERE"):
+            return camp_t
+        if s.sql.startswith("SELECT estado FROM ben_campania"):
+            return {"estado": "enviando"}
+        if "FROM ben_campania_envio" in s.sql:
+            return next((dict(f) for f in filas if f["estado"] == "pendiente"), None)
+        return None
+
+
+class ConnT:
+    def cursor(s):
+        return CurT()
+    def commit(s):
+        pass
+
+
+@contextmanager
+def gc_t():
+    yield ConnT()
+
+
+reales = (C.get_connection, C._institucion, mailer.remitente, mailer.entregar)
+C.get_connection, C._institucion = gc_t, (lambda cur: "AEDA")
+mailer.remitente = lambda conn, tipo: de
+mailer.entregar = lambda conn, msg, **k: salieron.append(msg["To"]) or {"estado": "ok", "error": None}
+try:
+    C._tanda(9, "https://x", 1, pausa=0)
+finally:
+    C.get_connection, C._institucion, mailer.remitente, mailer.entregar = reales
+ok(len(salieron) == 2 and "ana@mail.com" in salieron[1], "salen los otros dos")
+ok(filas[1]["estado"] == "error" and filas[1]["error"] == C.ERROR_DIRECCION, "la de la «ñ» queda con su error")
+ok(any("SET estado = 'enviada'" in q for q, _ in sql_t), "y la campaña termina")
+
 print("Pantallas (con datos inventados)")
 import app as A   # noqa: E402
 from flask import render_template   # noqa: E402

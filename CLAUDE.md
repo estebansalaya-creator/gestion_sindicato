@@ -1054,6 +1054,10 @@ asunto, texto con `{nombre}`, destino: titulares activos, titulares y familiares
 - **Flyer perdido** (`flyer_perdido`, 24/11/2026: el archivo de la campaña 1 desapareció del servidor y salieron 15
   mails sin la imagen): con `flyer_archivo` cargado y el archivo ausente (ni disco ni bucket) no se prueba, no se
   envía ni se reanuda, el hilo se pausa con el aviso, y la ficha y el formulario piden cargarlo de nuevo.
+- **Direcciones con «ñ» o acentos** (24/11/2026: «jibañez@…» cortó la campaña: `formataddr` levanta
+  UnicodeEncodeError): `mailer.RE_EMAIL` acepta solo ASCII. Al armar la lista se toma otra dirección válida del
+  afiliado si la hay; si ya está en la lista, el hilo la marca con su error (`ERROR_DIRECCION`) y sigue con el
+  siguiente. `contactos.RE_EMAIL` (la pantalla y el importador de AEDA) todavía las acepta.
 - **Eliminar** (pedido del 23/11/2026; `puede_eliminar`): en cualquier estado, desde la lista (tacho) o la ficha,
   con su flyer y su lista (`ben_campania_envio` cae por la FK). No mientras se envía (estado «enviando» o el hilo
   andando) ni con padrón de entrega. Lo que salió queda en `mail_envios` (sin FK a la campaña).

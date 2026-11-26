@@ -34,7 +34,7 @@ SECCIONES = [
     "la dirección. <b>Exportar a Excel</b> baja todo lo filtrado."},
    {"tipo": "campos", "items": [
      ("Buscar", "Cada palabra en apellido y nombres, localidad o empleador; los números (sin guiones) "
-      "en CUIL, CUIL del titular y documento."),
+      "en CUIL, CUIL del titular y documento. Se busca con Enter o Filtrar."),
      ("Estado", "Activos (por defecto), de baja o todos."),
      ("Titular o familiar · Sexo · Edad desde / hasta", "Para armar listas: hijos de cierta edad, "
       "titulares mujeres, etc."),

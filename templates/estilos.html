@@ -209,7 +209,7 @@
             <code>&lt;form method="get" id="frm-x" class="filter-bar"&gt;</code> con <code>name</code> en cada filtro (<code>filtro-srv</code>),
             dos hidden <code>orden</code> y <code>dir</code>, la tabla con <code>data-servidor="frm-x"</code> y cada th ordenable con
             <code>data-col="clave"</code> (y <code>sort-asc</code>/<code>sort-desc</code> en el activo); abajo <code>{% raw %}{{ ui.paginacion_srv(pag) }}{% endraw %}</code>
-            con lo de <code>paginar.paginador()</code>. Se ve igual que las demás: base.html busca al dejar de escribir, aplica los combos al
+            con lo de <code>paginar.paginador()</code>. Se ve igual que las demás: base.html busca con Enter o Filtrar, aplica los combos al
             elegir y ordena por columna, todo yendo al servidor. Exportar a Excel es un enlace a una ruta que arma el .xlsx con los mismos
             filtros (<code>exportar.xlsx</code>). Sin «Todos» en filas por página: es lo que la hacía lenta.</li>
         <li><strong>Exportar a Excel</strong>: las filas filtradas, todas las páginas, sin la columna de acciones. Nombre del archivo en
