@@ -487,11 +487,12 @@
 {# ── Solapas ─────────────────────────────────────────────────────────────── #}
 <div class="guia-seccion" id="solapas">
   {{ ui.solapas([('s-listado', 'Listado', 5747), ('s-datos', 'Editar', None), ('s-grupo', 'Grupo familiar', 4), ('s-mov', 'Movimientos', 12)], 's-listado') }}
+  {% call ui.sujeto('LUCERO RUDY OCTAVIO', ['CUIL 20-30123456-7', 'Titular', '41 años', 'ALBORNOZ JULIO RAUL'], oculto_en='s-listado', inicial='s-listado') %}{{ ui.activo(1) }}{% endcall %}
   <div class="abm-panel" data-panel="s-listado"><div class="card"><div class="card-body">Panel del listado.</div></div></div>
   <div class="abm-panel oculto" data-panel="s-datos"><div class="card"><div class="card-body">Panel del formulario.</div></div></div>
   <div class="abm-panel oculto" data-panel="s-grupo"><div class="card"><div class="card-body">Panel del grupo familiar.</div></div></div>
   <div class="abm-panel oculto" data-panel="s-mov"><div class="card"><div class="card-body">Panel de movimientos.</div></div></div>
-  {{ ej("{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar', None)], inicial) }}\n<div class=\"abm-panel {{ 'oculto' if inicial != 'listado' }}\" data-panel=\"listado\">…</div>") }}
+  {{ ej("{{ ui.solapas([('listado', 'Listado', filas|length), ('datos', 'Editar', None)], inicial) }}\n<div class=\"abm-panel {{ 'oculto' if inicial != 'listado' }}\" data-panel=\"listado\">…</div>\n\nDe quién es la ficha, en todas las solapas menos el listado (pasá a Editar o Grupo familiar arriba):\n{% call ui.sujeto(nombre, ['CUIL …', parentesco, empleador], inicial=inicial) %}{{ ui.activo(a.activo, a.fecha_baja) }}{% endcall %}") }}
 </div>
 
 {# ── Diálogo ─────────────────────────────────────────────────────────────── #}

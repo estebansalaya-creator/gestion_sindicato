@@ -2133,6 +2133,8 @@ colores, `.btn-accion` definido dos veces): acá eso no se repite.
 - **Mensajes**: `ui.mensajes(errores)` (flash en verde; un flash que empieza con «!» sale como
   advertencia) y `ui.aviso(texto, tipo)`.
 - **Solapas**: `ui.solapas([(panel, texto, conteo)], inicial)` + `.abm-panel` + `abmSolapa()`.
+  **De quién es la ficha**: `ui.sujeto(nombre, [datos], inicial=inicial)` debajo de las solapas (pedido del
+  26/11/2026): se ve en todas menos el listado (`data-oculto-en`, lo maneja `abmSolapa`); la usa el ABM de afiliados.
   **Diálogos**: `.modal` > `.modal-caja`, `abrirModal(id)` / `cerrarModal(id)`.
 - La edición carga por `?edit=ID`, nunca poblando el formulario desde JavaScript.
 - Toda pantalla nueva lleva su sección de ayuda (ver «Ayuda (manuales de uso)»).
