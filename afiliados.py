@@ -56,6 +56,7 @@ import almacenamiento
 import arca_padron
 import contactos as _contactos
 import contable_oseda
+import oseda_aeda
 import documentacion as _doc
 import paginar
 import recibos_afiliado as _ra
@@ -686,12 +687,16 @@ def abm_afiliados():
                         if not errores:
                             if antes is None:
                                 id_af = _insertar(cur, d, cat)
+                                oseda_aeda.anotar(cur, [dict(d, id_afiliado=id_af)], "ALTA",
+                                                  _usuario_oseda())
                                 flash(f"Afiliado «{d['apellido_nombres']}» creado.")
                             else:
                                 _actualizar(cur, antes, d, cat)
                                 flash("Cambios guardados.")
                             _guardar_atributos(cur, id_af, d["cuil"], elegidos, cat)
                             conn.commit()
+                            if antes is None:
+                                _aplicar_en_oseda([id_af])
                             return redirect(url_for("afiliados.abm_afiliados", edit=id_af))
                         conn.rollback()
                 except Exception:
@@ -1068,6 +1073,35 @@ CAMPO_BAJA = {"fecha_baja": "Baja"}
 CAMPO_REACTIVACION = {"estado": "Reactivación"}
 
 
+# ── Atributo AEDA en OSEDA (ver oseda_aeda.py) ───────────────────────────────
+
+def _usuario_oseda() -> str:
+    # En OSEDA los usuarios figuran con nombre y apellido («Paula Suarez»).
+    return (session.get("sind_usuario_nombre") or session.get("sind_usuario_email")
+            or "desconocido")[:80]
+
+
+def _aplicar_en_oseda(ids=None):
+    """
+    Después de confirmar en `sindicato`: aplica en OSEDA lo que quedó en la
+    bandeja (de esas personas, o toda con `ids=None`). El cambio en el gremio ya
+    está grabado: si OSEDA falla no se deshace nada, se avisa y lo reintenta
+    sincronizar_oseda_aeda.py. Por eso esta es la única excepción capturada.
+    """
+    try:
+        conteo = oseda_aeda.procesar(ids)
+    except Exception:
+        log.exception("OSEDA: no se pudo procesar la bandeja de %s", ids)
+        flash("!No se pudo actualizar el atributo AEDA en OSEDA: quedó pendiente.")
+        return
+    texto = oseda_aeda.resumen(conteo)
+    if texto:
+        flash(texto)
+    if conteo.get("PENDIENTE") and not conteo.get("sin_configurar"):
+        flash(f"!OSEDA no respondió: el atributo AEDA quedó pendiente "
+              f"({conteo.get('error', 'sin detalle')}).")
+
+
 def _cambiar_estado(accion: str, id_af: int):
     """Baja o reactivación. La baja de un titular se lleva a su grupo (siempre).
     Cada una deja un solo renglón en la auditoría (ver CAMPO_BAJA)."""
@@ -1089,8 +1123,10 @@ def _cambiar_estado(accion: str, id_af: int):
                     _registrar(cur, id_af, antes["cuil"],
                                {"estado": "Baja" + (f" {baja}" if baja else "")}, {"estado": "Activo"},
                                CAMPO_REACTIVACION, "REACTIVACION", cat, vigencia=date.today())
+                    oseda_aeda.anotar(cur, [antes], "REACTIVACION", _usuario_oseda())
                     conn.commit()
                     flash("Afiliado reactivado.")
+                    _aplicar_en_oseda([id_af])
                     return redirect(url_for("afiliados.abm_afiliados", edit=id_af))
 
                 errores = []
@@ -1124,9 +1160,13 @@ def _cambiar_estado(accion: str, id_af: int):
                                {"fecha_baja": _texto_baja(fecha_baja, id_motivo, cat)}, CAMPO_BAJA, "BAJA",
                                cat, vigencia=fecha_baja,
                                observaciones=None if i == id_af else "Baja del grupo con el titular")
+                    # Solo el titular: en OSEDA el atributo AEDA no va en familiares,
+                    # y anotar() los saltea.
+                    oseda_aeda.anotar(cur, [previo], "BAJA", _usuario_oseda())
                 conn.commit()
                 flash("Afiliado dado de baja." if len(ids) == 1 else
                       f"Baja del titular y de {len(ids) - 1} familiar(es).")
+                _aplicar_en_oseda(ids)
         except Exception:
             conn.rollback()
             raise

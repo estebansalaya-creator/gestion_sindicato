@@ -24,6 +24,10 @@ producción.
 (`SET SESSION TRANSACTION READ ONLY`), con sus propias variables `SIND_CONTABLE_*`. El cruce con el
 padrón se hace en Python, no con JOIN entre bases. Escribir en `contable` sigue prohibido.
 
+**Única escritura, decidida el 27/11/2026**: el atributo AEDA del titular en OSEDA (ver «Atributo AEDA
+en OSEDA»). No abre la puerta a otras: va por un procedimiento de contable y un usuario que solo puede
+ejecutarlo (`sind_oseda`), no por una conexión con permisos sobre tablas.
+
 ---
 
 ## Estructura del proyecto
@@ -148,6 +152,8 @@ gestion_sindicato/
   importar_aeda_fisca_escalas.py  las escalas salariales del convenio (fis_escalas) → fisca_escala_salarial; ídem
   importar_aeda_asientos.py   los asientos de AEDA (adm_asientos) → Libro Diario; ídem, --crear-ejercicios
   contable_oseda.py       lectura en vivo (solo lectura) de las DDJJ de OSEDA en contable de Railway
+  oseda_aeda.py           única escritura en contable: atributo AEDA del titular en OSEDA (por procedimiento)
+  sincronizar_oseda_aeda.py  reintenta lo pendiente de oseda_aeda (tarea programada), --listar
   cruce_nomina_ddjj.py    qué empleadores tienen toda su nómina de AEDA en la DDJJ de OSEDA (planillas en logs/)
   cruce_atributo_aeda.py  si los titulares activos de AEDA tienen la marca «AEDA» en el padrón de OSEDA (logs/)
   antiguedad_ddjj.py      antigüedad de los afiliados por la DDJJ de OSEDA (oseda.dbo.afi_redapo) contra el ingreso del padrón (logs/)
@@ -413,6 +419,7 @@ SIND_AEDA_SERVER  SIND_AEDA_USER  SIND_AEDA_PASS  [SIND_AEDA_DRIVER]   origen AE
 [SIND_ARCA_CERT_B64  SIND_ARCA_KEY_B64]           ídem en base64, para Railway (sin archivos)
 [SIND_TESSERACT_CMD]                              OCR de PDF escaneados (opcional)
 [SIND_CONTABLE_HOST  _PORT  _USER  _PASS  _DB]    contable en Railway, solo lectura (contable_oseda.py)
+[SIND_OSEDA_AEDA_USER  SIND_OSEDA_AEDA_PASS]      atributo AEDA en OSEDA, mismo servidor (usuario sind_oseda)
 [SIND_URL_PUBLICA]                                https://aeda.seggestion.com.ar: arma el enlace de las empresas
                                                   y el de «no recibir más» de las campañas
 SIND_FERNET_KEY                                   cifra las contraseñas del correo saliente: la MISMA en el .env
@@ -592,6 +599,31 @@ simplemente no se dibuja, que es más difícil de notar que un error.
   de lo que el empleador quedó debiendo en el período, no lo prorrateado por CUIL; hasta $ 1,50 es redondeo. Los
   aportes son del titular: la ficha de un familiar muestra los del titular, y quien aporta a su nombre (relación de
   dependencia o monotributo) tiene su propia grilla. Test: `python tests/test_afiliado_aportes.py`, sin base.
+
+## Atributo AEDA en OSEDA
+
+Un alta, una baja o una reactivación de un **titular** pone o saca el atributo «AEDA — Afiliado al
+Gremio» al afiliado con el mismo CUIL en OSEDA (`contable`; en Railway la base es `railway`). En OSEDA
+ese atributo tiene «afecta coberturas»: cambia lo que se factura. Pasa por el ABM (alta, baja,
+reactivación) y por la aprobación de un alta informada por una empresa (`fisca_novedades.aprobar`); la
+baja informada por una empresa cierra la relación laboral y no da de baja al afiliado, así que no toca
+OSEDA. Los importadores de AEDA tampoco.
+
+- **Solo titulares.** En OSEDA el atributo es del titular; en un familiar no significa nada. Los
+  familiares no se anotan (tampoco cuando la baja del titular se lleva al grupo), y si un CUIL que acá
+  es titular en OSEDA figura como familiar, el procedimiento no lo toca (`NO_TITULAR`).
+- **Si no está en OSEDA, nada**: no se dan altas en el padrón de la obra social (`SIN_AFILIADO`).
+- **Acotado en MySQL**: `sql/oseda_atributo_aeda_20261127.sql` (se corre en contable, como root) crea
+  `sp_sindicato_atributo_aeda` (SQL SECURITY DEFINER) y el usuario `sind_oseda`, que solo tiene EXECUTE
+  sobre ese procedimiento. El movimiento queda en `p_afiliados_movimientos` de OSEDA con origen SISTEMA,
+  `origen_ref` «gestion_sindicato» y el usuario con el sufijo «(AEDA)».
+- **Bandeja**: dos servidores, sin transacción común. El cambio y su fila en `p_afiliados_oseda_aeda`
+  (`sql/oseda_aeda_pendientes_20261127.sql`) se graban juntos en `sindicato`; después de confirmar se
+  aplica en OSEDA (`afiliados._aplicar_en_oseda`). Si OSEDA no responde queda PENDIENTE, con aviso, y la
+  reintenta `sincronizar_oseda_aeda.py` en orden por id (si falla una fila de una persona, las
+  siguientes de esa persona esperan). El procedimiento es idempotente: reintentar no duplica.
+- **Sin `SIND_CONTABLE_HOST` o `SIND_OSEDA_AEDA_USER`** (la app local con datos de demo) todo queda en
+  la bandeja, sin aviso.
 
 ## Métricas del padrón
 

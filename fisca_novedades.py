@@ -330,6 +330,10 @@ def aprobar(cur, id_nov: int, id_usuario: int | None) -> str:
             cur.execute("SELECT * FROM p_afiliados WHERE id_afiliado = %s", (id_af,))
             af = cur.fetchone()
             hechos.append("se dio de alta al afiliado")
+            # El atributo AEDA en OSEDA lo aplica quien confirma la transacción
+            # (fisca_lsd.aprobar_novedad, con afiliados._aplicar_en_oseda).
+            import oseda_aeda
+            oseda_aeda.anotar(cur, [af], "ALTA", AF._usuario_oseda())
         elif af["fecha_baja"] and af["fecha_baja"] < datetime.date.today():
             hechos.append(f"OJO: el afiliado está dado de baja desde el {af['fecha_baja']:%d/%m/%Y}; "
                           "si corresponde, reactivalo desde su ficha")

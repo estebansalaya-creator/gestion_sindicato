@@ -1,10 +1,12 @@
 """
 contable_oseda.py — Lectura de las DDJJ de OSEDA en `contable` (Railway).
 
-Es la ÚNICA conexión de esta app a otra base y es de solo lectura: la sesión se
-abre con `SET SESSION TRANSACTION READ ONLY`, así que aunque alguien agregue un
-UPDATE acá, MySQL lo rechaza. Conviene además que el usuario de Railway tenga
-solo SELECT. Escribir en `contable` sigue prohibido.
+Es una conexión de solo lectura: la sesión se abre con
+`SET SESSION TRANSACTION READ ONLY`, así que aunque alguien agregue un UPDATE
+acá, MySQL lo rechaza. Conviene además que el usuario de Railway tenga solo
+SELECT. Escribir en `contable` sigue prohibido, con UNA excepción acotada: el
+atributo AEDA del titular, que va por oseda_aeda.py con otro usuario que solo
+puede ejecutar un procedimiento.
 
 No hay JOIN entre bases (son dos servidores): se consulta por CUIT y el cruce
 con el padrón del sindicato se hace en Python.

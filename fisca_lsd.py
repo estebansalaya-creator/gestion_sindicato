@@ -1265,6 +1265,8 @@ def aprobar_novedad(id_nov):
             hecho = NOV.aprobar(cur, id_nov, _id_usuario())
         conn.commit()
         flash("Novedad aprobada: " + hecho + ".")
+        import afiliados as AF
+        AF._aplicar_en_oseda()      # un alta de titular deja su fila en la bandeja
     except NOV.ErrorNovedad as e:
         conn.rollback()
         flash("!" + str(e))
